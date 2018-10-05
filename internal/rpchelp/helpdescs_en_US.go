@@ -73,7 +73,7 @@ var helpDescsEnUS = map[string]string{
 	"infowalletresult-proxy":           "The proxy used by the server",
 	"infowalletresult-difficulty":      "The current target difficulty",
 	"infowalletresult-testnet":         "Whether or not server is using testnet",
-	"infowalletresult-relayfee":        "The minimum relay fee for non-free transactions in BTC/KB",
+	"infowalletresult-relayfee":        "The minimum relay fee for non-free transactions in BCH/KB",
 	"infowalletresult-errors":          "Any current errors",
 	"infowalletresult-paytxfee":        "The increment used each time more fee is required for an authored transaction",
 	"infowalletresult-balance":         "The balance of all accounts calculated with one block confirmation",

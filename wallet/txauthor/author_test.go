@@ -7,15 +7,15 @@ package txauthor_test
 import (
 	"testing"
 
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	. "github.com/btcsuite/btcwallet/wallet/txauthor"
-	"github.com/btcsuite/btcwallet/wallet/txrules"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
+	. "github.com/gcash/bchwallet/wallet/txauthor"
+	"github.com/gcash/bchwallet/wallet/txrules"
 
-	"github.com/btcsuite/btcwallet/wallet/internal/txsizes"
+	"github.com/gcash/bchwallet/wallet/internal/txsizes"
 )
 
-func p2pkhOutputs(amounts ...btcutil.Amount) []*wire.TxOut {
+func p2pkhOutputs(amounts ...bchutil.Amount) []*wire.TxOut {
 	v := make([]*wire.TxOut, 0, len(amounts))
 	for _, a := range amounts {
 		outScript := make([]byte, txsizes.P2PKHOutputSize)
@@ -26,17 +26,17 @@ func p2pkhOutputs(amounts ...btcutil.Amount) []*wire.TxOut {
 
 func makeInputSource(unspents []*wire.TxOut) InputSource {
 	// Return outputs in order.
-	currentTotal := btcutil.Amount(0)
+	currentTotal := bchutil.Amount(0)
 	currentInputs := make([]*wire.TxIn, 0, len(unspents))
-	currentInputValues := make([]btcutil.Amount, 0, len(unspents))
-	f := func(target btcutil.Amount) (btcutil.Amount, []*wire.TxIn, []btcutil.Amount, [][]byte, error) {
+	currentInputValues := make([]bchutil.Amount, 0, len(unspents))
+	f := func(target bchutil.Amount) (bchutil.Amount, []*wire.TxIn, []bchutil.Amount, [][]byte, error) {
 		for currentTotal < target && len(unspents) != 0 {
 			u := unspents[0]
 			unspents = unspents[1:]
-			nextInput := wire.NewTxIn(&wire.OutPoint{}, nil, nil)
-			currentTotal += btcutil.Amount(u.Value)
+			nextInput := wire.NewTxIn(&wire.OutPoint{}, nil)
+			currentTotal += bchutil.Amount(u.Value)
 			currentInputs = append(currentInputs, nextInput)
-			currentInputValues = append(currentInputValues, btcutil.Amount(u.Value))
+			currentInputValues = append(currentInputValues, bchutil.Amount(u.Value))
 		}
 		return currentTotal, currentInputs, currentInputValues, make([][]byte, len(currentInputs)), nil
 	}
@@ -47,8 +47,8 @@ func TestNewUnsignedTransaction(t *testing.T) {
 	tests := []struct {
 		UnspentOutputs   []*wire.TxOut
 		Outputs          []*wire.TxOut
-		RelayFee         btcutil.Amount
-		ChangeAmount     btcutil.Amount
+		RelayFee         bchutil.Amount
+		ChangeAmount     bchutil.Amount
 		InputSourceError bool
 		InputCount       int
 	}{
@@ -63,7 +63,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 			Outputs:        p2pkhOutputs(1e6),
 			RelayFee:       1e3,
 			ChangeAmount: 1e8 - 1e6 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(1e6), true)),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(1e6), true)),
 			InputCount: 1,
 		},
 		2: {
@@ -71,7 +71,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 			Outputs:        p2pkhOutputs(1e6),
 			RelayFee:       1e4,
 			ChangeAmount: 1e8 - 1e6 - txrules.FeeForSerializeSize(1e4,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(1e6), true)),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(1e6), true)),
 			InputCount: 1,
 		},
 		3: {
@@ -79,7 +79,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 			Outputs:        p2pkhOutputs(1e6, 1e6, 1e6),
 			RelayFee:       1e4,
 			ChangeAmount: 1e8 - 3e6 - txrules.FeeForSerializeSize(1e4,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(1e6, 1e6, 1e6), true)),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(1e6, 1e6, 1e6), true)),
 			InputCount: 1,
 		},
 		4: {
@@ -87,7 +87,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 			Outputs:        p2pkhOutputs(1e6, 1e6, 1e6),
 			RelayFee:       2.55e3,
 			ChangeAmount: 1e8 - 3e6 - txrules.FeeForSerializeSize(2.55e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(1e6, 1e6, 1e6), true)),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(1e6, 1e6, 1e6), true)),
 			InputCount: 1,
 		},
 
@@ -95,7 +95,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		5: {
 			UnspentOutputs: p2pkhOutputs(1e8),
 			Outputs: p2pkhOutputs(1e8 - 545 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
 			ChangeAmount: 545,
 			InputCount:   1,
@@ -103,7 +103,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		6: {
 			UnspentOutputs: p2pkhOutputs(1e8),
 			Outputs: p2pkhOutputs(1e8 - 546 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
 			ChangeAmount: 546,
 			InputCount:   1,
@@ -113,7 +113,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		7: {
 			UnspentOutputs: p2pkhOutputs(1e8),
 			Outputs: p2pkhOutputs(1e8 - 1392 - txrules.FeeForSerializeSize(2.55e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     2.55e3,
 			ChangeAmount: 1392,
 			InputCount:   1,
@@ -121,7 +121,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		8: {
 			UnspentOutputs: p2pkhOutputs(1e8),
 			Outputs: p2pkhOutputs(1e8 - 1393 - txrules.FeeForSerializeSize(2.55e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     2.55e3,
 			ChangeAmount: 1393,
 			InputCount:   1,
@@ -133,7 +133,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		9: {
 			UnspentOutputs: p2pkhOutputs(1e8, 1e8),
 			Outputs: p2pkhOutputs(1e8 - 546 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
 			ChangeAmount: 546,
 			InputCount:   1,
@@ -147,7 +147,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		10: {
 			UnspentOutputs: p2pkhOutputs(1e8, 1e8),
 			Outputs: p2pkhOutputs(1e8 - 545 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(1, 0, 0, p2pkhOutputs(0), true))),
+				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
 			ChangeAmount: 545,
 			InputCount:   1,
@@ -159,7 +159,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 			Outputs:        p2pkhOutputs(1e8),
 			RelayFee:       1e3,
 			ChangeAmount: 1e8 - txrules.FeeForSerializeSize(1e3,
-				txsizes.EstimateVirtualSize(2, 0, 0, p2pkhOutputs(1e8), true)),
+				txsizes.EstimateSerializeSize(2, p2pkhOutputs(1e8), true)),
 			InputCount: 2,
 		},
 
@@ -176,7 +176,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 
 	changeSource := func() ([]byte, error) {
 		// Only length matters for these tests.
-		return make([]byte, txsizes.P2WPKHPkScriptSize), nil
+		return make([]byte, txsizes.P2PKHPkScriptSize), nil
 	}
 
 	for i, test := range tests {
@@ -201,7 +201,7 @@ func TestNewUnsignedTransaction(t *testing.T) {
 				continue
 			}
 		} else {
-			changeAmount := btcutil.Amount(tx.Tx.TxOut[tx.ChangeIndex].Value)
+			changeAmount := bchutil.Amount(tx.Tx.TxOut[tx.ChangeIndex].Value)
 			if test.ChangeAmount == 0 {
 				t.Errorf("Test %d: Included change output with value %v but expected no change",
 					i, changeAmount)

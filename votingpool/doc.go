@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 /*
-Package votingpool provides voting pool functionality for btcwallet.
+Package votingpool provides voting pool functionality for bchwallet.
 
 Overview
 

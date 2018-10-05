@@ -10,14 +10,14 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
-	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/txscript"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
+	"github.com/gcash/bchutil/hdkeychain"
+	"github.com/gcash/bchwallet/waddrmgr"
+	"github.com/gcash/bchwallet/walletdb"
+	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // TestOutputSplittingNotEnoughInputs checks that an output will get split if we
@@ -33,8 +33,8 @@ func TestOutputSplittingNotEnoughInputs(t *testing.T) {
 	defer dbtx.Commit()
 
 	net := pool.Manager().ChainParams()
-	output1Amount := btcutil.Amount(2)
-	output2Amount := btcutil.Amount(3)
+	output1Amount := bchutil.Amount(2)
+	output2Amount := bchutil.Amount(3)
 	requests := []OutputRequest{
 		// These output requests will have the same server ID, so we know
 		// they'll be fulfilled in the order they're defined here, which is
@@ -86,7 +86,7 @@ func TestOutputSplittingOversizeTx(t *testing.T) {
 	}
 	defer dbtx.Commit()
 
-	requestAmount := btcutil.Amount(5)
+	requestAmount := bchutil.Amount(5)
 	bigInput := int64(3)
 	smallInput := int64(2)
 	request := TstNewOutputRequest(
@@ -117,7 +117,7 @@ func TestOutputSplittingOversizeTx(t *testing.T) {
 	if len(tx1.outputs) != 1 {
 		t.Fatalf("Wrong number of outputs on tx1; got %d, want 1", len(tx1.outputs))
 	}
-	if tx1.outputs[0].amount != btcutil.Amount(bigInput) {
+	if tx1.outputs[0].amount != bchutil.Amount(bigInput) {
 		t.Fatalf("Wrong amount for output in tx1; got %d, want %d", tx1.outputs[0].amount,
 			bigInput)
 	}
@@ -126,7 +126,7 @@ func TestOutputSplittingOversizeTx(t *testing.T) {
 	if len(tx2.outputs) != 1 {
 		t.Fatalf("Wrong number of outputs on tx2; got %d, want 1", len(tx2.outputs))
 	}
-	if tx2.outputs[0].amount != btcutil.Amount(smallInput) {
+	if tx2.outputs[0].amount != bchutil.Amount(smallInput) {
 		t.Fatalf("Wrong amount for output in tx2; got %d, want %d", tx2.outputs[0].amount,
 			smallInput)
 	}
@@ -214,7 +214,7 @@ func TestFulfillRequestsNoSatisfiableOutputs(t *testing.T) {
 
 	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{1e6})
 	request := TstNewOutputRequest(
-		t, 1, "3Qt1EaKRD9g9FeL2DGkLLswhK1AKmmXFSe", btcutil.Amount(3e6), pool.Manager().ChainParams())
+		t, 1, "3Qt1EaKRD9g9FeL2DGkLLswhK1AKmmXFSe", bchutil.Amount(3e6), pool.Manager().ChainParams())
 	changeStart := TstNewChangeAddress(t, pool, seriesID, 0)
 
 	w := newWithdrawal(0, []OutputRequest{request}, eligible, *changeStart)
@@ -255,11 +255,11 @@ func TestFulfillRequestsNotEnoughCreditsForAllRequests(t *testing.T) {
 	// Create eligible inputs and the list of outputs we need to fulfil.
 	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
 	out1 := TstNewOutputRequest(
-		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", btcutil.Amount(3e6), net)
+		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", bchutil.Amount(3e6), net)
 	out2 := TstNewOutputRequest(
-		t, 2, "3PbExiaztsSYgh6zeMswC49hLUwhTQ86XG", btcutil.Amount(2e6), net)
+		t, 2, "3PbExiaztsSYgh6zeMswC49hLUwhTQ86XG", bchutil.Amount(2e6), net)
 	out3 := TstNewOutputRequest(
-		t, 3, "3Qt1EaKRD9g9FeL2DGkLLswhK1AKmmXFSe", btcutil.Amount(5e6), net)
+		t, 3, "3Qt1EaKRD9g9FeL2DGkLLswhK1AKmmXFSe", bchutil.Amount(5e6), net)
 	outputs := []OutputRequest{out1, out2, out3}
 	changeStart := TstNewChangeAddress(t, pool, seriesID, 0)
 
@@ -363,7 +363,7 @@ func TestRollbackLastOutputMultipleInputsRolledBack(t *testing.T) {
 	if len(removedInputs) != 3 {
 		t.Fatalf("Unexpected number of inputs removed; got %d, want 3", len(removedInputs))
 	}
-	for i, amount := range []btcutil.Amount{4, 3, 2} {
+	for i, amount := range []bchutil.Amount{4, 3, 2} {
 		if removedInputs[i].Amount != amount {
 			t.Fatalf("Unexpected input amount; got %v, want %v", removedInputs[i].Amount, amount)
 		}
@@ -422,7 +422,7 @@ func TestRollBackLastOutputInsufficientOutputs(t *testing.T) {
 	TstCheckError(t, "", err, ErrPreconditionNotMet)
 
 	output := &WithdrawalOutput{request: TstNewOutputRequest(
-		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", btcutil.Amount(3), &chaincfg.MainNetParams)}
+		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", bchutil.Amount(3), &chaincfg.MainNetParams)}
 	tx.addOutput(output.request)
 	_, _, err = tx.rollBackLastOutput()
 	TstCheckError(t, "", err, ErrPreconditionNotMet)
@@ -476,14 +476,14 @@ func TestRollbackLastOutputWhenNewOutputAdded(t *testing.T) {
 	req1 := requests[0]
 	checkTxOutputs(t, firstTx,
 		[]*withdrawalTxOut{{request: req1, amount: req1.Amount}})
-	checkTxChangeAmount(t, firstTx, btcutil.Amount(4))
+	checkTxChangeAmount(t, firstTx, bchutil.Amount(4))
 
 	// Second tx should have one output with 2 and one changeoutput with 3 satoshis.
 	secondTx := w.transactions[1]
 	req2 := requests[1]
 	checkTxOutputs(t, secondTx,
 		[]*withdrawalTxOut{{request: req2, amount: req2.Amount}})
-	checkTxChangeAmount(t, secondTx, btcutil.Amount(3))
+	checkTxChangeAmount(t, secondTx, bchutil.Amount(3))
 }
 
 // TestRollbackLastOutputWhenNewInputAdded checks that we roll back the last
@@ -631,7 +631,7 @@ func TestWithdrawalTxAddChange(t *testing.T) {
 
 	input, output, fee := int64(4e6), int64(3e6), int64(10)
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{input}, []int64{output})
-	tx.calculateFee = TstConstantFee(btcutil.Amount(fee))
+	tx.calculateFee = TstConstantFee(bchutil.Amount(fee))
 
 	if !tx.addChange([]byte{}) {
 		t.Fatal("tx.addChange() returned false, meaning it did not add a change output")
@@ -663,7 +663,7 @@ func TestWithdrawalTxAddChangeNoChange(t *testing.T) {
 
 	input, output, fee := int64(4e6), int64(4e6), int64(0)
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{input}, []int64{output})
-	tx.calculateFee = TstConstantFee(btcutil.Amount(fee))
+	tx.calculateFee = TstConstantFee(bchutil.Amount(fee))
 
 	if tx.addChange([]byte{}) {
 		t.Fatal("tx.addChange() returned true, meaning it added a change output")
@@ -759,8 +759,8 @@ func TestWithdrawalTxInputTotal(t *testing.T) {
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{5}, []int64{})
 
-	if tx.inputTotal() != btcutil.Amount(5) {
-		t.Fatalf("Wrong total output; got %v, want %v", tx.outputTotal(), btcutil.Amount(5))
+	if tx.inputTotal() != bchutil.Amount(5) {
+		t.Fatalf("Wrong total output; got %v, want %v", tx.outputTotal(), bchutil.Amount(5))
 	}
 }
 
@@ -777,8 +777,8 @@ func TestWithdrawalTxOutputTotal(t *testing.T) {
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{}, []int64{4})
 	tx.changeOutput = wire.NewTxOut(int64(1), []byte{})
 
-	if tx.outputTotal() != btcutil.Amount(4) {
-		t.Fatalf("Wrong total output; got %v, want %v", tx.outputTotal(), btcutil.Amount(4))
+	if tx.outputTotal() != bchutil.Amount(4) {
+		t.Fatalf("Wrong total output; got %v, want %v", tx.outputTotal(), bchutil.Amount(4))
 	}
 }
 
@@ -973,8 +973,8 @@ func TestSignMultiSigUTXOPkScriptNotP2SH(t *testing.T) {
 
 	mgr := pool.Manager()
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{4e6}, []int64{})
-	addr, _ := btcutil.DecodeAddress("1MirQ9bwyQcGVJPwKUgapu5ouK2E2Ey4gX", mgr.ChainParams())
-	pubKeyHashPkScript, _ := txscript.PayToAddrScript(addr.(*btcutil.AddressPubKeyHash))
+	addr, _ := bchutil.DecodeAddress("1MirQ9bwyQcGVJPwKUgapu5ouK2E2Ey4gX", mgr.ChainParams())
+	pubKeyHashPkScript, _ := txscript.PayToAddrScript(addr.(*bchutil.AddressPubKeyHash))
 	msgtx := tx.toMsgTx()
 
 	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, pubKeyHashPkScript, []RawSig{{}})
@@ -997,13 +997,13 @@ func TestSignMultiSigUTXORedeemScriptNotFound(t *testing.T) {
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{4e6}, []int64{})
 	// This is a P2SH address for which the addr manager doesn't have the redeem
 	// script.
-	addr, _ := btcutil.DecodeAddress("3Hb4xcebcKg4DiETJfwjh8sF4uDw9rqtVC", mgr.ChainParams())
+	addr, _ := bchutil.DecodeAddress("3Hb4xcebcKg4DiETJfwjh8sF4uDw9rqtVC", mgr.ChainParams())
 	if _, err := mgr.Address(addrmgrNs, addr); err == nil {
 		t.Fatalf("Address %s found in manager when it shouldn't", addr)
 	}
 	msgtx := tx.toMsgTx()
 
-	pkScript, _ := txscript.PayToAddrScript(addr.(*btcutil.AddressScriptHash))
+	pkScript, _ := txscript.PayToAddrScript(addr.(*bchutil.AddressScriptHash))
 	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, pkScript, []RawSig{{}})
 
 	TstCheckError(t, "", err, ErrTxSigning)
@@ -1275,7 +1275,7 @@ func TestTxFeeEstimationForSmallTx(t *testing.T) {
 	tx.calculateSize = func() int { return 999 }
 	fee := tx.calculateFee()
 
-	wantFee := btcutil.Amount(1e3)
+	wantFee := bchutil.Amount(1e3)
 	if fee != wantFee {
 		t.Fatalf("Unexpected tx fee; got %v, want %v", fee, wantFee)
 	}
@@ -1289,7 +1289,7 @@ func TestTxFeeEstimationForLargeTx(t *testing.T) {
 	tx.calculateSize = func() int { return 3000 }
 	fee := tx.calculateFee()
 
-	wantFee := btcutil.Amount(4e3)
+	wantFee := bchutil.Amount(4e3)
 	if fee != wantFee {
 		t.Fatalf("Unexpected tx fee; got %v, want %v", fee, wantFee)
 	}
@@ -1361,12 +1361,12 @@ func TestStoreTransactionsWithChangeOutput(t *testing.T) {
 		t.Fatalf("Unexpected output amount; got %v, want %v", outputTotal, int64(2e6))
 	}
 
-	inputTotal := btcutil.Amount(0)
+	inputTotal := bchutil.Amount(0)
 	for _, debit := range txDetails.Debits {
 		inputTotal += debit.Amount
 	}
-	if inputTotal != btcutil.Amount(5e6) {
-		t.Fatalf("Unexpected input amount; got %v, want %v", inputTotal, btcutil.Amount(5e6))
+	if inputTotal != bchutil.Amount(5e6) {
+		t.Fatalf("Unexpected input amount; got %v, want %v", inputTotal, bchutil.Amount(5e6))
 	}
 
 	credits, err := store.UnspentOutputs(txmgrNs)
@@ -1402,7 +1402,7 @@ func createWithdrawalTxWithStoreCredits(t *testing.T, dbtx walletdb.ReadWriteTx,
 	}
 	for i, amount := range outputAmounts {
 		request := TstNewOutputRequest(
-			t, uint32(i), "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", btcutil.Amount(amount), net)
+			t, uint32(i), "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", bchutil.Amount(amount), net)
 		tx.addOutput(request)
 	}
 	return tx
@@ -1459,7 +1459,7 @@ func checkMsgTxOutputs(t *testing.T, msgtx *wire.MsgTx, requests []OutputRequest
 				"Unexpected pkScript for request %d; got %v, want %v", i, txOut.PkScript,
 				request.PkScript)
 		}
-		gotAmount := btcutil.Amount(txOut.Value)
+		gotAmount := bchutil.Amount(txOut.Value)
 		if gotAmount != request.Amount {
 			t.Fatalf(
 				"Unexpected amount for request %d; got %v, want %v", i, gotAmount, request.Amount)
@@ -1526,7 +1526,7 @@ func compareMsgTxAndWithdrawalTxOutputs(t *testing.T, msgtx *wire.MsgTx, tx *wit
 				"Unexpected pkScript for outputRequest %d; got %x, want %x",
 				i, txOut.PkScript, outputRequest.PkScript)
 		}
-		gotAmount := btcutil.Amount(txOut.Value)
+		gotAmount := bchutil.Amount(txOut.Value)
 		if gotAmount != outputRequest.Amount {
 			t.Fatalf(
 				"Unexpected amount for outputRequest %d; got %v, want %v",
@@ -1543,7 +1543,7 @@ func compareMsgTxAndWithdrawalTxOutputs(t *testing.T, msgtx *wire.MsgTx, tx *wit
 	}
 }
 
-func checkTxChangeAmount(t *testing.T, tx *withdrawalTx, amount btcutil.Amount) {
+func checkTxChangeAmount(t *testing.T, tx *withdrawalTx, amount bchutil.Amount) {
 	if !tx.hasChange() {
 		t.Fatalf("Transaction has no change.")
 	}
@@ -1558,7 +1558,7 @@ func checkTxChangeAmount(t *testing.T, tx *withdrawalTx, amount btcutil.Amount) 
 // origAmount - newAmount. It also checks that splitRequest is identical (except
 // for its amount) to the request of the last output in the tx.
 func checkLastOutputWasSplit(t *testing.T, w *withdrawal, tx *withdrawalTx,
-	origAmount, newAmount btcutil.Amount) {
+	origAmount, newAmount bchutil.Amount) {
 	splitRequest := w.pendingRequests[0]
 	lastOutput := tx.outputs[len(tx.outputs)-1]
 	if lastOutput.amount != newAmount {

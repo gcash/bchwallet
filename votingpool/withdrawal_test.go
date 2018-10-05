@@ -8,9 +8,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
-	vp "github.com/btcsuite/btcwallet/votingpool"
+	"github.com/gcash/bchutil"
+	"github.com/gcash/bchutil/hdkeychain"
+	vp "github.com/gcash/bchwallet/votingpool"
 )
 
 func TestStartWithdrawal(t *testing.T) {
@@ -45,7 +45,7 @@ func TestStartWithdrawal(t *testing.T) {
 
 	startAddr := vp.TstNewWithdrawalAddress(t, dbtx, pool, def.SeriesID, 0, 0)
 	lastSeriesID := def.SeriesID
-	dustThreshold := btcutil.Amount(1e4)
+	dustThreshold := bchutil.Amount(1e4)
 	currentBlock := int32(vp.TstInputsBlock + vp.TstEligibleInputMinConfirmations + 1)
 	var status *vp.WithdrawalStatus
 	vp.TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
@@ -57,10 +57,10 @@ func TestStartWithdrawal(t *testing.T) {
 	}
 
 	// Check that all outputs were successfully fulfilled.
-	checkWithdrawalOutputs(t, status, map[string]btcutil.Amount{address1: 4e6, address2: 1e6})
+	checkWithdrawalOutputs(t, status, map[string]bchutil.Amount{address1: 4e6, address2: 1e6})
 
-	if status.Fees() != btcutil.Amount(1e3) {
-		t.Fatalf("Wrong amount for fees; got %v, want %v", status.Fees(), btcutil.Amount(1e3))
+	if status.Fees() != bchutil.Amount(1e3) {
+		t.Fatalf("Wrong amount for fees; got %v, want %v", status.Fees(), bchutil.Amount(1e3))
 	}
 
 	// This withdrawal generated a single transaction with just one change
@@ -107,7 +107,7 @@ func TestStartWithdrawal(t *testing.T) {
 }
 
 func checkWithdrawalOutputs(
-	t *testing.T, wStatus *vp.WithdrawalStatus, amounts map[string]btcutil.Amount) {
+	t *testing.T, wStatus *vp.WithdrawalStatus, amounts map[string]bchutil.Amount) {
 	fulfilled := wStatus.Outputs()
 	if len(fulfilled) != 2 {
 		t.Fatalf("Unexpected number of outputs in WithdrawalStatus; got %d, want %d",

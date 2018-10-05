@@ -8,10 +8,10 @@ package wallet
 import (
 	"errors"
 
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/gcash/bchd/txscript"
+	"github.com/gcash/bchutil"
+	"github.com/gcash/bchwallet/waddrmgr"
+	"github.com/gcash/bchwallet/walletdb"
 )
 
 // MakeMultiSigScript creates a multi-signature script that can be redeemed with
@@ -20,8 +20,8 @@ import (
 // otherwise an error is returned for a missing pubkey.
 //
 // This function only works with pubkeys and P2PKH addresses derived from them.
-func (w *Wallet) MakeMultiSigScript(addrs []btcutil.Address, nRequired int) ([]byte, error) {
-	pubKeys := make([]*btcutil.AddressPubKey, len(addrs))
+func (w *Wallet) MakeMultiSigScript(addrs []bchutil.Address, nRequired int) ([]byte, error) {
+	pubKeys := make([]*bchutil.AddressPubKey, len(addrs))
 
 	var dbtx walletdb.ReadTx
 	var addrmgrNs walletdb.ReadBucket
@@ -40,10 +40,10 @@ func (w *Wallet) MakeMultiSigScript(addrs []btcutil.Address, nRequired int) ([]b
 			return nil, errors.New("cannot make multisig script for " +
 				"a non-secp256k1 public key or P2PKH address")
 
-		case *btcutil.AddressPubKey:
+		case *bchutil.AddressPubKey:
 			pubKeys[i] = addr
 
-		case *btcutil.AddressPubKeyHash:
+		case *bchutil.AddressPubKeyHash:
 			if dbtx == nil {
 				var err error
 				dbtx, err = w.db.BeginReadTx()
@@ -59,7 +59,7 @@ func (w *Wallet) MakeMultiSigScript(addrs []btcutil.Address, nRequired int) ([]b
 			serializedPubKey := addrInfo.(waddrmgr.ManagedPubKeyAddress).
 				PubKey().SerializeCompressed()
 
-			pubKeyAddr, err := btcutil.NewAddressPubKey(
+			pubKeyAddr, err := bchutil.NewAddressPubKey(
 				serializedPubKey, w.chainParams)
 			if err != nil {
 				return nil, err
@@ -72,8 +72,8 @@ func (w *Wallet) MakeMultiSigScript(addrs []btcutil.Address, nRequired int) ([]b
 }
 
 // ImportP2SHRedeemScript adds a P2SH redeem script to the wallet.
-func (w *Wallet) ImportP2SHRedeemScript(script []byte) (*btcutil.AddressScriptHash, error) {
-	var p2shAddr *btcutil.AddressScriptHash
+func (w *Wallet) ImportP2SHRedeemScript(script []byte) (*bchutil.AddressScriptHash, error) {
+	var p2shAddr *bchutil.AddressScriptHash
 	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 		addrmgrNs := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
@@ -100,14 +100,14 @@ func (w *Wallet) ImportP2SHRedeemScript(script []byte) (*btcutil.AddressScriptHa
 			if waddrmgr.IsError(err, waddrmgr.ErrDuplicateAddress) {
 				// This function will never error as it always
 				// hashes the script to the correct length.
-				p2shAddr, _ = btcutil.NewAddressScriptHash(script,
+				p2shAddr, _ = bchutil.NewAddressScriptHash(script,
 					w.chainParams)
 				return nil
 			}
 			return err
 		}
 
-		p2shAddr = addrInfo.Address().(*btcutil.AddressScriptHash)
+		p2shAddr = addrInfo.Address().(*bchutil.AddressScriptHash)
 		return nil
 	})
 	return p2shAddr, err

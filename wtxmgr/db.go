@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
+	"github.com/gcash/bchwallet/walletdb"
 )
 
 // Naming
@@ -89,17 +89,17 @@ var (
 // outputs spent by mempool transactions, which must be considered when
 // returning the actual balance for a given number of block confirmations.  The
 // value is the amount serialized as a uint64.
-func fetchMinedBalance(ns walletdb.ReadBucket) (btcutil.Amount, error) {
+func fetchMinedBalance(ns walletdb.ReadBucket) (bchutil.Amount, error) {
 	v := ns.Get(rootMinedBalance)
 	if len(v) != 8 {
 		str := fmt.Sprintf("balance: short read (expected 8 bytes, "+
 			"read %v)", len(v))
 		return 0, storeError(ErrData, str, nil)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v)), nil
+	return bchutil.Amount(byteOrder.Uint64(v)), nil
 }
 
-func putMinedBalance(ns walletdb.ReadWriteBucket, amt btcutil.Amount) error {
+func putMinedBalance(ns walletdb.ReadWriteBucket, amt bchutil.Amount) error {
 	v := make([]byte, 8)
 	byteOrder.PutUint64(v, uint64(amt))
 	err := ns.Put(rootMinedBalance, v)
@@ -581,35 +581,35 @@ func extractRawCreditIndex(k []byte) uint32 {
 }
 
 // fetchRawCreditAmount returns the amount of the credit.
-func fetchRawCreditAmount(v []byte) (btcutil.Amount, error) {
+func fetchRawCreditAmount(v []byte) (bchutil.Amount, error) {
 	if len(v) < 9 {
 		str := fmt.Sprintf("%s: short read (expected %d bytes, read %d)",
 			bucketCredits, 9, len(v))
 		return 0, storeError(ErrData, str, nil)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v)), nil
+	return bchutil.Amount(byteOrder.Uint64(v)), nil
 }
 
 // fetchRawCreditAmountSpent returns the amount of the credit and whether the
 // credit is spent.
-func fetchRawCreditAmountSpent(v []byte) (btcutil.Amount, bool, error) {
+func fetchRawCreditAmountSpent(v []byte) (bchutil.Amount, bool, error) {
 	if len(v) < 9 {
 		str := fmt.Sprintf("%s: short read (expected %d bytes, read %d)",
 			bucketCredits, 9, len(v))
 		return 0, false, storeError(ErrData, str, nil)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v)), v[8]&(1<<0) != 0, nil
+	return bchutil.Amount(byteOrder.Uint64(v)), v[8]&(1<<0) != 0, nil
 }
 
 // fetchRawCreditAmountChange returns the amount of the credit and whether the
 // credit is marked as change.
-func fetchRawCreditAmountChange(v []byte) (btcutil.Amount, bool, error) {
+func fetchRawCreditAmountChange(v []byte) (bchutil.Amount, bool, error) {
 	if len(v) < 9 {
 		str := fmt.Sprintf("%s: short read (expected %d bytes, read %d)",
 			bucketCredits, 9, len(v))
 		return 0, false, storeError(ErrData, str, nil)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v)), v[8]&(1<<1) != 0, nil
+	return bchutil.Amount(byteOrder.Uint64(v)), v[8]&(1<<1) != 0, nil
 }
 
 // fetchRawCreditUnspentValue returns the unspent value for a raw credit key.
@@ -626,7 +626,7 @@ func fetchRawCreditUnspentValue(k []byte) ([]byte, error) {
 // spendRawCredit marks the credit with a given key as mined at some particular
 // block as spent by the input at some transaction incidence.  The debited
 // amount is returned.
-func spendCredit(ns walletdb.ReadWriteBucket, k []byte, spender *indexedIncidence) (btcutil.Amount, error) {
+func spendCredit(ns walletdb.ReadWriteBucket, k []byte, spender *indexedIncidence) (bchutil.Amount, error) {
 	v := ns.NestedReadBucket(bucketCredits).Get(k)
 	newv := make([]byte, 81)
 	copy(newv, v)
@@ -637,13 +637,13 @@ func spendCredit(ns walletdb.ReadWriteBucket, k []byte, spender *indexedIncidenc
 	copy(v[45:77], spender.block.Hash[:])
 	byteOrder.PutUint32(v[77:81], spender.index)
 
-	return btcutil.Amount(byteOrder.Uint64(v[0:8])), putRawCredit(ns, k, v)
+	return bchutil.Amount(byteOrder.Uint64(v[0:8])), putRawCredit(ns, k, v)
 }
 
 // unspendRawCredit rewrites the credit for the given key as unspent.  The
 // output amount of the credit is returned.  It returns without error if no
 // credit exists for the key.
-func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (btcutil.Amount, error) {
+func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (bchutil.Amount, error) {
 	b := ns.NestedReadWriteBucket(bucketCredits)
 	v := b.Get(k)
 	if v == nil {
@@ -658,7 +658,7 @@ func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (btcutil.Amount, er
 		str := "failed to put credit"
 		return 0, storeError(ErrDatabase, str, err)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v[0:8])), nil
+	return bchutil.Amount(byteOrder.Uint64(v[0:8])), nil
 }
 
 func existsCredit(ns walletdb.ReadBucket, txHash *chainhash.Hash, index uint32, block *Block) (k, v []byte) {
@@ -731,7 +731,7 @@ func (it *creditIterator) readElem() error {
 		return storeError(ErrData, str, nil)
 	}
 	it.elem.Index = byteOrder.Uint32(it.ck[68:72])
-	it.elem.Amount = btcutil.Amount(byteOrder.Uint64(it.cv))
+	it.elem.Amount = bchutil.Amount(byteOrder.Uint64(it.cv))
 	it.elem.Spent = it.cv[8]&(1<<0) != 0
 	it.elem.Change = it.cv[8]&(1<<1) != 0
 	return nil
@@ -874,7 +874,7 @@ func keyDebit(txHash *chainhash.Hash, index uint32, block *Block) []byte {
 	return k
 }
 
-func putDebit(ns walletdb.ReadWriteBucket, txHash *chainhash.Hash, index uint32, amount btcutil.Amount, block *Block, credKey []byte) error {
+func putDebit(ns walletdb.ReadWriteBucket, txHash *chainhash.Hash, index uint32, amount bchutil.Amount, block *Block, credKey []byte) error {
 	k := keyDebit(txHash, index, block)
 
 	v := make([]byte, 80)
@@ -965,7 +965,7 @@ func (it *debitIterator) readElem() error {
 		return storeError(ErrData, str, nil)
 	}
 	it.elem.Index = byteOrder.Uint32(it.ck[68:72])
-	it.elem.Amount = btcutil.Amount(byteOrder.Uint64(it.cv))
+	it.elem.Amount = bchutil.Amount(byteOrder.Uint64(it.cv))
 	return nil
 }
 
@@ -1042,7 +1042,7 @@ func deleteRawUnmined(ns walletdb.ReadWriteBucket, k []byte) error {
 //   [8]     Flags (1 byte)
 //             0x02: Change
 
-func valueUnminedCredit(amount btcutil.Amount, change bool) []byte {
+func valueUnminedCredit(amount bchutil.Amount, change bool) []byte {
 	v := make([]byte, 9)
 	byteOrder.PutUint64(v, uint64(amount))
 	if change {
@@ -1068,20 +1068,20 @@ func fetchRawUnminedCreditIndex(k []byte) (uint32, error) {
 	return byteOrder.Uint32(k[32:36]), nil
 }
 
-func fetchRawUnminedCreditAmount(v []byte) (btcutil.Amount, error) {
+func fetchRawUnminedCreditAmount(v []byte) (bchutil.Amount, error) {
 	if len(v) < 9 {
 		str := "short unmined credit value"
 		return 0, storeError(ErrData, str, nil)
 	}
-	return btcutil.Amount(byteOrder.Uint64(v)), nil
+	return bchutil.Amount(byteOrder.Uint64(v)), nil
 }
 
-func fetchRawUnminedCreditAmountChange(v []byte) (btcutil.Amount, bool, error) {
+func fetchRawUnminedCreditAmountChange(v []byte) (bchutil.Amount, bool, error) {
 	if len(v) < 9 {
 		str := "short unmined credit value"
 		return 0, false, storeError(ErrData, str, nil)
 	}
-	amt := btcutil.Amount(byteOrder.Uint64(v))
+	amt := bchutil.Amount(byteOrder.Uint64(v))
 	change := v[8]&(1<<1) != 0
 	return amt, change, nil
 }

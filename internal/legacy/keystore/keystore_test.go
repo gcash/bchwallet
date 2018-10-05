@@ -11,11 +11,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcutil"
+	"github.com/gcash/bchd/bchec"
+	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/txscript"
+	"github.com/gcash/bchutil"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -46,7 +46,7 @@ func TestBtcAddressSerializer(t *testing.T) {
 		t.Error(err.Error())
 		return
 	}
-	addr, err := newBtcAddress(fakeWallet, privKey, nil,
+	addr, err := newBchAddress(fakeWallet, privKey, nil,
 		makeBS(0), true)
 	if err != nil {
 		t.Error(err.Error())
@@ -65,7 +65,7 @@ func TestBtcAddressSerializer(t *testing.T) {
 		return
 	}
 
-	var readAddr btcAddress
+	var readAddr bchAddress
 	readAddr.store = fakeWallet
 	_, err = readAddr.ReadFrom(buf)
 	if err != nil {
@@ -277,21 +277,21 @@ func TestChaining(t *testing.T) {
 
 		// Sign data with the next private keys and verify signature with
 		// the next pubkeys.
-		pubkeyUncompressed, err := btcec.ParsePubKey(nextPubUncompressedFromPub, btcec.S256())
+		pubkeyUncompressed, err := bchec.ParsePubKey(nextPubUncompressedFromPub, bchec.S256())
 		if err != nil {
 			t.Errorf("%s: Unable to parse next uncompressed pubkey: %v", test.name, err)
 			return
 		}
-		pubkeyCompressed, err := btcec.ParsePubKey(nextPubCompressedFromPub, btcec.S256())
+		pubkeyCompressed, err := bchec.ParsePubKey(nextPubCompressedFromPub, bchec.S256())
 		if err != nil {
 			t.Errorf("%s: Unable to parse next compressed pubkey: %v", test.name, err)
 			return
 		}
-		privkeyUncompressed := &btcec.PrivateKey{
+		privkeyUncompressed := &bchec.PrivateKey{
 			PublicKey: *pubkeyUncompressed.ToECDSA(),
 			D:         new(big.Int).SetBytes(nextPrivUncompressed),
 		}
-		privkeyCompressed := &btcec.PrivateKey{
+		privkeyCompressed := &bchec.PrivateKey{
 			PublicKey: *pubkeyCompressed.ToECDSA(),
 			D:         new(big.Int).SetBytes(nextPrivCompressed),
 		}
@@ -304,7 +304,7 @@ func TestChaining(t *testing.T) {
 		}
 		ok := sig.Verify([]byte(data), privkeyUncompressed.PubKey())
 		if !ok {
-			t.Errorf("%s: btcec signature verification failed for next keypair (chained from uncompressed pubkey).",
+			t.Errorf("%s: bchec signature verification failed for next keypair (chained from uncompressed pubkey).",
 				test.name)
 			return
 		}
@@ -316,7 +316,7 @@ func TestChaining(t *testing.T) {
 		}
 		ok = sig.Verify([]byte(data), privkeyCompressed.PubKey())
 		if !ok {
-			t.Errorf("%s: btcec signature verification failed for next keypair (chained from compressed pubkey).",
+			t.Errorf("%s: bchec signature verification failed for next keypair (chained from compressed pubkey).",
 				test.name)
 			return
 		}
@@ -434,7 +434,7 @@ func TestWalletPubkeyChaining(t *testing.T) {
 	pubKey := pkinfo.PubKey()
 	ok := sig.Verify(hash, pubKey)
 	if !ok {
-		t.Errorf("btcec signature verification failed; address's pubkey mismatches the privkey.")
+		t.Errorf("bchec signature verification failed; address's pubkey mismatches the privkey.")
 		return
 	}
 
@@ -466,7 +466,7 @@ func TestWalletPubkeyChaining(t *testing.T) {
 	pubKey = nextPkInfo.PubKey()
 	ok = sig.Verify(hash, pubKey)
 	if !ok {
-		t.Errorf("btcec signature verification failed; next address's keypair does not match.")
+		t.Errorf("bchec signature verification failed; next address's keypair does not match.")
 		return
 	}
 
@@ -533,7 +533,7 @@ func TestWatchingWalletExport(t *testing.T) {
 	}
 	for apkh, waddr := range ww.addrMap {
 		switch addr := waddr.(type) {
-		case *btcAddress:
+		case *bchAddress:
 			if addr.flags.encrypted {
 				t.Errorf("Chained address should not be encrypted (nothing to encrypt)")
 				return
@@ -577,7 +577,7 @@ func TestWatchingWalletExport(t *testing.T) {
 
 	// Test that ExtendActiveAddresses for the watching wallet match
 	// manually requested addresses of the original wallet.
-	var newAddrs []btcutil.Address
+	var newAddrs []bchutil.Address
 	for i := 0; i < 10; i++ {
 		addr, err := w.NextChainedAddress(createdAt)
 		if err != nil {
@@ -663,8 +663,8 @@ func TestWatchingWalletExport(t *testing.T) {
 		t.Errorf("Nonsensical func ExportWatchingWallet returned no or incorrect error: %v", err)
 		return
 	}
-	pk, _ := btcec.PrivKeyFromBytes(btcec.S256(), make([]byte, 32))
-	wif, err := btcutil.NewWIF(pk, tstNetParams, true)
+	pk, _ := bchec.PrivKeyFromBytes(bchec.S256(), make([]byte, 32))
+	wif, err := bchutil.NewWIF(pk, tstNetParams, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +689,7 @@ func TestImportPrivateKey(t *testing.T) {
 		return
 	}
 
-	pk, err := btcec.NewPrivateKey(btcec.S256())
+	pk, err := bchec.NewPrivateKey(bchec.S256())
 	if err != nil {
 		t.Error("Error generating private key: " + err.Error())
 		return
@@ -703,7 +703,7 @@ func TestImportPrivateKey(t *testing.T) {
 	}
 
 	// import priv key
-	wif, err := btcutil.NewWIF((*btcec.PrivateKey)(pk), tstNetParams, false)
+	wif, err := bchutil.NewWIF((*bchec.PrivateKey)(pk), tstNetParams, false)
 	if err != nil {
 		t.Fatal(err)
 	}
