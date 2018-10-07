@@ -172,7 +172,7 @@ func makeInputSource(outputs []btcjson.ListUnspentResult) txauthor.InputSource {
 			break
 		}
 
-		inputs = append(inputs, wire.NewTxIn(&previousOutPoint, nil, nil))
+		inputs = append(inputs, wire.NewTxIn(&previousOutPoint, nil))
 		inputValues = append(inputValues, outputAmount)
 	}
 

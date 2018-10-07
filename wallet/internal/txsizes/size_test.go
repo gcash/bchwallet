@@ -1,8 +1,6 @@
 package txsizes_test
 
 import (
-	"bytes"
-	"encoding/hex"
 	"testing"
 
 	"github.com/gcash/bchd/wire"

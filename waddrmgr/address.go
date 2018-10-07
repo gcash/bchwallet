@@ -341,13 +341,18 @@ func newManagedAddressWithoutPrivKey(m *ScopedKeyManager,
 	var err error
 
 	switch addrType {
-
 	case PubKeyHash:
 		address, err = bchutil.NewAddressPubKeyHash(
 			pubKeyHash, m.rootManager.chainParams,
 		)
 		if err != nil {
 			return nil, err
+		}
+	case RawPubKey:
+		if compressed {
+			address, err = bchutil.NewAddressPubKey(pubKey.SerializeCompressed(), m.rootManager.chainParams)
+		} else {
+			address, err = bchutil.NewAddressPubKey(pubKey.SerializeUncompressed(), m.rootManager.chainParams)
 		}
 	}
 

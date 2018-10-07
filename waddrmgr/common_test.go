@@ -47,7 +47,7 @@ var (
 	// seed.
 	expectedAddrs = []expectedAddr{
 		{
-			address:     "14wtcepMNiEazuN7YosWY8bwD9tcCtxXRB",
+			address:     "qq45nmxseaeqqctnum544n6pddnntd0c3ymme493qh",
 			addressHash: hexToBytes("2b49ecd0cf72006173e6e95acf416b6735b5f889"),
 			internal:    false,
 			compressed:  true,
@@ -62,7 +62,7 @@ var (
 			},
 		},
 		{
-			address:     "1N3D8jy2aQuUsKBsDgZ6ZPTVR9VhHgJYpE",
+			address:     "qrnvtxs4ggfc6xls3azu6xyfj4tu744n2ch2s8fnj4",
 			addressHash: hexToBytes("e6c59a1542138d1bf08f45cd18899557cf56b356"),
 			internal:    false,
 			compressed:  true,
@@ -77,7 +77,7 @@ var (
 			},
 		},
 		{
-			address:     "1VTfwD4iHre2bMrR9qGiJMwoiZGQZ8e6s",
+			address:     "qqzkr6fh8xrfvkmy0ft6p9cca8q9qg2ulct2rf5w4a",
 			addressHash: hexToBytes("0561e9373986965b647a57a09718e9c050215cfe"),
 			internal:    false,
 			compressed:  true,
@@ -92,7 +92,7 @@ var (
 			},
 		},
 		{
-			address:     "13TdEj4ehUuYFiSaB47eLVBwM2XhAhrK2J",
+			address:     "qqd0j597qfvyeg3skurcemqvl5ud6ud5dqlahfdewn",
 			addressHash: hexToBytes("1af950be02584ca230b7078cec0cfd38dd71b468"),
 			internal:    false,
 			compressed:  true,
@@ -107,7 +107,7 @@ var (
 			},
 		},
 		{
-			address:     "1LTjSghkBecT59VjEKke331HxVdqcFwUDa",
+			address:     "qr2h3gn85ut5c6a87a4s4v3e0nst5rzu8szs53r690",
 			addressHash: hexToBytes("d578a267a7174c6ba7f76b0ab2397ce0ba0c5c3c"),
 			internal:    false,
 			compressed:  true,
@@ -122,7 +122,7 @@ var (
 			},
 		},
 		{
-			address:     "15HNivzKhsLaMs1qRdQN1ifoJYUnJ2xW9z",
+			address:     "qqh0jj4mnm500pwsslp7ertwu3n7jtgdpg9sf7za33",
 			addressHash: hexToBytes("2ef94abb9ee8f785d087c3ec8d6ee467e92d0d0a"),
 			internal:    true,
 			compressed:  true,
@@ -137,7 +137,7 @@ var (
 			},
 		},
 		{
-			address:     "1LJpGrAP1vWHuvfHqmUutQqFVYca2qwxhy",
+			address:     "qrfu3mzx3y04nxl74fxztyvtlv75d63nfs5mlnelyc",
 			addressHash: hexToBytes("d3c8ec46891f599bfeaa4c25918bfb3d46ea334c"),
 			internal:    true,
 			compressed:  true,
@@ -152,7 +152,7 @@ var (
 			},
 		},
 		{
-			address:     "13NhXy2nCLMwNug1TZ6uwaWnxp3uTqdDQq",
+			address:     "qqdq454qfl0rk2h7q6q9wkg7rpcu9zwyhq73wz9pk9",
 			addressHash: hexToBytes("1a0ad2a04fde3b2afe068057591e1871c289c4b8"),
 			internal:    true,
 			compressed:  true,
@@ -167,7 +167,7 @@ var (
 			},
 		},
 		{
-			address:     "1AY6yAHvojvpFcevAichLMnJfxgE8eSe4N",
+			address:     "qp5fkqjfcc5zv5s4l5w7v9pdt42ef6udcgmq7kp37p",
 			addressHash: hexToBytes("689b0249c628265215fd1de6142d5d5594eb8dc2"),
 			internal:    true,
 			compressed:  true,
@@ -182,7 +182,7 @@ var (
 			},
 		},
 		{
-			address:     "1Jc7An3JqjzRQULVr6Wh3iYR7miB6WPJCD",
+			address:     "qrq3mk9r2auh3qr6q3fla0k7u2v55c2y6sl5v0uuh3",
 			addressHash: hexToBytes("c11dd8a3577978807a0453febedee2994a6144d4"),
 			internal:    true,
 			compressed:  true,

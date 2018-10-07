@@ -195,7 +195,7 @@ func AddAllInputScripts(tx *wire.MsgTx, prevPkScripts [][]byte, inputValues []bc
 		if err != nil {
 			return err
 		}
-		script, err := txscript.SignTxOutput(tx, i, int64(inputValues[i].ToUnit(bchutil.AmountSatoshi)),
+		script, err := txscript.SignatureScript(tx, i, int64(inputValues[i].ToUnit(bchutil.AmountSatoshi)),
 			pkScript, txscript.SigHashAll, privKey, compressed)
 		if err != nil {
 			return err

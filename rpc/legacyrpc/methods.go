@@ -1612,6 +1612,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 	if cmd.Inputs != nil {
 		cmdInputs = *cmd.Inputs
 	}
+	inputValues := make([]int64, len(cmdInputs))
 	for _, rti := range cmdInputs {
 		inputHash, err := chainhash.NewHashFromStr(rti.Txid)
 		if err != nil {
@@ -1646,6 +1647,11 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 			Hash:  *inputHash,
 			Index: rti.Vout,
 		}] = script
+		amt, err := bchutil.NewAmount(rti.Amount)
+		if err != nil {
+			return nil, DeserializationError{err}
+		}
+		inputValues = append(inputValues, int64(amt.ToUnit(bchutil.AmountSatoshi)))
 	}
 
 	// Now we go and look for any inputs that we were not provided by
@@ -1711,7 +1717,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 	// `complete' denotes that we successfully signed all outputs and that
 	// all scripts will run to completion. This is returned as part of the
 	// reply.
-	signErrs, err := w.SignTransaction(&tx, hashType, inputs, keys, scripts)
+	signErrs, err := w.SignTransaction(&tx, inputValues, hashType, inputs, keys, scripts)
 	if err != nil {
 		return nil, err
 	}

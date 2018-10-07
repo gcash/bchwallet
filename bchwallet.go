@@ -18,7 +18,7 @@ import (
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
 	"github.com/gcash/bchwallet/wallet"
 	"github.com/gcash/bchwallet/walletdb"
-	"github.com/lightninglabs/neutrino"
+	"github.com/gcash/neutrino"
 )
 
 var (

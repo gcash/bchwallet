@@ -143,7 +143,7 @@ func Example_depositAddress() {
 	}
 
 	// Output:
-	// Generated deposit address: 3QTzpc9d3tTbNLJLB7xwt87nWM38boAhAw
+	// Generated deposit address: pruafy9cc8kmpt86wcewzw6u55ckjrmnhspuk2fxvz
 }
 
 // This example demonstrates how to empower a series by loading the private

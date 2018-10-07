@@ -83,21 +83,6 @@ type ScopeAddrSchema struct {
 }
 
 var (
-	// KeyScopeBIP0049Plus is the key scope of our modified BIP0049
-	// derivation. We say this is BIP0049 "plus", as we'll actually use
-	// p2wkh change all change addresses.
-	KeyScopeBIP0049Plus = KeyScope{
-		Purpose: 49,
-		Coin:    0,
-	}
-
-	// KeyScopeBIP0084 is the key scope for BIP0084 derivation. BIP0084
-	// will be used to derive all p2wkh addresses.
-	KeyScopeBIP0084 = KeyScope{
-		Purpose: 84,
-		Coin:    0,
-	}
-
 	// KeyScopeBIP0044 is the key scope for BIP0044 derivation. Legacy
 	// wallets will only be able to use this key scope, and no keys beyond
 	// it.
@@ -109,8 +94,6 @@ var (
 	// DefaultKeyScopes is the set of default key scopes that will be
 	// created by the root manager upon initial creation.
 	DefaultKeyScopes = []KeyScope{
-		KeyScopeBIP0049Plus,
-		KeyScopeBIP0084,
 		KeyScopeBIP0044,
 	}
 

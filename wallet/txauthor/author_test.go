@@ -94,10 +94,10 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		// Test dust thresholds (546 for a 1e3 relay fee).
 		5: {
 			UnspentOutputs: p2pkhOutputs(1e8),
-			Outputs: p2pkhOutputs(1e8 - 545 - txrules.FeeForSerializeSize(1e3,
+			Outputs: p2pkhOutputs(1e8 - 546 - txrules.FeeForSerializeSize(1e3,
 				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
-			ChangeAmount: 545,
+			ChangeAmount: 546,
 			InputCount:   1,
 		},
 		6: {
@@ -146,10 +146,10 @@ func TestNewUnsignedTransaction(t *testing.T) {
 		// how the function was written, so test it anyways.
 		10: {
 			UnspentOutputs: p2pkhOutputs(1e8, 1e8),
-			Outputs: p2pkhOutputs(1e8 - 545 - txrules.FeeForSerializeSize(1e3,
+			Outputs: p2pkhOutputs(1e8 - 546 - txrules.FeeForSerializeSize(1e3,
 				txsizes.EstimateSerializeSize(1, p2pkhOutputs(0), true))),
 			RelayFee:     1e3,
-			ChangeAmount: 545,
+			ChangeAmount: 546,
 			InputCount:   1,
 		},
 

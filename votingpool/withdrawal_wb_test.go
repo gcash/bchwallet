@@ -933,7 +933,8 @@ func TestSignMultiSigUTXO(t *testing.T) {
 	idx := 0 // The index of the tx input we're going to sign.
 	pkScript := tx.inputs[idx].PkScript
 	TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
-		if err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, idx, pkScript, txSigs[idx]); err != nil {
+		if err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, idx,
+			4e6, pkScript, txSigs[idx]); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -955,7 +956,7 @@ func TestSignMultiSigUTXOUnparseablePkScript(t *testing.T) {
 	msgtx := tx.toMsgTx()
 
 	unparseablePkScript := []byte{0x01}
-	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, unparseablePkScript, []RawSig{{}})
+	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, 0, unparseablePkScript, []RawSig{{}})
 
 	TstCheckError(t, "", err, ErrTxSigning)
 }
@@ -973,11 +974,11 @@ func TestSignMultiSigUTXOPkScriptNotP2SH(t *testing.T) {
 
 	mgr := pool.Manager()
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{4e6}, []int64{})
-	addr, _ := bchutil.DecodeAddress("1MirQ9bwyQcGVJPwKUgapu5ouK2E2Ey4gX", mgr.ChainParams())
+	addr, _ := bchutil.DecodeAddress("qr35ennsep3hxfe7lnz5ee7j5jgmkjswssk2puzvgv", mgr.ChainParams())
 	pubKeyHashPkScript, _ := txscript.PayToAddrScript(addr.(*bchutil.AddressPubKeyHash))
 	msgtx := tx.toMsgTx()
 
-	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, pubKeyHashPkScript, []RawSig{{}})
+	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, 0, pubKeyHashPkScript, []RawSig{{}})
 
 	TstCheckError(t, "", err, ErrTxSigning)
 }
@@ -997,14 +998,14 @@ func TestSignMultiSigUTXORedeemScriptNotFound(t *testing.T) {
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{4e6}, []int64{})
 	// This is a P2SH address for which the addr manager doesn't have the redeem
 	// script.
-	addr, _ := bchutil.DecodeAddress("3Hb4xcebcKg4DiETJfwjh8sF4uDw9rqtVC", mgr.ChainParams())
+	addr, _ := bchutil.DecodeAddress("pzhxyrg99tjyd5gx2vgpzqfjh37ffwq38y3wm4qn5a", mgr.ChainParams())
 	if _, err := mgr.Address(addrmgrNs, addr); err == nil {
 		t.Fatalf("Address %s found in manager when it shouldn't", addr)
 	}
 	msgtx := tx.toMsgTx()
 
 	pkScript, _ := txscript.PayToAddrScript(addr.(*bchutil.AddressScriptHash))
-	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, pkScript, []RawSig{{}})
+	err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, 0, 0, pkScript, []RawSig{{}})
 
 	TstCheckError(t, "", err, ErrTxSigning)
 }
@@ -1026,8 +1027,13 @@ func TestSignMultiSigUTXONotEnoughSigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	amounts, err := getAmounts([]*withdrawalTx{tx})
+	if err != nil {
+		t.Fatal(err)
+	}
 	msgtx := tx.toMsgTx()
 	txSigs := sigs[tx.ntxid()]
+	txAmounts := amounts[tx.ntxid()]
 
 	idx := 0 // The index of the tx input we're going to sign.
 	// Here we provide reqSigs-1 signatures to SignMultiSigUTXO()
@@ -1035,7 +1041,7 @@ func TestSignMultiSigUTXONotEnoughSigs(t *testing.T) {
 	txInSigs := txSigs[idx][:reqSigs-1]
 	pkScript := tx.inputs[idx].PkScript
 	TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
-		err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, idx, pkScript, txInSigs)
+		err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, idx, int64(txAmounts[idx].ToUnit(bchutil.AmountSatoshi)), pkScript, txInSigs)
 	})
 
 	TstCheckError(t, "", err, ErrTxSigning)
@@ -1056,10 +1062,16 @@ func TestSignMultiSigUTXOWrongRawSigs(t *testing.T) {
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{4e6}, []int64{})
 	sigs := []RawSig{{0x00}, {0x01}}
 
+	amounts, err := getAmounts([]*withdrawalTx{tx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txAmounts := amounts[tx.ntxid()]
+
 	idx := 0 // The index of the tx input we're going to sign.
 	pkScript := tx.inputs[idx].PkScript
 	TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
-		err = signMultiSigUTXO(mgr, addrmgrNs, tx.toMsgTx(), idx, pkScript, sigs)
+		err = signMultiSigUTXO(mgr, addrmgrNs, tx.toMsgTx(), idx, int64(txAmounts[idx].ToUnit(bchutil.AmountSatoshi)), pkScript, sigs)
 	})
 
 	TstCheckError(t, "", err, ErrTxSigning)
@@ -1082,8 +1094,13 @@ func TestGetRawSigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	amounts, err := getAmounts([]*withdrawalTx{tx})
+	if err != nil {
+		t.Fatal(err)
+	}
 	msgtx := tx.toMsgTx()
 	txSigs := sigs[tx.ntxid()]
+	txAmounts := amounts[tx.ntxid()]
 	if len(txSigs) != len(tx.inputs) {
 		t.Fatalf("Unexpected number of sig lists; got %d, want %d", len(txSigs), len(tx.inputs))
 	}
@@ -1093,7 +1110,7 @@ func TestGetRawSigs(t *testing.T) {
 	// Since we have all the necessary signatures (m-of-n), we construct the
 	// sigsnature scripts and execute them to make sure the raw signatures are
 	// valid.
-	signTxAndValidate(t, pool.Manager(), addrmgrNs, msgtx, txSigs, tx.inputs)
+	signTxAndValidate(t, pool.Manager(), addrmgrNs, msgtx, txAmounts, txSigs, tx.inputs)
 }
 
 func TestGetRawSigsOnlyOnePrivKeyAvailable(t *testing.T) {
@@ -1243,7 +1260,8 @@ func TestTxSizeCalculation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signTxAndValidate(t, pool.Manager(), addrmgrNs, msgtx, sigs[tx.ntxid()], tx.inputs)
+	amounts := []bchutil.Amount{bchutil.Amount(1), bchutil.Amount(5)}
+	signTxAndValidate(t, pool.Manager(), addrmgrNs, msgtx, InputAmounts(amounts), sigs[tx.ntxid()], tx.inputs)
 
 	// ECDSA signatures have variable length (71-73 bytes) but in
 	// calculateSize() we use a dummy signature for the worst-case scenario (73
@@ -1482,12 +1500,13 @@ func checkTxInputs(t *testing.T, tx *withdrawalTx, inputs []credit) {
 // signTxAndValidate will construct the signature script for each input of the given
 // transaction (using the given raw signatures and the pkScripts from credits) and execute
 // those scripts to validate them.
-func signTxAndValidate(t *testing.T, mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *wire.MsgTx, txSigs TxSigs,
-	credits []credit) {
+func signTxAndValidate(t *testing.T, mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *wire.MsgTx,
+	amounts InputAmounts, txSigs TxSigs, credits []credit) {
 	for i := range tx.TxIn {
 		pkScript := credits[i].PkScript
 		TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
-			if err := signMultiSigUTXO(mgr, addrmgrNs, tx, i, pkScript, txSigs[i]); err != nil {
+			if err := signMultiSigUTXO(mgr, addrmgrNs, tx, i, int64(amounts[i].ToUnit(bchutil.AmountSatoshi)),
+				pkScript, txSigs[i]); err != nil {
 				t.Fatal(err)
 			}
 		})

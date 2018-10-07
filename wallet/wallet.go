@@ -15,15 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gcash/bchd/blockchain"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gcash/bchd/bchec"
+	"github.com/gcash/bchd/blockchain"
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
-	"github.com/davecgh/go-spew/spew"
 
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
@@ -2503,10 +2503,6 @@ func (w *Wallet) ListUnspent(minconf, maxconf int32,
 				spendable = true
 			case txscript.PubKeyTy:
 				spendable = true
-			case txscript.WitnessV0ScriptHashTy:
-				spendable = true
-			case txscript.WitnessV0PubKeyHashTy:
-				spendable = true
 			case txscript.MultiSigTy:
 				for _, a := range addrs {
 					_, err := w.Manager.Address(addrmgrNs, a)
@@ -2922,9 +2918,9 @@ func (w *Wallet) newChangeAddress(addrmgrNs walletdb.ReadWriteBucket,
 	account uint32) (bchutil.Address, error) {
 
 	// As we're making a change address, we'll fetch the type of manager
-	// that is able to make p2wkh output as they're the most efficient.
+	// that is able to make p2kh output as they're the most efficient.
 	scopes := w.Manager.ScopesForExternalAddrType(
-		waddrmgr.WitnessPubKey,
+		waddrmgr.PubKeyHash,
 	)
 	manager, err := w.Manager.FetchScopedKeyManager(scopes[0])
 	if err != nil {
@@ -3124,7 +3120,7 @@ type SignatureError struct {
 // being unable to determine a previous output script to redeem.
 //
 // The transaction pointed to by tx is modified by this function.
-func (w *Wallet) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashType,
+func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType txscript.SigHashType,
 	additionalPrevScripts map[wire.OutPoint][]byte,
 	additionalKeysByAddress map[string]*bchutil.WIF,
 	p2shRedeemScriptsByAddress map[string][]byte) ([]SignatureError, error) {
@@ -3212,8 +3208,8 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashType,
 				txscript.SigHashSingle || i < len(tx.TxOut) {
 
 				script, err := txscript.SignTxOutput(w.ChainParams(),
-					tx, i, prevOutScript, hashType, getKey,
-					getScript, txIn.SignatureScript)
+					tx, i, inputValues[i], prevOutScript, hashType,
+					getKey, getScript, txIn.SignatureScript)
 				// Failure to sign isn't an error, it just means that
 				// the tx isn't complete.
 				if err != nil {

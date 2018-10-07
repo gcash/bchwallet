@@ -21,7 +21,7 @@ import (
 	"github.com/gcash/bchwallet/netparams"
 	"github.com/gcash/bchwallet/wallet"
 	flags "github.com/jessevdk/go-flags"
-	"github.com/lightninglabs/neutrino"
+	"github.com/gcash/neutrino"
 )
 
 const (

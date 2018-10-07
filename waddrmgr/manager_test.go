@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/snacl"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
-	"github.com/davecgh/go-spew/spew"
 )
 
 // newHash converts the passed big-endian hex string into a chainhash.Hash.
@@ -707,7 +707,7 @@ func testImportPrivateKey(tc *testContext) bool {
 			name: "wif for uncompressed pubkey address",
 			in:   "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ",
 			expected: expectedAddr{
-				address:     "1GAehh7TsJAHuUAeKZcXf5CnwuGuGgyX2S",
+				address:     "qzn96x3rn48vveny856sc7acl3zd9zq39qgcr5u4g9",
 				addressHash: hexToBytes("a65d1a239d4ec666643d350c7bb8fc44d2881128"),
 				internal:    false,
 				imported:    true,
@@ -723,7 +723,7 @@ func testImportPrivateKey(tc *testContext) bool {
 			name: "wif for compressed pubkey address",
 			in:   "KwdMAjGmerYanjeui5SHS7JkmpZvVipYvB2LJGU1ZxJwYvP98617",
 			expected: expectedAddr{
-				address:     "1LoVGDgRs9hTfTNJNuXKSpywcbdvwRXpmK",
+				address:     "qrvn28wt44dc7wutlghjehy9c2q33j5nyctecw50xm",
 				addressHash: hexToBytes("d9351dcbad5b8f3b8bfa2f2cdc85c28118ca9326"),
 				internal:    false,
 				imported:    true,
@@ -876,7 +876,7 @@ func testImportScript(tc *testContext) bool {
 				"ed9493a9fc20fdb4a714808f0b680f1f1d935277" +
 				"48b5e3f629ffac"),
 			expected: expectedAddr{
-				address:     "3MbyWAu9UaoBewR3cArF1nwf4aQgVwzrA5",
+				address:     "prdxu6nr9ktdc4fs67eunucpwujaqgcf8cd74ct5wp",
 				addressHash: hexToBytes("da6e6a632d96dc5530d7b3c9f3017725d023093e"),
 				internal:    false,
 				imported:    true,
@@ -897,7 +897,7 @@ func testImportScript(tc *testContext) bool {
 				"6ffefb2238af8627363bdf2ed97c1f89784a1aec" +
 				"db43384f11d2acc64443c7fc299cef0400421a53ae"),
 			expected: expectedAddr{
-				address:     "34CRZpt8j81rgh9QhzuBepqPi4cBQSjhjr",
+				address:     "pqdcqr8vrl5jyghndfgzcyuma4rut9vhz5peun2far",
 				addressHash: hexToBytes("1b800cec1fe92222f36a502c139bed47c5959715"),
 				internal:    false,
 				imported:    true,
@@ -1558,6 +1558,7 @@ func testForEachAccountAddress(tc *testContext) bool {
 
 	for i := 0; i < len(addrs); i++ {
 		prefix := fmt.Sprintf("%s: #%d", prefix, i)
+
 		gotAddr := addrs[i]
 		wantAddr := expectedAddrMap[gotAddr.Address().String()]
 		if !testAddress(tc, prefix, gotAddr, wantAddr) {
@@ -2136,11 +2137,11 @@ func TestScopedKeyManagerManagement(t *testing.T) {
 	}
 
 	// Ensure that the type of the address matches as expected.
-	if externalAddr[0].AddrType() != waddrmgr.RawPubKey {
+	if externalAddr[0].AddrType() != waddrmgr.PubKeyHash {
 		t.Fatalf("addr type mismatch: expected %v, got %v",
-			waddrmgr.RawPubKey, externalAddr[0].AddrType())
+			waddrmgr.PubKeyHash, externalAddr[0].AddrType())
 	}
-	_, ok := externalAddr[0].Address().(*bchutil.AddressScriptHash)
+	_, ok := externalAddr[0].Address().(*bchutil.AddressPubKeyHash)
 	if !ok {
 		t.Fatalf("wrong type: %T", externalAddr[0].Address())
 	}
@@ -2151,7 +2152,7 @@ func TestScopedKeyManagerManagement(t *testing.T) {
 		t.Fatalf("addr type mismatch: expected %v, got %v",
 			waddrmgr.RawPubKey, internalAddr[0].AddrType())
 	}
-	_, ok = internalAddr[0].Address().(*bchutil.AddressPubKeyHash)
+	_, ok = internalAddr[0].Address().(*bchutil.AddressPubKey)
 	if !ok {
 		t.Fatalf("wrong type: %T", externalAddr[0].Address())
 	}
@@ -2332,7 +2333,7 @@ func TestRootHDKeyNeutering(t *testing.T) {
 // raw accounts created with only an account number, and not a string which is
 // eventually mapped to an account number.
 func TestNewRawAccount(t *testing.T) {
-	t.Parallel()
+	//t.Parallel()
 
 	teardown, db := emptyDB(t)
 	defer teardown()
@@ -2369,9 +2370,9 @@ func TestNewRawAccount(t *testing.T) {
 
 	// Now that we have the manager created, we'll fetch one of the default
 	// scopes for usage within this test.
-	scopedMgr, err := mgr.FetchScopedKeyManager(waddrmgr.KeyScopeBIP0084)
+	scopedMgr, err := mgr.FetchScopedKeyManager(waddrmgr.KeyScopeBIP0044)
 	if err != nil {
-		t.Fatalf("unable to fetch scope %v: %v", waddrmgr.KeyScopeBIP0084, err)
+		t.Fatalf("unable to fetch scope %v: %v", waddrmgr.KeyScopeBIP0044, err)
 	}
 
 	// With the scoped manager retrieved, we'll attempt to create a new raw

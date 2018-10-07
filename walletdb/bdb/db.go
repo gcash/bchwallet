@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/gcash/bchwallet/walletdb"
 	"github.com/coreos/bbolt"
+	"github.com/gcash/bchwallet/walletdb"
 )
 
 // convertErr converts some bolt errors to the equivalent walletdb error.

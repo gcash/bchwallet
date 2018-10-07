@@ -97,6 +97,7 @@ type WithdrawalStatus struct {
 	fees           bchutil.Amount
 	outputs        map[OutBailmentID]*WithdrawalOutput
 	sigs           map[Ntxid]TxSigs
+	amounts        map[Ntxid]InputAmounts
 	transactions   map[Ntxid]changeAwareTx
 }
 
@@ -117,6 +118,10 @@ type withdrawalInfo struct {
 // in the script and an empty RawSig should be used when the private key for a
 // pubkey is not known.
 type TxSigs [][]RawSig
+
+// InputAmounts is a slice of input amounts that is used to sign each input
+// in a transaction.
+type InputAmounts []bchutil.Amount
 
 // RawSig represents one of the signatures included in the unlocking script of
 // inputs spending from P2SH UTXOs.
@@ -176,6 +181,12 @@ func (s *WithdrawalStatus) Outputs() map[OutBailmentID]*WithdrawalOutput {
 // with that ntxid.
 func (s *WithdrawalStatus) Sigs() map[Ntxid]TxSigs {
 	return s.sigs
+}
+
+// InputAmounts returns a map of ntxids to input amounts for every input in the tx
+// with that ntxid.
+func (s *WithdrawalStatus) InputAmounts() map[Ntxid]InputAmounts {
+	return s.amounts
 }
 
 // Fees returns the total amount of network fees included in all transactions
@@ -368,7 +379,7 @@ func (tx *withdrawalTx) toMsgTx() *wire.MsgTx {
 	}
 
 	for _, i := range tx.inputs {
-		msgtx.AddTxIn(wire.NewTxIn(&i.OutPoint, []byte{}, nil))
+		msgtx.AddTxIn(wire.NewTxIn(&i.OutPoint, []byte{}))
 	}
 	return msgtx
 }
@@ -502,6 +513,10 @@ func (p *Pool) StartWithdrawal(ns walletdb.ReadWriteBucket, addrmgrNs walletdb.R
 		return nil, err
 	}
 	w.status.sigs, err = getRawSigs(w.transactions)
+	if err != nil {
+		return nil, err
+	}
+	w.status.amounts, err = getAmounts(w.transactions)
 	if err != nil {
 		return nil, err
 	}
@@ -874,7 +889,7 @@ func getRawSigs(transactions []*withdrawalTx) (map[Ntxid]TxSigs, error) {
 					log.Debugf("Generating raw sig for input %d of tx %s with privkey of %s",
 						inputIdx, ntxid, pubKey.String())
 					sig, err = txscript.RawTxInSignature(
-						msgtx, inputIdx, redeemScript, txscript.SigHashAll, ecPrivKey)
+						msgtx, inputIdx, redeemScript, txscript.SigHashAll, ecPrivKey, int64(input.Amount.ToUnit(bchutil.AmountSatoshi)))
 					if err != nil {
 						return nil, newError(ErrRawSigning, "failed to generate raw signature", err)
 					}
@@ -892,11 +907,26 @@ func getRawSigs(transactions []*withdrawalTx) (map[Ntxid]TxSigs, error) {
 	return sigs, nil
 }
 
+// getAmounts iterates over the inputs of each transaction given, creating
+// a list of input values. It returns a map of ntxids to input value lists.
+func getAmounts(transactions []*withdrawalTx) (map[Ntxid]InputAmounts, error) {
+	amounts := make(map[Ntxid]InputAmounts)
+	for _, tx := range transactions {
+		ntxid := tx.ntxid()
+		var txAmounts InputAmounts
+		for _, input := range tx.inputs {
+			txAmounts = append(txAmounts, input.Amount)
+		}
+		amounts[ntxid] = txAmounts
+	}
+	return amounts, nil
+}
+
 // SignTx signs every input of the given MsgTx by looking up (on the addr
 // manager) the redeem script for each of them and constructing the signature
 // script using that and the given raw signatures.
 // This function must be called with the manager unlocked.
-func SignTx(msgtx *wire.MsgTx, sigs TxSigs, mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, store *wtxmgr.Store, txmgrNs walletdb.ReadBucket) error {
+func SignTx(msgtx *wire.MsgTx, inputAmounts InputAmounts, sigs TxSigs, mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, store *wtxmgr.Store, txmgrNs walletdb.ReadBucket) error {
 	// We use time.Now() here as we're not going to store the new TxRecord
 	// anywhere -- we just need it to pass to store.PreviousPkScripts().
 	rec, err := wtxmgr.NewTxRecordFromMsgTx(msgtx, time.Now())
@@ -908,7 +938,7 @@ func SignTx(msgtx *wire.MsgTx, sigs TxSigs, mgr *waddrmgr.Manager, addrmgrNs wal
 		return newError(ErrTxSigning, "failed to obtain pkScripts for signing", err)
 	}
 	for i, pkScript := range pkScripts {
-		if err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, i, pkScript, sigs[i]); err != nil {
+		if err = signMultiSigUTXO(mgr, addrmgrNs, msgtx, i, int64(inputAmounts[i].ToUnit(bchutil.AmountSatoshi)), pkScript, sigs[i]); err != nil {
 			return err
 		}
 	}
@@ -932,7 +962,8 @@ func getRedeemScript(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, addr 
 // The order of the signatures must match that of the public keys in the multi-sig
 // script as OP_CHECKMULTISIG expects that.
 // This function must be called with the manager unlocked.
-func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *wire.MsgTx, idx int, pkScript []byte, sigs []RawSig) error {
+func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *wire.MsgTx,
+	idx int, inputAmount int64, pkScript []byte, sigs []RawSig) error {
 	class, addresses, _, err := txscript.ExtractPkScriptAddrs(pkScript, mgr.ChainParams())
 	if err != nil {
 		return newError(ErrTxSigning, "unparseable pkScript", err)
@@ -973,7 +1004,7 @@ func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *
 	}
 	tx.TxIn[idx].SignatureScript = script
 
-	if err := validateSigScript(tx, idx, pkScript); err != nil {
+	if err := validateSigScript(tx, idx, pkScript, inputAmount); err != nil {
 		return err
 	}
 	return nil
@@ -981,9 +1012,9 @@ func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *
 
 // validateSigScripts executes the signature script of the tx input with the
 // given index, returning an error if it fails.
-func validateSigScript(msgtx *wire.MsgTx, idx int, pkScript []byte) error {
+func validateSigScript(msgtx *wire.MsgTx, idx int, pkScript []byte, inputAmount int64) error {
 	vm, err := txscript.NewEngine(pkScript, msgtx, idx,
-		txscript.StandardVerifyFlags, nil, nil, 0)
+		txscript.StandardVerifyFlags, nil, nil, inputAmount)
 	if err != nil {
 		return newError(ErrTxSigning, "cannot create script engine", err)
 	}

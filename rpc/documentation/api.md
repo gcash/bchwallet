@@ -744,6 +744,9 @@ transaction using a wallet private keys.
   be created for.  If there are no indexes, input scripts are created for every
   input that is missing an input script.
 
+- `repeated int64 input_values`: The value (in satoshis) of each input. This is
+  needed to sign the transaction using the bitcoin cash signing algorithm.
+
 **Response:** `SignTransactionResponse`
 
 - `bytes transaction`: The serialized transaction with added input scripts.

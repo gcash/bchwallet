@@ -102,6 +102,7 @@ type dbWithdrawalStatus struct {
 	Fees           bchutil.Amount
 	Outputs        map[OutBailmentID]dbWithdrawalOutput
 	Sigs           map[Ntxid]TxSigs
+	Amounts        map[Ntxid]InputAmounts
 	Transactions   map[Ntxid]dbChangeAwareTx
 }
 
@@ -456,6 +457,7 @@ func serializeWithdrawal(requests []OutputRequest, startAddress WithdrawalAddres
 		Fees:         status.fees,
 		Outputs:      dbOutputs,
 		Sigs:         status.sigs,
+		Amounts:      status.amounts,
 		Transactions: dbTransactions,
 	}
 	row := dbWithdrawalRow{
@@ -537,6 +539,7 @@ func deserializeWithdrawal(p *Pool, ns, addrmgrNs walletdb.ReadBucket, serialize
 		fees:           row.Status.Fees,
 		outputs:        make(map[OutBailmentID]*WithdrawalOutput, len(row.Status.Outputs)),
 		sigs:           row.Status.Sigs,
+		amounts:        row.Status.Amounts,
 		transactions:   make(map[Ntxid]changeAwareTx, len(row.Status.Transactions)),
 	}
 	for oid, output := range row.Status.Outputs {

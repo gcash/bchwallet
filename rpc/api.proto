@@ -229,6 +229,10 @@ message SignTransactionRequest {
 	// transaction if any of the inputs to be signed can not be, the RPC
 	// immediately errors.
 	repeated uint32 input_indexes = 3;
+
+	// Values must be provided for each input in order to sign using
+	// the bitcoin cash signing algorithm.
+	repeated int64 input_values = 4;
 }
 message SignTransactionResponse {
 	bytes transaction = 1;

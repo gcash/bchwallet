@@ -2332,6 +2332,7 @@ func (a *bchAddress) ReadFrom(r io.Reader) (n int64, err error) {
 
 	addr, err := bchutil.NewAddressPubKeyHash(pubKeyHash[:], a.store.netParams())
 	if err != nil {
+		fmt.Println("here")
 		return n, err
 	}
 	a.address = addr
