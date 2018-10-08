@@ -1,8 +1,9 @@
 bchwallet
 =========
-
 [![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)](https://travis-ci.org/gcash/bchwallet)
-[![Build status](https://ci.appveyor.com/api/projects/status/88nxvckdj8upqr36/branch/master?svg=true)](https://ci.appveyor.com/project/jrick/btcwallet/branch/master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gcash/bchwallet)](https://goreportcard.com/report/github.com/gcash/bchwallet)
+[![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/gcash/bchwallet)
 
 bchwallet is a daemon handling bitcoin cash wallet functionality for a
 single user.  It acts as both an RPC client to bchd and an RPC server
