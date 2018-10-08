@@ -15,6 +15,7 @@ import (
 	"github.com/btcsuite/golangcrypto/ssh/terminal"
 	"github.com/gcash/bchutil/hdkeychain"
 	"github.com/gcash/bchwallet/internal/legacy/keystore"
+	"github.com/tyler-smith/go-bip39"
 )
 
 // ProvideSeed is used to prompt for the wallet seed which maybe required during
@@ -268,13 +269,18 @@ func Seed(reader *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if !useUserSeed {
-		seed, err := hdkeychain.GenerateSeed(hdkeychain.RecommendedSeedLen)
+		entropy, err := bip39.NewEntropy(128)
 		if err != nil {
 			return nil, err
 		}
+		mnemonic, err := bip39.NewMnemonic(entropy)
+		if err != nil {
+			return nil, err
+		}
+		seed := bip39.NewSeed(mnemonic, "")
 
-		fmt.Println("Your wallet generation seed is:")
-		fmt.Printf("%x\n", seed)
+		fmt.Printf("Your wallet generation seed is:\n\n")
+		fmt.Printf("%s\n\n", mnemonic)
 		fmt.Println("IMPORTANT: Keep the seed in a safe place as you\n" +
 			"will NOT be able to restore your wallet without it.")
 		fmt.Println("Please keep in mind that anyone who has access\n" +
@@ -301,13 +307,11 @@ func Seed(reader *bufio.Reader) ([]byte, error) {
 
 	for {
 		fmt.Print("Enter existing wallet seed: ")
-		seedStr, err := reader.ReadString('\n')
+		mnemonic, err := reader.ReadString('\n')
 		if err != nil {
 			return nil, err
 		}
-		seedStr = strings.TrimSpace(strings.ToLower(seedStr))
-
-		seed, err := hex.DecodeString(seedStr)
+		seed := bip39.NewSeed(strings.TrimSpace(mnemonic), "")
 		if err != nil || len(seed) < hdkeychain.MinSeedBytes ||
 			len(seed) > hdkeychain.MaxSeedBytes {
 

@@ -161,10 +161,22 @@
   revision = "462a8a75388506b68f76661af8d649f0b88e5301"
 
 [[projects]]
+  digest = "1:73e0d2644cf33beeafbfb79804143ac9738bed3c28a12fd5e61bd3b13ac95407"
+  name = "github.com/tyler-smith/go-bip39"
+  packages = [
+    ".",
+    "wordlists",
+  ]
+  pruneopts = "UT"
+  revision = "2af0a847066a4f2669040ccd44a79c8eca10806a"
+  version = "v1.0.0"
+
+[[projects]]
   branch = "master"
-  digest = "1:9c2ed66f474408b23cdc4a845f0236897f7b826bf1c4b19eab6e90df998905cb"
+  digest = "1:f75aabe1fa842a4c3359615e493b59e135a1f7b2aee71727f9b46655bb75be82"
   name = "golang.org/x/crypto"
   packages = [
+    "pbkdf2",
     "ripemd160",
     "ssh/terminal",
   ]
@@ -292,6 +304,7 @@
     "github.com/jessevdk/go-flags",
     "github.com/jrick/logrotate/rotator",
     "github.com/lightninglabs/gozmq",
+    "github.com/tyler-smith/go-bip39",
     "golang.org/x/crypto/ripemd160",
     "golang.org/x/crypto/ssh/terminal",
     "golang.org/x/net/context",
