@@ -46,7 +46,7 @@ service WalletLoaderService {
 	rpc CreateWallet (CreateWalletRequest) returns (CreateWalletResponse);
 	rpc OpenWallet (OpenWalletRequest) returns (OpenWalletResponse);
 	rpc CloseWallet (CloseWalletRequest) returns (CloseWalletResponse);
-	rpc StartConsensusRpc (StartConsensusRpcRequest) returns (StartConsensusRpcResponse);
+	rpc StartConsensusRPC (StartConsensusRpcRequest) returns (StartConsensusRpcResponse);
 }
 
 message TransactionDetails {

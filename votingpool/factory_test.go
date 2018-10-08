@@ -56,7 +56,7 @@ func getUniqueID() uint32 {
 func createWithdrawalTx(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, inputAmounts []int64, outputAmounts []int64) *withdrawalTx {
 	net := pool.Manager().ChainParams()
 	tx := newWithdrawalTx(defaultTxOptions)
-	_, credits := TstCreateCreditsOnNewSeries(t, dbtx, pool, inputAmounts)
+	_, credits := tstCreateCreditsOnNewSeries(t, dbtx, pool, inputAmounts)
 	for _, c := range credits {
 		tx.addInput(c)
 	}
@@ -218,11 +218,11 @@ func TstCreatePoolAndTxStore(t *testing.T) (tearDown func(), db walletdb.DB, poo
 	return teardown, db, pool, store
 }
 
-// TstCreateCreditsOnNewSeries creates a new Series (with a unique ID) and a
+// tstCreateCreditsOnNewSeries creates a new Series (with a unique ID) and a
 // slice of credits locked to the series' address with branch==1 and index==0.
 // The new Series will use a 2-of-3 configuration and will be empowered with
 // all of its private keys.
-func TstCreateCreditsOnNewSeries(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, amounts []int64) (uint32, []credit) {
+func tstCreateCreditsOnNewSeries(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, amounts []int64) (uint32, []Credit) {
 	masters := []*hdkeychain.ExtendedKey{
 		TstCreateMasterKey(t, bytes.Repeat(uint32ToBytes(getUniqueID()), 4)),
 		TstCreateMasterKey(t, bytes.Repeat(uint32ToBytes(getUniqueID()), 4)),
@@ -230,12 +230,12 @@ func TstCreateCreditsOnNewSeries(t *testing.T, dbtx walletdb.ReadWriteTx, pool *
 	}
 	def := TstCreateSeriesDef(t, pool, 2, masters)
 	TstCreateSeries(t, dbtx, pool, []TstSeriesDef{def})
-	return def.SeriesID, TstCreateSeriesCredits(t, dbtx, pool, def.SeriesID, amounts)
+	return def.SeriesID, tstCreateSeriesCredits(t, dbtx, pool, def.SeriesID, amounts)
 }
 
-// TstCreateSeriesCredits creates a new credit for every item in the amounts
+// tstCreateSeriesCredits creates a new Credit for every item in the amounts
 // slice, locked to the given series' address with branch==1 and index==0.
-func TstCreateSeriesCredits(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, seriesID uint32, amounts []int64) []credit {
+func tstCreateSeriesCredits(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, seriesID uint32, amounts []int64) []Credit {
 	addr := TstNewWithdrawalAddress(t, dbtx, pool, seriesID, Branch(1), Index(0))
 	pkScript, err := txscript.PayToAddrScript(addr.addr)
 	if err != nil {
@@ -243,7 +243,7 @@ func TstCreateSeriesCredits(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool,
 	}
 	msgTx := createMsgTx(pkScript, amounts)
 	txHash := msgTx.TxHash()
-	credits := make([]credit, len(amounts))
+	credits := make([]Credit, len(amounts))
 	for i := range msgTx.TxOut {
 		c := wtxmgr.Credit{
 			OutPoint: wire.OutPoint{
@@ -261,22 +261,22 @@ func TstCreateSeriesCredits(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool,
 	return credits
 }
 
-// TstCreateSeriesCreditsOnStore inserts a new credit in the given store for
+// TstCreateSeriesCreditsOnStore inserts a new Credit in the given store for
 // every item in the amounts slice. These credits are locked to the votingpool
 // address composed of the given seriesID, branch==1 and index==0.
 func TstCreateSeriesCreditsOnStore(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, seriesID uint32, amounts []int64,
-	store *wtxmgr.Store) []credit {
+	store *wtxmgr.Store) []Credit {
 	branch := Branch(1)
 	idx := Index(0)
 	pkScript := TstCreatePkScript(t, dbtx, pool, seriesID, branch, idx)
-	eligible := make([]credit, len(amounts))
+	eligible := make([]Credit, len(amounts))
 	for i, credit := range TstCreateCreditsOnStore(t, dbtx, store, pkScript, amounts) {
 		eligible[i] = newCredit(credit, *TstNewWithdrawalAddress(t, dbtx, pool, seriesID, branch, idx))
 	}
 	return eligible
 }
 
-// TstCreateCreditsOnStore inserts a new credit in the given store for
+// TstCreateCreditsOnStore inserts a new Credit in the given store for
 // every item in the amounts slice.
 func TstCreateCreditsOnStore(t *testing.T, dbtx walletdb.ReadWriteTx, s *wtxmgr.Store, pkScript []byte, amounts []int64) []wtxmgr.Credit {
 	msgTx := createMsgTx(pkScript, amounts)
@@ -448,7 +448,7 @@ func TstConstantFee(fee bchutil.Amount) func() bchutil.Amount {
 func createAndFulfillWithdrawalRequests(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, roundID uint32) withdrawalInfo {
 
 	params := pool.Manager().ChainParams()
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
 	requests := []OutputRequest{
 		TstNewOutputRequest(t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", 3e6, params),
 		TstNewOutputRequest(t, 2, "3PbExiaztsSYgh6zeMswC49hLUwhTQ86XG", 2e6, params),

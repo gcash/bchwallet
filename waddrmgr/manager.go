@@ -409,7 +409,6 @@ func (m *Manager) Close() {
 	m.masterKeyPub.Zero()
 
 	m.closed = true
-	return
 }
 
 // NewScopedKeyManager creates a new scoped key manager from the root manager. A
@@ -561,7 +560,7 @@ func (m *Manager) ScopesForExternalAddrType(addrType AddressType) []KeyScope {
 	m.mtx.RLock()
 	defer m.mtx.RUnlock()
 
-	scopes, _ := m.externalAddrSchemas[addrType]
+	scopes := m.externalAddrSchemas[addrType]
 	return scopes
 }
 
@@ -571,7 +570,7 @@ func (m *Manager) ScopesForInternalAddrTypes(addrType AddressType) []KeyScope {
 	m.mtx.RLock()
 	defer m.mtx.RUnlock()
 
-	scopes, _ := m.internalAddrSchemas[addrType]
+	scopes := m.internalAddrSchemas[addrType]
 	return scopes
 }
 

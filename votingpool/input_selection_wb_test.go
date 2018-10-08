@@ -54,7 +54,7 @@ func TestGetEligibleInputs(t *testing.T) {
 	startAddr := TstNewWithdrawalAddress(t, dbtx, pool, 1, 0, 0)
 	lastSeriesID := uint32(2)
 	currentBlock := int32(TstInputsBlock + eligibleInputMinConfirmations + 1)
-	var eligibles []credit
+	var eligibles []Credit
 	txmgrNs := dbtx.ReadBucket(txmgrNamespaceKey)
 	TstRunWithManagerUnlocked(t, pool.Manager(), addrmgrNs, func() {
 		eligibles, err = pool.getEligibleInputs(ns, addrmgrNs,
@@ -231,9 +231,9 @@ func TestEligibleInputsAreEligible(t *testing.T) {
 	defer dbtx.Commit()
 
 	var chainHeight int32 = 1000
-	_, credits := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold)})
+	_, credits := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold)})
 	c := credits[0]
-	// Make sure credit is old enough to pass the minConf check.
+	// Make sure Credit is old enough to pass the minConf check.
 	c.BlockMeta.Height = int32(eligibleInputMinConfirmations)
 
 	if !pool.isCreditEligible(c, eligibleInputMinConfirmations, chainHeight, dustThreshold) {
@@ -252,18 +252,18 @@ func TestNonEligibleInputsAreNotEligible(t *testing.T) {
 	defer dbtx.Commit()
 
 	var chainHeight int32 = 1000
-	_, credits := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold - 1)})
+	_, credits := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold - 1)})
 	c := credits[0]
-	// Make sure credit is old enough to pass the minConf check.
+	// Make sure Credit is old enough to pass the minConf check.
 	c.BlockMeta.Height = int32(eligibleInputMinConfirmations)
 
-	// Check that credit below dustThreshold is rejected.
+	// Check that Credit below dustThreshold is rejected.
 	if pool.isCreditEligible(c, eligibleInputMinConfirmations, chainHeight, dustThreshold) {
 		t.Errorf("Input is eligible and it should not be.")
 	}
 
-	// Check that a credit with not enough confirmations is rejected.
-	_, credits = TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold)})
+	// Check that a Credit with not enough confirmations is rejected.
+	_, credits = tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold)})
 	c = credits[0]
 	// The calculation of if it has been confirmed does this: chainheigt - bh +
 	// 1 >= target, which is quite weird, but the reason why I need to put 902
@@ -301,20 +301,20 @@ func TestCreditSortingByAddress(t *testing.T) {
 	c5 := newDummyCredit(t, dbtx, pool, 1, 1, 0, shaHash0, 0)
 	c6 := newDummyCredit(t, dbtx, pool, 2, 0, 0, shaHash0, 0)
 
-	randomCredits := [][]credit{
+	randomCredits := [][]Credit{
 		{c6, c5, c4, c3, c2, c1, c0},
 		{c2, c1, c0, c6, c5, c4, c3},
 		{c6, c4, c5, c2, c3, c0, c1},
 	}
 
-	want := []credit{c0, c1, c2, c3, c4, c5, c6}
+	want := []Credit{c0, c1, c2, c3, c4, c5, c6}
 
 	for _, random := range randomCredits {
 		sort.Sort(byAddress(random))
 		got := random
 
 		if len(got) != len(want) {
-			t.Fatalf("Sorted credit slice size wrong: Got: %d, want: %d",
+			t.Fatalf("Sorted Credit slice size wrong: Got: %d, want: %d",
 				len(got), len(want))
 		}
 
@@ -327,11 +327,11 @@ func TestCreditSortingByAddress(t *testing.T) {
 	}
 }
 
-// newDummyCredit creates a new credit with the given hash and outpointIdx,
+// newDummyCredit creates a new Credit with the given hash and outpointIdx,
 // locked to the votingpool address identified by the given
 // series/index/branch.
 func newDummyCredit(t *testing.T, dbtx walletdb.ReadWriteTx, pool *Pool, series uint32, index Index, branch Branch,
-	txHash []byte, outpointIdx uint32) credit {
+	txHash []byte, outpointIdx uint32) Credit {
 	var hash chainhash.Hash
 	if err := hash.SetBytes(txHash); err != nil {
 		t.Fatal(err)

@@ -30,24 +30,24 @@ import (
 
 const eligibleInputMinConfirmations = 100
 
-// credit is an abstraction over wtxmgr.Credit used in the construction of
+// Credit is an abstraction over wtxmgr.Credit used in the construction of
 // voting pool withdrawal transactions.
-type credit struct {
+type Credit struct {
 	wtxmgr.Credit
 	addr WithdrawalAddress
 }
 
-func newCredit(c wtxmgr.Credit, addr WithdrawalAddress) credit {
-	return credit{Credit: c, addr: addr}
+func newCredit(c wtxmgr.Credit, addr WithdrawalAddress) Credit {
+	return Credit{Credit: c, addr: addr}
 }
 
-func (c *credit) String() string {
-	return fmt.Sprintf("credit of %v locked to %v", c.Amount, c.addr)
+func (c *Credit) String() string {
+	return fmt.Sprintf("Credit of %v locked to %v", c.Amount, c.addr)
 }
 
 // byAddress defines the methods needed to satisify sort.Interface to sort a
 // slice of credits by their address.
-type byAddress []credit
+type byAddress []Credit
 
 func (c byAddress) Len() int      { return len(c) }
 func (c byAddress) Swap(i, j int) { c[i], c[j] = c[j], c[i] }
@@ -101,7 +101,7 @@ func (c byAddress) Less(i, j int) bool {
 // their address.
 func (p *Pool) getEligibleInputs(ns, addrmgrNs walletdb.ReadBucket, store *wtxmgr.Store, txmgrNs walletdb.ReadBucket, startAddress WithdrawalAddress,
 	lastSeriesID uint32, dustThreshold bchutil.Amount, chainHeight int32,
-	minConf int) ([]credit, error) {
+	minConf int) ([]Credit, error) {
 
 	if p.Series(lastSeriesID) == nil {
 		str := fmt.Sprintf("lastSeriesID (%d) does not exist", lastSeriesID)
@@ -115,12 +115,12 @@ func (p *Pool) getEligibleInputs(ns, addrmgrNs walletdb.ReadBucket, store *wtxmg
 	if err != nil {
 		return nil, err
 	}
-	var inputs []credit
+	var inputs []Credit
 	address := startAddress
 	for {
 		log.Debugf("Looking for eligible inputs at address %v", address.addrIdentifier())
 		if candidates, ok := addrMap[address.addr.EncodeAddress()]; ok {
-			var eligibles []credit
+			var eligibles []Credit
 			for _, c := range candidates {
 				candidate := newCredit(c, address)
 				if p.isCreditEligible(candidate, minConf, chainHeight, dustThreshold) {
@@ -218,7 +218,7 @@ func groupCreditsByAddr(credits []wtxmgr.Credit, chainParams *chaincfg.Params) (
 			return nil, newError(ErrInputSelection, "failed to obtain input address", err)
 		}
 		// As our credits are all P2SH we should never have more than one
-		// address per credit, so let's error out if that assumption is
+		// address per Credit, so let's error out if that assumption is
 		// violated.
 		if len(addrs) != 1 {
 			return nil, newError(ErrInputSelection, "input doesn't have exactly one address", nil)
@@ -234,10 +234,10 @@ func groupCreditsByAddr(credits []wtxmgr.Credit, chainParams *chaincfg.Params) (
 	return addrMap, nil
 }
 
-// isCreditEligible tests a given credit for eligibilty with respect
+// isCreditEligible tests a given Credit for eligibilty with respect
 // to number of confirmations, the dust threshold and that it is not
 // the charter output.
-func (p *Pool) isCreditEligible(c credit, minConf int, chainHeight int32,
+func (p *Pool) isCreditEligible(c Credit, minConf int, chainHeight int32,
 	dustThreshold bchutil.Amount) bool {
 	if c.Amount < dustThreshold {
 		return false
@@ -254,7 +254,7 @@ func (p *Pool) isCreditEligible(c credit, minConf int, chainHeight int32,
 
 // isCharterOutput - TODO: In order to determine this, we need the txid
 // and the output index of the current charter output, which we don't have yet.
-func (p *Pool) isCharterOutput(c credit) bool {
+func (p *Pool) isCharterOutput(c Credit) bool {
 	return false
 }
 

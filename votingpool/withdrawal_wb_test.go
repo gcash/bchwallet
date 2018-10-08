@@ -42,7 +42,7 @@ func TestOutputSplittingNotEnoughInputs(t *testing.T) {
 		TstNewOutputRequest(t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", output1Amount, net),
 		TstNewOutputRequest(t, 2, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", output2Amount, net),
 	}
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{7})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{7})
 	w := newWithdrawal(0, requests, eligible, *TstNewChangeAddress(t, pool, seriesID, 0))
 	w.txOptions = func(tx *withdrawalTx) {
 		// Trigger an output split because of lack of inputs by forcing a high fee.
@@ -91,7 +91,7 @@ func TestOutputSplittingOversizeTx(t *testing.T) {
 	smallInput := int64(2)
 	request := TstNewOutputRequest(
 		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", requestAmount, pool.Manager().ChainParams())
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{smallInput, bigInput})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{smallInput, bigInput})
 	changeStart := TstNewChangeAddress(t, pool, seriesID, 0)
 	w := newWithdrawal(0, []OutputRequest{request}, eligible, *changeStart)
 	w.txOptions = func(tx *withdrawalTx) {
@@ -150,7 +150,7 @@ func TestSplitLastOutputNoOutputs(t *testing.T) {
 	}
 	defer dbtx.Commit()
 
-	w := newWithdrawal(0, []OutputRequest{}, []credit{}, ChangeAddress{})
+	w := newWithdrawal(0, []OutputRequest{}, []Credit{}, ChangeAddress{})
 	w.current = createWithdrawalTx(t, dbtx, pool, []int64{}, []int64{})
 
 	err = w.splitLastOutput()
@@ -173,7 +173,7 @@ func TestWithdrawalTxOutputs(t *testing.T) {
 	net := pool.Manager().ChainParams()
 
 	// Create eligible inputs and the list of outputs we need to fulfil.
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
 	outputs := []OutputRequest{
 		TstNewOutputRequest(t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", 3e6, net),
 		TstNewOutputRequest(t, 2, "3PbExiaztsSYgh6zeMswC49hLUwhTQ86XG", 2e6, net),
@@ -212,7 +212,7 @@ func TestFulfillRequestsNoSatisfiableOutputs(t *testing.T) {
 	}
 	defer dbtx.Commit()
 
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{1e6})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{1e6})
 	request := TstNewOutputRequest(
 		t, 1, "3Qt1EaKRD9g9FeL2DGkLLswhK1AKmmXFSe", bchutil.Amount(3e6), pool.Manager().ChainParams())
 	changeStart := TstNewChangeAddress(t, pool, seriesID, 0)
@@ -253,7 +253,7 @@ func TestFulfillRequestsNotEnoughCreditsForAllRequests(t *testing.T) {
 	net := pool.Manager().ChainParams()
 
 	// Create eligible inputs and the list of outputs we need to fulfil.
-	seriesID, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
+	seriesID, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{2e6, 4e6})
 	out1 := TstNewOutputRequest(
 		t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", bchutil.Amount(3e6), net)
 	out2 := TstNewOutputRequest(
@@ -441,7 +441,7 @@ func TestRollbackLastOutputWhenNewOutputAdded(t *testing.T) {
 	defer dbtx.Commit()
 
 	net := pool.Manager().ChainParams()
-	series, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{5, 5})
+	series, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{5, 5})
 	requests := []OutputRequest{
 		// This is ordered by bailment ID
 		TstNewOutputRequest(t, 1, "34eVkREKgvvGASZW7hkgE2uNc1yycntMK6", 1, net),
@@ -499,7 +499,7 @@ func TestRollbackLastOutputWhenNewInputAdded(t *testing.T) {
 	defer dbtx.Commit()
 
 	net := pool.Manager().ChainParams()
-	series, eligible := TstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{6, 5, 4, 3, 2, 1})
+	series, eligible := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{6, 5, 4, 3, 2, 1})
 	requests := []OutputRequest{
 		// This is manually ordered by outBailmentIDHash, which is the order in
 		// which they're going to be fulfilled by w.fulfillRequests().
@@ -549,7 +549,7 @@ func TestRollbackLastOutputWhenNewInputAdded(t *testing.T) {
 		{request: requests[1], amount: requests[1].Amount},
 		{request: requests[2], amount: requests[2].Amount}}
 	checkTxOutputs(t, secondTx, wantOutputs)
-	wantInputs := []credit{eligible[4], eligible[3], eligible[2]}
+	wantInputs := []Credit{eligible[4], eligible[3], eligible[2]}
 	checkTxInputs(t, secondTx, wantInputs)
 }
 
@@ -1124,7 +1124,7 @@ func TestGetRawSigsOnlyOnePrivKeyAvailable(t *testing.T) {
 	defer dbtx.Commit()
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{5e6, 4e6}, []int64{})
-	// Remove all private keys but the first one from the credit's series.
+	// Remove all private keys but the first one from the Credit's series.
 	series := tx.inputs[0].addr.series()
 	for i := range series.privateKeys[1:] {
 		series.privateKeys[i] = nil
@@ -1486,7 +1486,7 @@ func checkMsgTxOutputs(t *testing.T, msgtx *wire.MsgTx, requests []OutputRequest
 }
 
 // checkTxInputs ensures that the tx.inputs match the given inputs.
-func checkTxInputs(t *testing.T, tx *withdrawalTx, inputs []credit) {
+func checkTxInputs(t *testing.T, tx *withdrawalTx, inputs []Credit) {
 	if len(tx.inputs) != len(inputs) {
 		t.Fatalf("Wrong number of inputs in tx; got %d, want %d", len(tx.inputs), len(inputs))
 	}
@@ -1501,7 +1501,7 @@ func checkTxInputs(t *testing.T, tx *withdrawalTx, inputs []credit) {
 // transaction (using the given raw signatures and the pkScripts from credits) and execute
 // those scripts to validate them.
 func signTxAndValidate(t *testing.T, mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *wire.MsgTx,
-	amounts InputAmounts, txSigs TxSigs, credits []credit) {
+	amounts InputAmounts, txSigs TxSigs, credits []Credit) {
 	for i := range tx.TxIn {
 		pkScript := credits[i].PkScript
 		TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {

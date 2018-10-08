@@ -11,7 +11,9 @@ import (
 	"github.com/gcash/bchwallet/wtxmgr"
 )
 
-type unstableAPI struct {
+// UnstableAPIWallet wraps the wallet with a couple additional
+// API calls.
+type UnstableAPIWallet struct {
 	w *Wallet
 }
 
@@ -20,10 +22,10 @@ type unstableAPI struct {
 // the transation (particularly for the legacy JSON-RPC server) from using
 // exported manager packages to a unified wallet package that exposes all
 // functionality by itself.  New code should not be written using this API.
-func UnstableAPI(w *Wallet) unstableAPI { return unstableAPI{w} }
+func UnstableAPI(w *Wallet) UnstableAPIWallet { return UnstableAPIWallet{w} }
 
 // TxDetails calls wtxmgr.Store.TxDetails under a single database view transaction.
-func (u unstableAPI) TxDetails(txHash *chainhash.Hash) (*wtxmgr.TxDetails, error) {
+func (u UnstableAPIWallet) TxDetails(txHash *chainhash.Hash) (*wtxmgr.TxDetails, error) {
 	var details *wtxmgr.TxDetails
 	err := walletdb.View(u.w.db, func(dbtx walletdb.ReadTx) error {
 		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
@@ -36,7 +38,7 @@ func (u unstableAPI) TxDetails(txHash *chainhash.Hash) (*wtxmgr.TxDetails, error
 
 // RangeTransactions calls wtxmgr.Store.RangeTransactions under a single
 // database view tranasction.
-func (u unstableAPI) RangeTransactions(begin, end int32, f func([]wtxmgr.TxDetails) (bool, error)) error {
+func (u UnstableAPIWallet) RangeTransactions(begin, end int32, f func([]wtxmgr.TxDetails) (bool, error)) error {
 	return walletdb.View(u.w.db, func(dbtx walletdb.ReadTx) error {
 		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 		return u.w.TxStore.RangeTransactions(txmgrNs, begin, end, f)

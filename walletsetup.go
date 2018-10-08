@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
@@ -60,8 +59,7 @@ func convertLegacyKeystore(legacyKeyStore *keystore.Store, w *wallet.Wallet) err
 				continue
 			}
 
-			wif, err := bchutil.NewWIF((*bchec.PrivateKey)(privKey),
-				netParams, addr.Compressed())
+			wif, err := bchutil.NewWIF(privKey, netParams, addr.Compressed())
 			if err != nil {
 				fmt.Printf("WARN: Failed to create wallet "+
 					"import format for address %v: %v\n",

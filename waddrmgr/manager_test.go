@@ -594,11 +594,7 @@ func testInternalAddresses(tc *testContext) bool {
 		return false
 	}
 	tc.unlocked = false
-	if !testResults() {
-		return false
-	}
-
-	return true
+	return testResults()
 }
 
 // testLocking tests the basic locking semantics of the address manager work
@@ -849,11 +845,7 @@ func testImportPrivateKey(tc *testContext) bool {
 		return false
 	}
 	tc.unlocked = false
-	if !testResults() {
-		return false
-	}
-
-	return true
+	return testResults()
 }
 
 // testImportScript tests that importing scripts works properly.  It ensures
@@ -1017,11 +1009,7 @@ func testImportScript(tc *testContext) bool {
 		return false
 	}
 	tc.unlocked = false
-	if !testResults() {
-		return false
-	}
-
-	return true
+	return testResults()
 }
 
 // testMarkUsed ensures used addresses are flagged as such.
@@ -1074,7 +1062,7 @@ func testMarkUsed(tc *testContext) bool {
 			if tc.create {
 				// Test that initially the address is not flagged as used
 				used := maddr.Used(ns)
-				if used != false {
+				if used {
 					tc.t.Errorf("%s #%d: unexpected used flag -- got "+
 						"%v, want %v", prefix, i, used, false)
 				}
@@ -1085,7 +1073,7 @@ func testMarkUsed(tc *testContext) bool {
 				return nil
 			}
 			used := maddr.Used(ns)
-			if used != true {
+			if !used {
 				tc.t.Errorf("%s #%d: unexpected used flag -- got "+
 					"%v, want %v", prefix, i, used, true)
 			}
@@ -1335,10 +1323,7 @@ func testNewAccount(tc *testContext) bool {
 		return err
 	})
 	wantErrCode = waddrmgr.ErrInvalidAccount
-	if !checkManagerError(tc.t, testName, err, wantErrCode) {
-		return false
-	}
-	return true
+	return checkManagerError(tc.t, testName, err, wantErrCode)
 }
 
 // testLookupAccount tests the basic account lookup func of the address manager
@@ -1388,8 +1373,7 @@ func testLookupAccount(tc *testContext) bool {
 		lastAccount, err = tc.manager.LastAccount(ns)
 		return err
 	})
-	var expectedLastAccount uint32
-	expectedLastAccount = 1
+	expectedLastAccount := uint32(1)
 	if !tc.create {
 		// Existing wallet manager will have 3 accounts
 		expectedLastAccount = 2
@@ -1487,10 +1471,7 @@ func testRenameAccount(tc *testContext) bool {
 		return err
 	})
 	wantErrCode = waddrmgr.ErrAccountNotFound
-	if !checkManagerError(tc.t, testName, err, wantErrCode) {
-		return false
-	}
-	return true
+	return checkManagerError(tc.t, testName, err, wantErrCode)
 }
 
 // testForEachAccount tests the retrieve all accounts func of the address
@@ -2095,11 +2076,7 @@ func TestScopedKeyManagerManagement(t *testing.T) {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
 		scopedMgr, err = mgr.NewScopedKeyManager(ns, testScope, addrSchema)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
 	if err != nil {
 		t.Fatalf("unable to read db: %v", err)
@@ -2191,11 +2168,7 @@ func TestScopedKeyManagerManagement(t *testing.T) {
 		lastAddr, err = scopedMgr.LastExternalAddress(
 			ns, waddrmgr.DefaultAccountNum,
 		)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
 	if err != nil {
 		t.Fatalf("open: unexpected error: %v", err)
@@ -2288,11 +2261,7 @@ func TestRootHDKeyNeutering(t *testing.T) {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
 		_, err := mgr.NewScopedKeyManager(ns, testScope, addrSchema)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
 	if err != nil {
 		t.Fatalf("unable to read db: %v", err)
@@ -2318,11 +2287,7 @@ func TestRootHDKeyNeutering(t *testing.T) {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
 		_, err := mgr.NewScopedKeyManager(ns, testScope, addrSchema)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return err
 	})
 	if err == nil {
 		t.Fatalf("new scoped manager creation should have failed")

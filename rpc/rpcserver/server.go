@@ -785,7 +785,7 @@ func (s *loaderServer) CloseWallet(ctx context.Context, req *pb.CloseWalletReque
 	return &pb.CloseWalletResponse{}, nil
 }
 
-func (s *loaderServer) StartConsensusRpc(ctx context.Context, req *pb.StartConsensusRpcRequest) (
+func (s *loaderServer) StartConsensusRPC(ctx context.Context, req *pb.StartConsensusRpcRequest) (
 	*pb.StartConsensusRpcResponse, error) {
 
 	defer zero.Bytes(req.Password)

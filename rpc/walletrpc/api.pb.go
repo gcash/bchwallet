@@ -3486,7 +3486,7 @@ type WalletLoaderServiceClient interface {
 	CreateWallet(ctx context.Context, in *CreateWalletRequest, opts ...grpc.CallOption) (*CreateWalletResponse, error)
 	OpenWallet(ctx context.Context, in *OpenWalletRequest, opts ...grpc.CallOption) (*OpenWalletResponse, error)
 	CloseWallet(ctx context.Context, in *CloseWalletRequest, opts ...grpc.CallOption) (*CloseWalletResponse, error)
-	StartConsensusRpc(ctx context.Context, in *StartConsensusRpcRequest, opts ...grpc.CallOption) (*StartConsensusRpcResponse, error)
+	StartConsensusRPC(ctx context.Context, in *StartConsensusRpcRequest, opts ...grpc.CallOption) (*StartConsensusRpcResponse, error)
 }
 
 type walletLoaderServiceClient struct {
@@ -3533,9 +3533,9 @@ func (c *walletLoaderServiceClient) CloseWallet(ctx context.Context, in *CloseWa
 	return out, nil
 }
 
-func (c *walletLoaderServiceClient) StartConsensusRpc(ctx context.Context, in *StartConsensusRpcRequest, opts ...grpc.CallOption) (*StartConsensusRpcResponse, error) {
+func (c *walletLoaderServiceClient) StartConsensusRPC(ctx context.Context, in *StartConsensusRpcRequest, opts ...grpc.CallOption) (*StartConsensusRpcResponse, error) {
 	out := new(StartConsensusRpcResponse)
-	err := c.cc.Invoke(ctx, "/walletrpc.WalletLoaderService/StartConsensusRpc", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/walletrpc.WalletLoaderService/StartConsensusRPC", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -3548,7 +3548,7 @@ type WalletLoaderServiceServer interface {
 	CreateWallet(context.Context, *CreateWalletRequest) (*CreateWalletResponse, error)
 	OpenWallet(context.Context, *OpenWalletRequest) (*OpenWalletResponse, error)
 	CloseWallet(context.Context, *CloseWalletRequest) (*CloseWalletResponse, error)
-	StartConsensusRpc(context.Context, *StartConsensusRpcRequest) (*StartConsensusRpcResponse, error)
+	StartConsensusRPC(context.Context, *StartConsensusRpcRequest) (*StartConsensusRpcResponse, error)
 }
 
 func RegisterWalletLoaderServiceServer(s *grpc.Server, srv WalletLoaderServiceServer) {
@@ -3627,20 +3627,20 @@ func _WalletLoaderService_CloseWallet_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WalletLoaderService_StartConsensusRpc_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WalletLoaderService_StartConsensusRPC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StartConsensusRpcRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(WalletLoaderServiceServer).StartConsensusRpc(ctx, in)
+		return srv.(WalletLoaderServiceServer).StartConsensusRPC(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/walletrpc.WalletLoaderService/StartConsensusRpc",
+		FullMethod: "/walletrpc.WalletLoaderService/StartConsensusRPC",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WalletLoaderServiceServer).StartConsensusRpc(ctx, req.(*StartConsensusRpcRequest))
+		return srv.(WalletLoaderServiceServer).StartConsensusRPC(ctx, req.(*StartConsensusRpcRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3666,8 +3666,8 @@ var _WalletLoaderService_serviceDesc = grpc.ServiceDesc{
 			Handler:    _WalletLoaderService_CloseWallet_Handler,
 		},
 		{
-			MethodName: "StartConsensusRpc",
-			Handler:    _WalletLoaderService_StartConsensusRpc_Handler,
+			MethodName: "StartConsensusRPC",
+			Handler:    _WalletLoaderService_StartConsensusRPC_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -3677,7 +3677,7 @@ var _WalletLoaderService_serviceDesc = grpc.ServiceDesc{
 func init() { proto.RegisterFile("api.proto", fileDescriptor_00212fb1f9d3bf1c) }
 
 var fileDescriptor_00212fb1f9d3bf1c = []byte{
-	// 2421 bytes of a gzipped FileDescriptorProto
+	// 2423 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x59, 0x5b, 0x73, 0x1c, 0x47,
 	0x15, 0xce, 0x68, 0x74, 0x59, 0x9d, 0xbd, 0xb7, 0x56, 0xab, 0xf5, 0xd8, 0xb2, 0xe5, 0x49, 0x62,
 	0x3b, 0x4e, 0x22, 0x8c, 0x70, 0x20, 0x14, 0x29, 0x13, 0x5b, 0x38, 0x44, 0xd8, 0xc8, 0x5b, 0x23,
@@ -3827,7 +3827,7 @@ var fileDescriptor_00212fb1f9d3bf1c = []byte{
 	0x75, 0x79, 0x97, 0x67, 0x50, 0xd1, 0x6b, 0x06, 0x83, 0x61, 0x41, 0x4d, 0x63, 0x30, 0x2c, 0x2a,
 	0x36, 0xd0, 0x0e, 0xc0, 0xb8, 0x54, 0x40, 0xd7, 0x34, 0xf2, 0x5c, 0x0d, 0xe2, 0xac, 0x4f, 0x59,
 	0x1d, 0x9b, 0xb1, 0x56, 0x49, 0x18, 0x66, 0x9c, 0xaf, 0x3b, 0x0c, 0x33, 0x2e, 0x28, 0x40, 0xd0,
-	0x2f, 0xa1, 0x99, 0xcb, 0xcc, 0x48, 0xb7, 0xd1, 0x69, 0x65, 0x85, 0xf3, 0xde, 0x6c, 0x22, 0xc1,
-	0x7f, 0x7f, 0x91, 0xff, 0x53, 0xfd, 0xbd, 0xff, 0x05, 0x00, 0x00, 0xff, 0xff, 0x06, 0xa5, 0xfd,
-	0x8b, 0xb6, 0x1e, 0x00, 0x00,
+	0x2f, 0xa1, 0x39, 0x91, 0x99, 0xbb, 0xdb, 0x48, 0xb7, 0xd1, 0x69, 0x65, 0x85, 0xf3, 0xde, 0x6c,
+	0x22, 0xc1, 0x7f, 0x7f, 0x91, 0xff, 0x53, 0xfd, 0xbd, 0xff, 0x05, 0x00, 0x00, 0xff, 0xff, 0x48,
+	0x0b, 0x1c, 0xbb, 0xb6, 0x1e, 0x00, 0x00,
 }

@@ -266,7 +266,7 @@ type withdrawal struct {
 	status          *WithdrawalStatus
 	transactions    []*withdrawalTx
 	pendingRequests []OutputRequest
-	eligibleInputs  []credit
+	eligibleInputs  []Credit
 	current         *withdrawalTx
 	// txOptions is a function called for every new withdrawalTx created as
 	// part of this withdrawal. It is defined as a function field because it
@@ -298,7 +298,7 @@ func (o *withdrawalTxOut) pkScript() []byte {
 
 // withdrawalTx represents a transaction constructed by the withdrawal process.
 type withdrawalTx struct {
-	inputs  []credit
+	inputs  []Credit
 	outputs []*withdrawalTxOut
 	fee     bchutil.Amount
 
@@ -399,13 +399,13 @@ func (tx *withdrawalTx) removeOutput() *withdrawalTxOut {
 }
 
 // addInput adds a new input to this transaction.
-func (tx *withdrawalTx) addInput(input credit) {
+func (tx *withdrawalTx) addInput(input Credit) {
 	log.Debugf("Added tx input with amount %v", input.Amount)
 	tx.inputs = append(tx.inputs, input)
 }
 
 // removeInput removes the last added input and returns it.
-func (tx *withdrawalTx) removeInput() credit {
+func (tx *withdrawalTx) removeInput() Credit {
 	removed := tx.inputs[len(tx.inputs)-1]
 	tx.inputs = tx.inputs[:len(tx.inputs)-1]
 	log.Debugf("Removed tx input with amount %v", removed.Amount)
@@ -438,7 +438,7 @@ func (tx *withdrawalTx) addChange(pkScript []byte) bool {
 //
 // The tx needs to have two or more outputs. The case with only one output must
 // be handled separately (by the split output procedure).
-func (tx *withdrawalTx) rollBackLastOutput() ([]credit, *withdrawalTxOut, error) {
+func (tx *withdrawalTx) rollBackLastOutput() ([]Credit, *withdrawalTxOut, error) {
 	// Check precondition: At least two outputs are required in the transaction.
 	if len(tx.outputs) < 2 {
 		str := fmt.Sprintf("at least two outputs expected; got %d", len(tx.outputs))
@@ -447,7 +447,7 @@ func (tx *withdrawalTx) rollBackLastOutput() ([]credit, *withdrawalTxOut, error)
 
 	removedOutput := tx.removeOutput()
 
-	var removedInputs []credit
+	var removedInputs []Credit
 	// Continue until sum(in) < sum(out) + fee
 	for tx.inputTotal() >= tx.outputTotal()+tx.calculateFee() {
 		removedInputs = append(removedInputs, tx.removeInput())
@@ -461,7 +461,7 @@ func (tx *withdrawalTx) rollBackLastOutput() ([]credit, *withdrawalTxOut, error)
 
 func defaultTxOptions(tx *withdrawalTx) {}
 
-func newWithdrawal(roundID uint32, requests []OutputRequest, inputs []credit,
+func newWithdrawal(roundID uint32, requests []OutputRequest, inputs []Credit,
 	changeStart ChangeAddress) *withdrawal {
 	outputs := make(map[OutBailmentID]*WithdrawalOutput, len(requests))
 	for _, request := range requests {
@@ -549,14 +549,14 @@ func (w *withdrawal) pushRequest(request OutputRequest) {
 
 // popInput removes and returns the first input from the stack of eligible
 // inputs.
-func (w *withdrawal) popInput() credit {
+func (w *withdrawal) popInput() Credit {
 	input := w.eligibleInputs[len(w.eligibleInputs)-1]
 	w.eligibleInputs = w.eligibleInputs[:len(w.eligibleInputs)-1]
 	return input
 }
 
 // pushInput adds a new input to the top of the stack of eligible inputs.
-func (w *withdrawal) pushInput(input credit) {
+func (w *withdrawal) pushInput(input Credit) {
 	w.eligibleInputs = append(w.eligibleInputs, input)
 }
 
@@ -1004,10 +1004,7 @@ func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *
 	}
 	tx.TxIn[idx].SignatureScript = script
 
-	if err := validateSigScript(tx, idx, pkScript, inputAmount); err != nil {
-		return err
-	}
-	return nil
+	return validateSigScript(tx, idx, pkScript, inputAmount)
 }
 
 // validateSigScripts executes the signature script of the tx input with the

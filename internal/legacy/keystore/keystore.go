@@ -34,6 +34,7 @@ import (
 )
 
 const (
+	// Filename is the name of the wallet data file
 	Filename = "wallet.bin"
 
 	// Length in bytes of KDF output.
@@ -813,6 +814,7 @@ func (s *Store) writeTo(w io.Writer) (n int64, err error) {
 	return n, nil
 }
 
+// MarkDirty will set the Store's dirty boolean to true.
 // TODO: set this automatically.
 func (s *Store) MarkDirty() {
 	s.mtx.Lock()
@@ -821,6 +823,8 @@ func (s *Store) MarkDirty() {
 	s.dirty = true
 }
 
+// WriteIfDirty will check if the Store is dirty and if so
+// write the contents to disk.
 func (s *Store) WriteIfDirty() error {
 	s.mtx.RLock()
 	if !s.dirty {
@@ -1336,7 +1340,7 @@ func (s *Store) SetSyncedWith(bs *BlockStamp) {
 	}
 }
 
-// SyncHeight returns details about the block that a wallet is marked at least
+// SyncedTo returns details about the block that a wallet is marked at least
 // synced through.  The height is the height that rescans should start at when
 // syncing a wallet back to the best chain.
 //
@@ -1943,6 +1947,8 @@ func (rb *recentBlocks) iter(s *Store) *BlockIterator {
 	}
 }
 
+// Next will increment the index and return true if possible.
+// Otherwise it will return false.
 func (it *BlockIterator) Next() bool {
 	it.storeMtx.RLock()
 	defer it.storeMtx.RUnlock()
@@ -1954,6 +1960,8 @@ func (it *BlockIterator) Next() bool {
 	return true
 }
 
+// Prev will reduce the index by one if possible and return true.
+// Otherwise it will return false.
 func (it *BlockIterator) Prev() bool {
 	it.storeMtx.RLock()
 	defer it.storeMtx.RUnlock()
@@ -1965,6 +1973,7 @@ func (it *BlockIterator) Prev() bool {
 	return true
 }
 
+// BlockStamp returns a BlockStamp object for the current index.
 func (it *BlockIterator) BlockStamp() BlockStamp {
 	it.storeMtx.RLock()
 	defer it.storeMtx.RUnlock()
@@ -2595,8 +2604,7 @@ func (a *bchAddress) ExportPrivKey() (*bchutil.WIF, error) {
 	// as our program's assumptions are so broken that this needs to be
 	// caught immediately, and a stack trace here is more useful than
 	// elsewhere.
-	wif, err := bchutil.NewWIF((*bchec.PrivateKey)(pk), a.store.netParams(),
-		a.Compressed())
+	wif, err := bchutil.NewWIF(pk, a.store.netParams(), a.Compressed())
 	if err != nil {
 		panic(err)
 	}
