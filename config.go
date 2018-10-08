@@ -20,8 +20,8 @@ import (
 	"github.com/gcash/bchwallet/internal/legacy/keystore"
 	"github.com/gcash/bchwallet/netparams"
 	"github.com/gcash/bchwallet/wallet"
-	flags "github.com/jessevdk/go-flags"
 	"github.com/gcash/neutrino"
+	flags "github.com/jessevdk/go-flags"
 )
 
 const (

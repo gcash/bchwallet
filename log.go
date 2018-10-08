@@ -17,8 +17,8 @@ import (
 	"github.com/gcash/bchwallet/rpc/rpcserver"
 	"github.com/gcash/bchwallet/wallet"
 	"github.com/gcash/bchwallet/wtxmgr"
-	"github.com/jrick/logrotate/rotator"
 	"github.com/gcash/neutrino"
+	"github.com/jrick/logrotate/rotator"
 )
 
 // logWriter implements an io.Writer that outputs to both standard output and

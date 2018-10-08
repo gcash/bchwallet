@@ -50,7 +50,7 @@
   name = "github.com/gcash/bchlog"
 
 [[constraint]]
-  branch = "cashaddr"
+  branch = "master"
   name = "github.com/gcash/bchutil"
 
 [[constraint]]

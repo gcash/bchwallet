@@ -75,7 +75,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "fc8eebf80df7524d39ce76bbde31ffc1a5728256"
+  revision = "3049cb1e3e5c930cad8e8b8bdf682e2796dfa08c"
 
 [[projects]]
   branch = "master"
@@ -87,7 +87,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:871bff6196eb055d1f11978d6a365bc41a16f922feacf10ba0a65466201d7332"
+  digest = "1:b2191911872e8263271b269f8f2fda5a9d166848c5f9f27e5f785f626907fc0a"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
@@ -97,7 +97,7 @@
     "hdkeychain",
   ]
   pruneopts = "UT"
-  revision = "d47a672722c7f298641c49385d91b3558ceb6862"
+  revision = "723ab93d2b4a9a36c385e44f547433d0a3417c35"
 
 [[projects]]
   branch = "master"
