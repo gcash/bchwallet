@@ -78,37 +78,17 @@ Building or updating from source requires the following build dependencies:
     experiment by setting the `GO15VENDOREXPERIMENT` environment variable to
     `1`.  This step is not required for Go 1.6.
 
-- **Glide**
+- **Dep**
 
-  Glide is used to manage project dependencies and provide reproducible builds.
+  Dep is used to manage project dependencies.
   To install:
 
-  `go get -u github.com/Masterminds/glide`
-
-Unfortunately, the use of `glide` prevents a handy tool such as `go get` from
-automatically downloading, building, and installing the source in a single
-command.  Instead, the latest project and dependency sources must be first
-obtained manually with `git` and `glide`, and then `go` is used to build and
-install the project.
+  `$ curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh`
 
 **Getting the source**:
 
-For a first time installation, the project and dependency sources can be
-obtained manually with `git` and `glide` (create directories as needed):
-
 ```
-git clone https://github.com/gcash/bchwallet $GOPATH/src/github.com/gcash/bchwallet
-cd $GOPATH/src/github.com/gcash/bchwallet
-glide install
-```
-
-To update an existing source tree, pull the latest changes and install the
-matching dependencies:
-
-```
-cd $GOPATH/src/github.com/gcash/bchwallet
-git pull
-glide install
+go get github.com/gcash/bchwallet
 ```
 
 **Building/Installing**:
