@@ -101,7 +101,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:df3720567ffac8e4f99b483316eb2dd782cc3bf29d69a0d2ecd9c17e41e78c73"
+  digest = "1:9746d678880ad7d6e3012a5e82b8bf8ce4543fb7eedc17042562c5bc4b047fa9"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -112,7 +112,7 @@
     "headerlist",
   ]
   pruneopts = "UT"
-  revision = "6153609fca14659f22ec53291c2853ff864f3f8c"
+  revision = "8370fc5b60738382240033cf728a84641d9ee3a5"
 
 [[projects]]
   digest = "1:4c0989ca0bcd10799064318923b9bc2db6b4d6338dd75f3f2d86c3511aaaf5cf"
