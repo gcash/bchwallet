@@ -104,11 +104,13 @@ func NewBlockFilterer(params *chaincfg.Params,
 // checkFilterTx will check if the transaction is relevant and recursively loop through the
 // inputs to double check transactions that are in the block but were already processed.
 // This is necessary if the block is not sorted in topological order.
-func (bf *BlockFilterer) checkFilterTx(tx *wire.MsgTx, inputs map[chainhash.Hash]*wire.MsgTx) {
+func (bf *BlockFilterer) checkFilterTx(tx *wire.MsgTx, inputs map[chainhash.Hash][]*wire.MsgTx) {
 	if bf.FilterTx(tx) {
 		bf.RelevantTxns = append(bf.RelevantTxns, tx)
-		if dependentTx, ok := inputs[tx.TxHash()]; ok {
-			bf.checkFilterTx(dependentTx, inputs)
+		if dependentTxs, ok := inputs[tx.TxHash()]; ok {
+			for _, dependentTx := range dependentTxs {
+				bf.checkFilterTx(dependentTx, inputs)
+			}
 		}
 	}
 }
@@ -119,10 +121,12 @@ func (bf *BlockFilterer) checkFilterTx(tx *wire.MsgTx, inputs map[chainhash.Hash
 // addresses of interest, or a transaction in the block spends from outpoints
 // controlled by the wallet.
 func (bf *BlockFilterer) FilterBlock(block *wire.MsgBlock) bool {
-	inputs := make(map[chainhash.Hash]*wire.MsgTx)
+	inputs := make(map[chainhash.Hash][]*wire.MsgTx)
 	for _, tx := range block.Transactions {
 		for _, in := range tx.TxIn {
-			inputs[in.PreviousOutPoint.Hash] = tx
+			inputTxs := inputs[in.PreviousOutPoint.Hash]
+			inputTxs = append(inputTxs, tx)
+			inputs[in.PreviousOutPoint.Hash] = inputTxs
 		}
 		bf.checkFilterTx(tx, inputs)
 	}
