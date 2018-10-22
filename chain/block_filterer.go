@@ -2,6 +2,7 @@ package chain
 
 import (
 	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
@@ -100,21 +101,36 @@ func NewBlockFilterer(params *chaincfg.Params,
 	}
 }
 
+// checkFilterTx will check if the transaction is relevant and recursively loop through the
+// inputs to double check transactions that are in the block but were already processed.
+// This is necessary if the block is not sorted in topological order.
+func (bf *BlockFilterer) checkFilterTx(tx *wire.MsgTx, inputs map[chainhash.Hash][]*wire.MsgTx) {
+	if bf.FilterTx(tx) {
+		bf.RelevantTxns = append(bf.RelevantTxns, tx)
+		if dependentTxs, ok := inputs[tx.TxHash()]; ok {
+			for _, dependentTx := range dependentTxs {
+				bf.checkFilterTx(dependentTx, inputs)
+			}
+		}
+	}
+}
+
 // FilterBlock parses all txns in the provided block, searching for any that
 // contain addresses of interest in either the external or internal reverse
 // filters. This method return true iff the block contains a non-zero number of
 // addresses of interest, or a transaction in the block spends from outpoints
 // controlled by the wallet.
 func (bf *BlockFilterer) FilterBlock(block *wire.MsgBlock) bool {
-	var hasRelevantTxns bool
+	inputs := make(map[chainhash.Hash][]*wire.MsgTx)
 	for _, tx := range block.Transactions {
-		if bf.FilterTx(tx) {
-			bf.RelevantTxns = append(bf.RelevantTxns, tx)
-			hasRelevantTxns = true
+		for _, in := range tx.TxIn {
+			inputTxs := inputs[in.PreviousOutPoint.Hash]
+			inputTxs = append(inputTxs, tx)
+			inputs[in.PreviousOutPoint.Hash] = inputTxs
 		}
+		bf.checkFilterTx(tx, inputs)
 	}
-
-	return hasRelevantTxns
+	return len(bf.RelevantTxns) > 0
 }
 
 // FilterTx scans all txouts in the provided txn, testing to see if any found
