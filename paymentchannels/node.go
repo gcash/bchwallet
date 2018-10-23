@@ -11,13 +11,8 @@ import (
 	"github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p-kad-dht/opts"
 	"github.com/libp2p/go-libp2p-peerstore"
-	"github.com/libp2p/go-libp2p-protocol"
 	"github.com/libp2p/go-libp2p-routing"
 	"path"
-)
-
-const (
-	ProtocolDHT = protocol.ID("/bitcoincash/kad/1.0.0")
 )
 
 // NodeConfig contains basic configuration information that we'll need to
@@ -110,14 +105,17 @@ func NewPaymentChannelNode(config *NodeConfig) (*PaymentChannelNode, error) {
 		dhtopts.Protocols(ProtocolDHT),
 	)
 
-	return &PaymentChannelNode{
+	node := &PaymentChannelNode{
 		Host:           peerHost,
 		Routing:        routing,
 		PrivateKey:     config.PrivateKey,
 		Datastore:      dstore,
 		Wallet:         config.Wallet,
 		bootstrapPeers: config.BootstrapPeers,
-	}, nil
+	}
+	// Register the paymentchannel protocol with the host
+	peerHost.SetStreamHandler(ProtocolPaymnetChannel, node.handleNewStream)
+	return node, nil
 }
 
 // StartOnlineServices will bootstrap the peer host using the provided bootstrap peers. Once the host
