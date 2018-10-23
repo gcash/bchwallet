@@ -16,6 +16,7 @@ import (
 
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
+	"github.com/gcash/bchwallet/rpc/rpcserver"
 	"github.com/gcash/bchwallet/wallet"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/neutrino"
@@ -87,7 +88,13 @@ func walletMain() error {
 	}
 
 	loader.RunAfterLoad(func(w *wallet.Wallet) {
-		startWalletRPCServices(w, rpcs, legacyRPCServer)
+		if rpcs != nil {
+			rpcserver.StartWalletService(rpcs, w)
+		}
+
+		if legacyRPCServer != nil {
+			legacyRPCServer.RegisterWallet(w)
+		}
 	})
 
 	if !cfg.NoInitialLoad {
