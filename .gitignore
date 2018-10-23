@@ -4,6 +4,9 @@
 # Binaries
 bchwallet
 
+# Compiled packages
+pkg
+
 # Databases
 btcd.db
 *-shm
