@@ -1121,7 +1121,7 @@ out:
 }
 
 // CreateSimpleTx creates a new signed transaction spending unspent P2PKH
-// outputs with at laest minconf confirmations spending to any number of
+// outputs with at least minconf confirmations spending to any number of
 // address/amount pairs.  Change and an appropriate transaction fee are
 // automatically included, if necessary.  All transaction creation through this
 // function is serialized to prevent the creation of many transactions which
