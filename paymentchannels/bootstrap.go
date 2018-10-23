@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ipfs/go-ipfs/thirdparty/math2"
 	"github.com/libp2p/go-libp2p-host"
 	"github.com/libp2p/go-libp2p-kad-dht"
 	inet "github.com/libp2p/go-libp2p-net"
@@ -176,7 +175,7 @@ func bootstrapConnect(ctx context.Context, ph host.Host, peers []peerstore.PeerI
 }
 
 func randomSubsetOfPeers(in []peerstore.PeerInfo, max int) []peerstore.PeerInfo {
-	n := math2.IntMin(max, len(in))
+	n := IntMin(max, len(in))
 	var out []peerstore.PeerInfo
 	for _, val := range rand.Perm(len(in)) {
 		out = append(out, in[val])
@@ -185,4 +184,12 @@ func randomSubsetOfPeers(in []peerstore.PeerInfo, max int) []peerstore.PeerInfo 
 		}
 	}
 	return out
+}
+
+// IntMin returns the smaller of x or y.
+func IntMin(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
 }
