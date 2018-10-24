@@ -36,9 +36,9 @@ func TestNodeConnectivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	bobConfig := paymentchannels.NodeConfig{
-		DataDir:        path.Join(os.TempDir(), "pcBob"),
-		PrivateKey:     bobPrivKey,
-		Port:           bobPort,
+		DataDir:    path.Join(os.TempDir(), "pcBob"),
+		PrivateKey: bobPrivKey,
+		Port:       bobPort,
 		BootstrapPeers: []peerstore.PeerInfo{
 			{
 				ID:    aliceNode.Host.ID(),
