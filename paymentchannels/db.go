@@ -10,6 +10,7 @@ import (
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/libp2p/go-libp2p-peer"
+	"time"
 )
 
 var (
@@ -49,10 +50,27 @@ func initDatabase(db walletdb.DB) error {
 	return nil
 }
 
+func saveChannel(db walletdb.DB, channel *Channel) error {
+	bucketName := openChannelsBucket
+	if channel.Status != ChannelStatusOpen {
+		bucketName = closedChannelsBucket
+	}
+	err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		bucket := tx.ReadWriteBucket(paymentChannelBucket).NestedReadWriteBucket(bucketName)
+		serializedChannel, err := serializeChannel(*channel)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(channel.ID.CloneBytes(), serializedChannel)
+	})
+	return err
+}
+
 // serializableChannel is a struct that gob is capable of serializing
 type serializableChannel struct {
 	ID                 chainhash.Hash
-	State              ChannelState
+	Status             ChannelStatus
+	CreationDate       time.Time
 	Inbound            bool
 	AddressID          []byte
 	RemotePeerID       peer.ID
@@ -81,7 +99,8 @@ type serializableChannel struct {
 func serializeChannel(c Channel) ([]byte, error) {
 	serializable := serializableChannel{
 		ID:                       c.ID,
-		State:                    c.State,
+		Status:                   c.Status,
+		CreationDate:             c.CreationDate,
 		Inbound:                  c.Inbound,
 		AddressID:                c.AddressID,
 		RemotePeerID:             c.RemotePeerID,
@@ -128,7 +147,8 @@ func deserializeChannel(ser []byte, params *chaincfg.Params) (*Channel, error) {
 	}
 	c := Channel{
 		ID:                       serialable.ID,
-		State:                    serialable.State,
+		Status:                   serialable.Status,
+		CreationDate:             serialable.CreationDate,
 		Inbound:                  serialable.Inbound,
 		AddressID:                serialable.AddressID,
 		RemotePeerID:             serialable.RemotePeerID,

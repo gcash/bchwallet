@@ -2,6 +2,7 @@ package paymentchannels
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -14,6 +15,7 @@ import (
 	"github.com/libp2p/go-libp2p-crypto"
 	"github.com/libp2p/go-libp2p-peer"
 	"github.com/minio/sha256-simd"
+	"time"
 )
 
 // TODO: these should be config options
@@ -28,48 +30,47 @@ var (
 	MaxAcceptibleDustLimit = bchutil.Amount(1000)
 )
 
-type ChannelState uint8
+// ChannelStatus is the state the channel is in at any given time
+type ChannelStatus uint8
 
 const (
-	// ChannelStateOpening is the initial state of the channel until we connect
+	// ChannelStatusOpening is the initial state of the channel until we connect
 	// and exchange commitment transactions.
-	ChannelStateOpening ChannelState = 0
+	ChannelStatusOpening ChannelStatus = 0
 
-	// ChannelStateOpen is the normal running state for a channel.
-	ChannelStateOpen ChannelState = 1
+	// ChannelStatusOpen is the normal running state for a channel.
+	ChannelStatusOpen ChannelStatus = 1
 
-	// ChannelStatePendingClosure is set when either party broadcasts a commitment
+	// ChannelStatusPendingClosure is set when either party broadcasts a commitment
 	// transaction. While the transaction is still unconfirmed it will be in this
 	// state.
-	ChannelStatePendingClosure ChannelState = 2
+	ChannelStatusPendingClosure ChannelStatus = 2
 
-	// ChannelStateClosed represents a closed channel. This includes channels
+	// ChannelStatusClosed represents a closed channel. This includes channels
 	// closed by broadcasting a commitment transaction.
-	ChannelStateClosed ChannelState = 3
+	ChannelStatusClosed ChannelStatus = 3
 
-	// ChannelStateError means we messed up somehow.
-	ChannelStateError ChannelState = 4
+	// ChannelStatusError means we messed up somehow.
+	ChannelStatusError ChannelStatus = 4
 )
 
 // String is the a stringer for ChannelState
-func (s ChannelState) String() string {
+func (s ChannelStatus) String() string {
 	switch s {
-	case ChannelStateOpening:
+	case ChannelStatusOpening:
 		return "Opening"
-	case ChannelStateOpen:
+	case ChannelStatusOpen:
 		return "Open"
-	case ChannelStatePendingClosure:
+	case ChannelStatusPendingClosure:
 		return "Pending Closure"
-	case ChannelStateClosed:
+	case ChannelStatusClosed:
 		return "Closed"
-	case ChannelStateError:
+	case ChannelStatusError:
 		return "Error"
 	default:
 		return "Unknown"
 	}
 }
-
-
 
 // Channel holds all the data relevant to a payment channel
 type Channel struct {
@@ -78,8 +79,11 @@ type Channel struct {
 	// open request and the public key of the peer who received the request.
 	ID chainhash.Hash
 
-	// State allows us to quickly tell what state the channel is in.
-	State ChannelState
+	// Status allows us to quickly tell what state the channel is in.
+	Status ChannelStatus
+
+	// CreationDate is the time when the channel was opened
+	CreationDate time.Time
 
 	// Incoming specifies whether the channel was opened by us or them
 	Inbound bool
@@ -206,11 +210,12 @@ func (n *PaymentChannelNode) initNewOutgoingChannel(addr *bchutil.AddressPayment
 	channel := &Channel{
 		AddressID:              addr.AddressID[:],
 		RemotePeerID:           peerID,
+		CreationDate:           time.Now(),
 		Delay:                  uint32(DefaultChannelDelay),
 		FeePerByte:             DefaultFeePerByte,
 		DustLimit:              DefaultDustLimit,
 		Inbound:                false,
-		State:                  ChannelStateOpening,
+		Status:                 ChannelStatusOpening,
 		LocalPrivkey:           *channelPrivateKey,
 		LocalRevocationPrivkey: *firstRevocationKey,
 		LocalPayoutScript:      script,
@@ -264,12 +269,13 @@ func (n *PaymentChannelNode) initNewIncomingChannel(addressID []byte, remoteChan
 	channel := &Channel{
 		ID:                     *channelID,
 		AddressID:              addressID,
+		CreationDate:           time.Now(),
 		RemotePeerID:           remotePeerID,
 		Delay:                  delay,
 		FeePerByte:             feePerByte,
 		DustLimit:              dustLimt,
 		Inbound:                true,
-		State:                  ChannelStateOpening,
+		Status:                 ChannelStatusOpening,
 		LocalPrivkey:           *channelPrivateKey,
 		RemotePubkey:           *remoteChannelPubkey,
 		LocalRevocationPrivkey: *firstRevocationKey,
@@ -281,6 +287,52 @@ func (n *PaymentChannelNode) initNewIncomingChannel(addressID []byte, remoteChan
 	}
 
 	return channel, nil
+}
+
+// String returns the JSON representation of the channel of the channel
+func (c *Channel) String() string {
+	channelOverview := struct {
+		ID               string         `json:"ID"`
+		Status           string         `json:"status"`
+		CreationDate     time.Time      `json:"creationDate"`
+		AddressID        string         `json:"addressID"`
+		Inbound          bool           `json:"inbound"`
+		ChannelAddress   string         `json:"channelAddress"`
+		RemotePeerID     string         `json:"remotePeerID"`
+		DelayBlocks      uint32         `json:"delayBlocks"`
+		DustLimit        bchutil.Amount `json:"dustLimit"`
+		FeePerByte       bchutil.Amount `json:"feePerByte"`
+		FundingTxid      string         `json:"fundingTxid"`
+		PayoutTxid       string         `json:"payoutTxid"`
+		LocalBalance     bchutil.Amount `json:"localBalance"`
+		RemoteBalance    bchutil.Amount `json:"remoteBalance"`
+		ChannelCapacity  bchutil.Amount `json:"channelCapacity"`
+		TransactionCount uint64         `json:"transactionCount"`
+	}{
+		ID:               c.ID.String(),
+		CreationDate:     c.CreationDate,
+		AddressID:        hex.EncodeToString(c.AddressID),
+		Inbound:          c.Inbound,
+		ChannelAddress:   c.ChannelAddress.String(),
+		Status:           c.Status.String(),
+		RemotePeerID:     c.RemotePeerID.Pretty(),
+		DelayBlocks:      c.Delay,
+		DustLimit:        c.DustLimit,
+		FeePerByte:       c.FeePerByte,
+		LocalBalance:     c.LocalBalance,
+		RemoteBalance:    c.RemoteBalance,
+		ChannelCapacity:  c.LocalBalance + c.RemoteBalance,
+		TransactionCount: c.TransactionCount,
+	}
+	if c.FundingTxid.Compare(nil) > 0 {
+		channelOverview.FundingTxid = c.FundingTxid.String()
+	}
+	if c.PayoutTxid.Compare(&chainhash.Hash{}) > 0 {
+		channelOverview.PayoutTxid = c.PayoutTxid.String()
+	}
+
+	out, _ := json.MarshalIndent(channelOverview, "", "    ")
+	return string(out)
 }
 
 // buildCommitmentTransaction will build a new commitment transaction using all the data from the channel.

@@ -1,6 +1,7 @@
 package paymentchannels
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/gcash/bchd/bchec"
@@ -9,7 +10,6 @@ import (
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/paymentchannels/pb"
 	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
 	"github.com/go-errors/errors"
 	ggio "github.com/gogo/protobuf/io"
 	"github.com/golang/protobuf/proto"
@@ -49,6 +49,8 @@ func (node *PaymentChannelNode) handleNewStream(s inet.Stream) {
 	switch m.MessageType {
 	case pb.Message_CHANNEL_OPEN:
 		err = node.handleOpenChannelMessage(&m, s)
+	case pb.Message_CHANNEL_UPDATE_PROPOSAL:
+		err = node.handleChannelUpdateProposalMessage(&m, s)
 	default:
 		log.Error("Received invalid incoming message type %s from %s:", m.MessageType.String(), s.Conn().RemotePeer().Pretty())
 		return
@@ -171,20 +173,20 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 			log.Error("Received error message from peer %s while trying open channel: %s", stream.Conn().RemotePeer().Pretty(), errorMessage.Message)
 			return fmt.Errorf("remote peer %s responded with error message %s", stream.Conn().RemotePeer().Pretty(), errorMessage.Message)
 		} else {
-			return fmt.Errorf("remote peer %s responsed with error message but we failed to unmarshall the payload", stream.Conn().RemotePeer().Pretty())
+			return fmt.Errorf("remote peer %s responsed with error message but we failed to unmarshal the payload", stream.Conn().RemotePeer().Pretty())
 		}
 	} else if message2.MessageType != pb.Message_INITIAL_COMMIT { // Malfunctioning remote peer
 		sendErrorMessage(stream, "Invalid message type")
 		return fmt.Errorf("remote peer %s sent wrong message type", stream.Conn().RemotePeer().Pretty())
 	}
 
-	// Unmarshall the InitialCommmit message and make sure all the data we received is correct.
+	// unmarshal the InitialCommmit message and make sure all the data we received is correct.
 	// If anything is invalid let's send an Error message back and exit.
 	var initialCommitMessage pb.InitialCommitment
 	err = ptypes.UnmarshalAny(message2.Payload, &initialCommitMessage)
 	if err != nil {
 		sendErrorMessage(stream, "invalid InitialCommitment message")
-		return fmt.Errorf("error unmarshalling initial commitment message from remote peer %s: %s", stream.Conn().RemotePeer().Pretty(), err.Error())
+		return fmt.Errorf("error unmarshaling initial commitment message from remote peer %s: %s", stream.Conn().RemotePeer().Pretty(), err.Error())
 	}
 	fundingTxid, err := chainhash.NewHashFromStr(initialCommitMessage.FundingTxid)
 	if err != nil {
@@ -216,20 +218,161 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	if err != nil {
 		return err
 	}
-	channel.State = ChannelStateOpen
+	channel.Status = ChannelStatusOpen
 
-	err = walletdb.Update(node.Database, func(tx walletdb.ReadWriteTx) error {
-		bucket := tx.ReadWriteBucket(paymentChannelBucket).NestedReadWriteBucket(openChannelsBucket)
-		serializedChannel, err := serializeChannel(*channel)
-		if err != nil {
-			return err
-		}
-		return bucket.Put(channel.ID.CloneBytes(), serializedChannel)
-	})
+	err = saveChannel(node.Database, channel)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// handleChannelUpdateProposalMessage does the processing for an incoming request to
+// update the channel the channel balance.
+func (node *PaymentChannelNode) handleChannelUpdateProposalMessage(message *pb.Message, stream inet.Stream) error {
+	defer stream.Close()
+	var channelUpdateMessage pb.ChannelUpdateProposal
+	err := ptypes.UnmarshalAny(message.Payload, &channelUpdateMessage)
+	if err != nil {
+		sendErrorMessage(stream, "Invalid message payload")
+		return err
+	}
+	channelID, err := chainhash.NewHashFromStr(channelUpdateMessage.ChannelID)
+	if err != nil {
+		sendErrorMessage(stream, "Invalid channel ID")
+		return err
+	}
+
+	node.channelLock.Lock(*channelID)
+	defer node.channelLock.Unlock(*channelID)
+
+	channel, err := node.GetChannel(*channelID)
+	if err != nil {
+		sendErrorMessage(stream, "Invalid channel ID")
+		return err
+	}
+	if channel.RemotePeerID != stream.Conn().RemotePeer() {
+		return errors.New("received a channel update message from a peer who is not party to the channel")
+	}
+
+	if channelUpdateMessage.Amount > int64(channel.RemoteBalance) || channelUpdateMessage.Amount <= 0 {
+		sendErrorMessage(stream, "Invalid amount")
+		return err
+	}
+	channel.RemoteBalance -= bchutil.Amount(channelUpdateMessage.Amount)
+	channel.LocalBalance += bchutil.Amount(channelUpdateMessage.Amount)
+
+	newRemoteRevocationPubkey, err := bchec.ParsePubKey(channelUpdateMessage.NewRevocationPubkey, bchec.S256())
+	if err != nil {
+		sendErrorMessage(stream, "Invalid revocation pubkey")
+		return err
+	}
+	oldRemoteRevocationPubkey := channel.RemoteRevocationPubkey.SerializeCompressed()
+	channel.RemoteRevocationPubkey = *newRemoteRevocationPubkey
+
+	// Build our commitment transaction and check that the remote peer sent a valid signature
+	newCommitmentTx, localCommitmentSig, err := channel.buildCommitmentTransaction(true, node.Params)
+	if err != nil {
+		sendErrorMessage(stream, "Invalid commitment signature")
+		return err
+	}
+
+	var scriptSig []byte
+	if channel.Inbound {
+		scriptSig, err = buildCommitmentScriptSig(channelUpdateMessage.Signature, localCommitmentSig, channel.RedeemScript)
+	} else {
+		scriptSig, err = buildCommitmentScriptSig(localCommitmentSig, channelUpdateMessage.Signature, channel.RedeemScript)
+	}
+	if err != nil {
+		sendErrorMessage(stream, "Invalid commitment signature")
+		return err
+	}
+	newCommitmentTx.TxIn[0].SignatureScript = scriptSig
+	if !channel.validateCommitmentSignature(newCommitmentTx) {
+		sendErrorMessage(stream, "Invalid commitment signature")
+		return fmt.Errorf("remote peer %s sent an invalid commitment signature", channel.RemotePeerID.Pretty())
+	}
+	channel.CommitmentTx = *newCommitmentTx
+
+	// Copy the old revocation key. This will be sent to the remote peer, but we will
+	// need to save the new revocation key before signing the remote commitment.
+	oldRevocationPrivkey := channel.LocalRevocationPrivkey.Serialize()
+	newLocalRevocationPrivkey, err := bchec.NewPrivateKey(bchec.S256())
+	if err != nil {
+		return err
+	}
+	channel.LocalRevocationPrivkey = *newLocalRevocationPrivkey
+
+	_, remoteCommitmentSig, err := channel.buildCommitmentTransaction(false, node.Params)
 	if err != nil {
 		return err
 	}
 
+	proposalAcceptMessage := pb.UpdateProposalAccept{
+		NewRevocationPubkey: channel.LocalRevocationPrivkey.PubKey().SerializeCompressed(),
+		Signature: remoteCommitmentSig,
+		RevocationPrivkey: oldRevocationPrivkey,
+	}
+	m, err := wrapMessage(&proposalAcceptMessage, pb.Message_UPDATE_PROPOSAL_ACCEPT)
+	if err != nil {
+		return err
+	}
+
+	writer := ggio.NewDelimitedWriter(stream)
+	err = writer.WriteMsg(m)
+	if err != nil {
+		return err
+	}
+
+	message2, err := readMessageWithTimeout(stream, DefaultNetworkTimeout)
+	if err != nil {
+		return err
+	}
+	// We got an error back. Log it and exit.
+	if message2.MessageType == pb.Message_ERROR {
+		var errorMessage pb.Error
+		err := ptypes.UnmarshalAny(message2.Payload, &errorMessage)
+		if err == nil {
+			log.Error("Received error message from peer %s while trying open channel: %s", stream.Conn().RemotePeer().Pretty(), errorMessage.Message)
+			return fmt.Errorf("remote peer %s responded with error message %s", stream.Conn().RemotePeer().Pretty(), errorMessage.Message)
+		} else {
+			return fmt.Errorf("remote peer %s responsed with error message but we failed to unmarshal the payload", stream.Conn().RemotePeer().Pretty())
+		}
+	} else if message2.MessageType != pb.Message_FINALIZE_UPDATE { // Malfunctioning remote peer
+		sendErrorMessage(stream, "Invalid message type")
+		return fmt.Errorf("remote peer %s sent wrong message type", stream.Conn().RemotePeer().Pretty())
+	}
+
+	// Unmarshal the UpdateProposalAccept message and make sure all the data we received is correct.
+	// If anything is invalid let's send an Error message back and exit.
+	var finalizeMessage pb.FinalizeUpdate
+	err = ptypes.UnmarshalAny(message2.Payload, &finalizeMessage)
+	if err != nil {
+		sendErrorMessage(stream, "Invalid finalizeMessage message")
+		return fmt.Errorf("error unmarshaling finalize message from remote peer %s: %s", stream.Conn().RemotePeer().Pretty(), err.Error())
+	}
+
+	// Save the remote peer's private key with the breach address it corresponds to
+	remoteRevocationPrivkey, _ := bchec.PrivKeyFromBytes(bchec.S256(), finalizeMessage.RevocationPrivkey)
+	if !bytes.Equal(remoteRevocationPrivkey.PubKey().SerializeCompressed(), oldRemoteRevocationPubkey) {
+		return fmt.Errorf("remote peer %s sent invalid revocation privkey", stream.Conn().RemotePeer().Pretty())
+	}
+	breachAddr, _, err := buildBreachRemedyAddress(remoteRevocationPrivkey.PubKey(), channel.LocalPrivkey.PubKey(), &channel.RemotePubkey, channel.Delay, node.Params)
+	if err != nil {
+		return err
+	}
+	channel.RemoteRevocationPrivkeys[breachAddr] = *remoteRevocationPrivkey
+
+	err = node.Wallet.ImportAddress(waddrmgr.KeyScopeBIP0044, breachAddr, nil, false)
+	if err != nil {
+		return err
+	}
+
+	channel.TransactionCount++
+	err = saveChannel(node.Database, channel)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

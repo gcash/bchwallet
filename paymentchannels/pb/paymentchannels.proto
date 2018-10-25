@@ -47,23 +47,25 @@ message InitialCommitmentSignature {
 }
 
 message ChannelUpdateProposal {
-    bytes channelID             = 1; // The ID of the channel
-    bytes serializedTransaction = 2; // A partially signed commitment transaction containing the new proposed payout distribution
+    string channelID            = 1; // The ID of the channel
+    int64 amount                = 2; // Amount to send. This can be negative for a request but for now nodes will reject negative amounts.
+    bytes newRevocationPubkey   = 3; // A new generated public key to use for the next revocation commitment
+    bytes signature             = 4; // The signature on the new remote commitment
 }
 
 message UpdateProposalAccept {
-    bool accepted           = 1; // Whether or not the update proposal has been accepted
-    bytes signature         = 2; // A signature for the commitment input
-    bytes revocationPrivKey = 3; // The private key used to sign the breach remody transaction
+    bytes newRevocationPubkey = 1; // A new generated public key to use for the next revocation commitment
+    bytes signature           = 2; // A signature for the commitment input
+    bytes revocationPrivkey   = 3; // The private key used to sign the breach remedy transaction
 }
 
 message FinalizeUpdate {
-    bytes revocationPrivKey = 1; // The private key used to sign the breach remody transaction
+    bytes revocationPrivkey = 1; // The private key used to sign the breach remedy transaction
 }
 
 message Shutdown {
-    bytes channelID = 1; // The ID of the channel
-    bytes signature = 2; // Signature on the payout transaction
+    string channelID = 1; // The ID of the channel
+    bytes signature  = 2; // Signature on the payout transaction
 }
 
 message Error {

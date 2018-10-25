@@ -2,6 +2,7 @@ package test
 
 import (
 	"crypto/rand"
+	"fmt"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/paymentchannels"
@@ -14,16 +15,26 @@ import (
 	"testing"
 	"time"
 )
+var alicePath, bobPath string
+func TestMain(m *testing.M) {
+	alicePath = path.Join(os.TempDir(), "pcAlice")
+	bobPath = path.Join(os.TempDir(), "pcBob")
+
+	os.Mkdir(alicePath, os.ModePerm)
+	os.Mkdir(bobPath, os.ModePerm)
+
+	exitCode := m.Run()
+
+	os.RemoveAll(alicePath)
+	os.RemoveAll(bobPath)
+
+	os.Exit(exitCode)
+}
 
 // This is just a basic test. We need to build out the test package more
 // and test sending messages around.
 func TestNodeConnectivity(t *testing.T) {
 	var alicePort, bobPort uint32 = 5001, 5002
-	alicePath := path.Join(os.TempDir(), "pcAlice")
-	bobPath := path.Join(os.TempDir(), "pcBob")
-
-	os.Mkdir(alicePath, os.ModePerm)
-	os.Mkdir(bobPath, os.ModePerm)
 
 	// Create alice's node. No bootstrap nodes for her.
 	alicePrivKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
@@ -98,10 +109,11 @@ func TestNodeConnectivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = aliceNode.OpenChannel(bobAddr, bchutil.Amount(10000))
+	_, err = aliceNode.OpenChannel(bobAddr, bchutil.Amount(10000))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	time.Sleep(time.Second * 3)
 
 	aliceChannels, err := aliceNode.ListChannels()
@@ -114,9 +126,39 @@ func TestNodeConnectivity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(aliceChannels) != 1 || len(bobChannels) != 1 {
-		t.Fatal("alice and bob channels not saved correctly")
+	err = aliceNode.SendPayment(aliceChannels[0].ID, bchutil.Amount(500))
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	time.Sleep(time.Second * 3)
+
+	err = aliceNode.SendPayment(aliceChannels[0].ID, bchutil.Amount(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Second * 3)
+
+	err = bobNode.SendPayment(bobChannels[0].ID, bchutil.Amount(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Second * 3)
+
+	aliceOpenChannel, err := aliceNode.GetChannel(aliceChannels[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bobOpenChannel, err := bobNode.GetChannel(bobChannels[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Println(aliceOpenChannel.String())
+	fmt.Println(bobOpenChannel.String())
 
 	t.Log("Boom!!!")
 }
