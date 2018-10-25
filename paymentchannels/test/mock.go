@@ -57,3 +57,7 @@ func (w *MockWalletBackend) PublishTransaction(tx *wire.MsgTx) error {
 func (w *MockWalletBackend) LockOutpoint(op wire.OutPoint) {}
 
 func (w *MockWalletBackend) UnlockOutpoint(op wire.OutPoint) {}
+
+func (w *MockWalletBackend) ImportAddress(scope waddrmgr.KeyScope, address bchutil.Address, bs *waddrmgr.BlockStamp, rescan bool) error {
+	return nil
+}

@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
-	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/paymentchannels/pb"
+	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	ggio "github.com/gogo/protobuf/io"
@@ -99,9 +99,6 @@ type PaymentChannelNode struct {
 	// Wallet is the bchwallet implementation that we will use to generate addresses
 	// and make transactions.
 	Wallet WalletBackend
-
-	// OpenChannels maps a channelID to an open channel.
-	OpenChannels map[chainhash.Hash]Channel
 
 	// Database is the walletdb implementation where we will save our channel data.
 	Database walletdb.DB
@@ -428,6 +425,11 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 	}
 	channel.CommitmentTx = *commitmentTx
 	channel.State = ChannelStateOpen
+
+	err = n.Wallet.ImportAddress(waddrmgr.KeyScopeBIP0044, channelAddr, nil, false)
+	if err != nil {
+		return err
+	}
 
 	err = walletdb.Update(n.Database, func(tx walletdb.ReadWriteTx) error {
 		bucket := tx.ReadWriteBucket(paymentChannelBucket).NestedReadWriteBucket(openChannelsBucket)

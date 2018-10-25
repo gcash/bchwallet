@@ -8,6 +8,7 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/paymentchannels/pb"
+	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/go-errors/errors"
 	ggio "github.com/gogo/protobuf/io"
@@ -237,6 +238,16 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	if err != nil {
 		return err
 	}
+
+	channelAdrr, err := bchutil.DecodeAddress(channel.ChannelAddress, node.Params)
+	if err != nil {
+		return err
+	}
+	err = node.Wallet.ImportAddress(waddrmgr.KeyScopeBIP0044, channelAdrr, nil, false)
+	if err != nil {
+		return err
+	}
+	channel.State = ChannelStateOpen
 
 	err = walletdb.Update(node.Database, func(tx walletdb.ReadWriteTx) error {
 		bucket := tx.ReadWriteBucket(paymentChannelBucket).NestedReadWriteBucket(openChannelsBucket)

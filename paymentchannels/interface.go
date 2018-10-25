@@ -38,4 +38,7 @@ type WalletBackend interface {
 	// UnlockOutpoint marks an outpoint as unlocked, that is, it may be used as an
 	// input for newly created transactions.
 	UnlockOutpoint(op wire.OutPoint)
+
+	// ImportAddress will import a new address and listen on it for notifications
+	ImportAddress(scope waddrmgr.KeyScope, address bchutil.Address, bs *waddrmgr.BlockStamp, rescan bool) error
 }
