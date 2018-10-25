@@ -1,0 +1,77 @@
+syntax = "proto3";
+option go_package = "pb";
+
+import "google/protobuf/any.proto";
+
+message Message {
+    MessageType messageType     = 1;
+    google.protobuf.Any payload = 2;
+
+    enum MessageType {
+            CHANNEL_OPEN             = 0;
+            CHANNEL_ACCEPT           = 1;
+            INITIAL_COMMIT           = 2;
+            INITIAL_COMMIT_SIGNATURE = 3;
+            CHANNEL_UPDATE_PROPOSAL  = 4;
+            UPDATE_PROPOSAL_ACCEPT   = 5;
+            FINALIZE_UPDATE          = 6;
+            SHUTDOWN                 = 7;
+            ERROR                    = 8;
+    }
+}
+
+message ChannelOpen {
+    string channelID            = 1; // A unqiue ID to use to identify the channel
+    bytes addressID             = 2; // From address
+    bytes channelPubkey         = 3; // Public key to use in the 2 of 2 multisig
+    uint32 feePerByte           = 4; // The requested amount of satoshis per byte to use as a fee on the commitment transaction
+    uint64 dustLimit            = 5; // The minimum output size to be included in the commitment transaction
+    uint32 delay                = 6; // Number of blocks to delay payments to self when the channel is unilaterally closed
+    bytes payoutScript          = 7; // The scriptpubkey to be used in the payout
+    bytes revocationPubkey      = 8; // The revocation public key to use for the first commitment
+}
+
+message ChannelAccept {
+    string channelID       = 1; // The ID of the channel
+    bytes channelPubkey    = 2; // Public key for the 2 of 2 multisig
+    bytes payoutScript     = 3; // The scriptpubkey to be used in the payout
+    bytes revocationPubkey = 4; // The revocation public key to use for the first commitment
+}
+
+message InitialCommitment {
+    string channelID            = 1; // The ID of the channel
+    string fundingTxid          = 2; // The txid of the funding transaction
+    uint32 fundingIndex         = 3; // The txout index which funded the multisig
+    uint64 initialFundingAmount = 4; // The amount the channel will initially be funded with
+}
+
+message InitialCommitmentSignature {
+    string channelID = 1; // The ID of the channel
+    bytes signature  = 2; // The signature on the initial commitment
+}
+
+message ChannelUpdateProposal {
+    bytes channelID             = 1; // The ID of the channel
+    bytes serializedTransaction = 2; // A partially signed commitment transaction containing the new proposed payout distribution
+}
+
+message UpdateProposalAccept {
+    bytes channelID         = 1; // The ID of the channel
+    bool accepted           = 2; // Whether or not the update proposal has been accepted
+    bytes signature         = 3; // A signature for the commitment input
+    bytes revocationPrivKey = 4; // The private key used to sign the breach remody transaction
+}
+
+message FinalizeUpdate {
+    bytes channelID         = 1; // The ID of the channel
+    bytes revocationPrivKey = 2; // The private key used to sign the breach remody transaction
+}
+
+message Shutdown {
+    bytes channelID = 1; // The ID of the channel
+    bytes signature = 2; // Signature on the payout transaction
+}
+
+message Error {
+    string message = 1; // Error message string
+}

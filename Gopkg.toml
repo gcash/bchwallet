@@ -42,7 +42,7 @@
   name = "github.com/davecgh/go-spew"
 
 [[constraint]]
-  branch = "master"
+  branch = "address"
   name = "github.com/gcash/bchd"
 
 [[constraint]]
@@ -50,11 +50,11 @@
   name = "github.com/gcash/bchlog"
 
 [[constraint]]
-  branch = "master"
+  branch = "address"
   name = "github.com/gcash/bchutil"
 
 [[constraint]]
-  branch = "difficulty"
+  branch = "master"
   name = "github.com/gcash/neutrino"
 
 [[constraint]]

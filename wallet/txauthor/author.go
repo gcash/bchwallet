@@ -15,7 +15,7 @@ import (
 	"github.com/gcash/bchwallet/wallet/txrules"
 
 	h "github.com/gcash/bchwallet/internal/helpers"
-	"github.com/gcash/bchwallet/wallet/internal/txsizes"
+	"github.com/gcash/bchwallet/wallet/txsizes"
 )
 
 // InputSource provides transaction inputs referencing spendable outputs to

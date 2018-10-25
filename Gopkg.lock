@@ -23,9 +23,12 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:c0decf632843204d2b8781de7b26e7038584e2dcccc7e2f401e88ae85b1df2b7"
+  digest = "1:95354aafdb2d91690aeb05d8eda08e43158b2ca8393534d9e823b94146e30dda"
   name = "github.com/btcsuite/btcd"
-  packages = ["btcec"]
+  packages = [
+    "btcec",
+    "chaincfg/chainhash",
+  ]
   pruneopts = "UT"
   revision = "67e573d211ace594f1366b4ce9d39726c4b19bd0"
 
@@ -93,7 +96,7 @@
   version = "v1.0.0"
 
 [[projects]]
-  branch = "master"
+  branch = "address"
   digest = "1:d7303f0789c8f46255d82b1d4bca2c3eb1a0d67acb1d7753c0956c1905adf1ef"
   name = "github.com/gcash/bchd"
   packages = [
@@ -111,7 +114,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "72c2611436fb858c1d2055bb6d96be6c63f2f147"
+  revision = "58b2cf9f32da0b51893bc68a824ad7ec5e9ff72e"
 
 [[projects]]
   branch = "master"
@@ -122,8 +125,8 @@
   revision = "b4f036f92fa66c88eec458f4531ff14ff87704d6"
 
 [[projects]]
-  branch = "master"
-  digest = "1:b2191911872e8263271b269f8f2fda5a9d166848c5f9f27e5f785f626907fc0a"
+  branch = "address"
+  digest = "1:5226a62f9addb4c51722116c700775e47f119423f903984fa560a97f032ea636"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
@@ -133,11 +136,11 @@
     "hdkeychain",
   ]
   pruneopts = "UT"
-  revision = "723ab93d2b4a9a36c385e44f547433d0a3417c35"
+  revision = "25c6f4066c1e9ebacc6701b1caf48bc88650859b"
 
 [[projects]]
-  branch = "difficulty"
-  digest = "1:6cadf1acd72f2f11423eafc5e50a13d6399efe78266543753eacaa9898bd5c8b"
+  branch = "master"
+  digest = "1:9746d678880ad7d6e3012a5e82b8bf8ce4543fb7eedc17042562c5bc4b047fa9"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -148,7 +151,7 @@
     "headerlist",
   ]
   pruneopts = "UT"
-  revision = "e1dd091c29547fa10025c10580ea54a3a508a317"
+  revision = "8370fc5b60738382240033cf728a84641d9ee3a5"
 
 [[projects]]
   digest = "1:2537bea8e6a4a90946bcd145cbdbd6f54d2dc263b3dee0ad96894e555a474f8b"
@@ -962,7 +965,7 @@
     "trace",
   ]
   pruneopts = "UT"
-  revision = "04a2e542c03f1d053ab3e4d6e5abcd4b66e2be8e"
+  revision = "9b4f9f5ad5197c79fd623a3638e70d8b26cef344"
 
 [[projects]]
   branch = "master"
@@ -1021,7 +1024,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:05f3db76cb4387c653ae221748e21ab0703fa1725f5f6fd889be1b08176aee08"
+  digest = "1:0aca87e8e74f4b31c98a2dcbe18d4f60b66f0fe15ce5b2005ae9637daeedc090"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -1052,12 +1055,13 @@
     "tap",
   ]
   pruneopts = "UT"
-  revision = "e120c3f9007f8f26b19cf840e6483eccf03d44a2"
+  revision = "d7518259e000d23a615e7caa4812dd15f2fd3b46"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
+    "github.com/btcsuite/btcd/chaincfg/chainhash",
     "github.com/btcsuite/golangcrypto/nacl/secretbox",
     "github.com/btcsuite/golangcrypto/scrypt",
     "github.com/btcsuite/golangcrypto/ssh/terminal",

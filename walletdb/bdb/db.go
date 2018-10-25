@@ -5,10 +5,10 @@
 package bdb
 
 import (
+	"github.com/boltdb/bolt"
 	"io"
 	"os"
 
-	"github.com/coreos/bbolt"
 	"github.com/gcash/bchwallet/walletdb"
 )
 

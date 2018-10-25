@@ -12,7 +12,7 @@ import (
 	. "github.com/gcash/bchwallet/wallet/txauthor"
 	"github.com/gcash/bchwallet/wallet/txrules"
 
-	"github.com/gcash/bchwallet/wallet/internal/txsizes"
+	"github.com/gcash/bchwallet/wallet/txsizes"
 )
 
 func p2pkhOutputs(amounts ...bchutil.Amount) []*wire.TxOut {

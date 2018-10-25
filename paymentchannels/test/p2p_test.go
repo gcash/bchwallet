@@ -2,12 +2,17 @@ package test
 
 import (
 	"crypto/rand"
+	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/paymentchannels"
+	"github.com/gcash/bchwallet/walletdb"
+	_ "github.com/gcash/bchwallet/walletdb/bdb"
 	"github.com/libp2p/go-libp2p-crypto"
 	"github.com/libp2p/go-libp2p-peerstore"
 	"os"
 	"path"
 	"testing"
+	"time"
 )
 
 // This is just a basic test. We need to build out the test package more
@@ -20,10 +25,18 @@ func TestNodeConnectivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	aliceDB, err := walletdb.Create("bdb", path.Join(os.TempDir(), "pcAlice", "wallet.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceWallet := NewMockWalletBackend(&chaincfg.RegressionNetParams)
 	aliceConfig := paymentchannels.NodeConfig{
+		Params:     &chaincfg.RegressionNetParams,
 		DataDir:    path.Join(os.TempDir(), "pcAlice"),
 		PrivateKey: alicePrivKey,
 		Port:       alicePort,
+		Database:   aliceDB,
+		Wallet:     aliceWallet,
 	}
 	aliceNode, err := paymentchannels.NewPaymentChannelNode(&aliceConfig)
 	if err != nil {
@@ -35,10 +48,18 @@ func TestNodeConnectivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bobDB, err := walletdb.Create("bdb", path.Join(os.TempDir(), "pcBob", "wallet.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobWallet := NewMockWalletBackend(&chaincfg.RegressionNetParams)
 	bobConfig := paymentchannels.NodeConfig{
+		Params:     &chaincfg.RegressionNetParams,
 		DataDir:    path.Join(os.TempDir(), "pcBob"),
 		PrivateKey: bobPrivKey,
 		Port:       bobPort,
+		Database:   bobDB,
+		Wallet:     bobWallet,
 		BootstrapPeers: []peerstore.PeerInfo{
 			{
 				ID:    aliceNode.Host.ID(),
@@ -67,6 +88,16 @@ func TestNodeConnectivity(t *testing.T) {
 	if len(alicePeers) == 0 || len(bobPeers) == 0 {
 		t.Error("Failed to connect alice to bob")
 	}
+
+	bobAddr, err := bobNode.NewAddress()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = aliceNode.OpenChannel(bobAddr, bchutil.Amount(10000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second * 3)
 
 	t.Log("Boom!!!")
 }
