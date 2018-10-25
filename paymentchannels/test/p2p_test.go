@@ -19,20 +19,25 @@ import (
 // and test sending messages around.
 func TestNodeConnectivity(t *testing.T) {
 	var alicePort, bobPort uint32 = 5001, 5002
+	alicePath := path.Join(os.TempDir(), "pcAlice")
+	bobPath := path.Join(os.TempDir(), "pcBob")
+
+	os.Mkdir(alicePath, os.ModePerm)
+	os.Mkdir(bobPath, os.ModePerm)
 
 	// Create alice's node. No bootstrap nodes for her.
 	alicePrivKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	aliceDB, err := walletdb.Create("bdb", path.Join(os.TempDir(), "pcAlice", "wallet.db"))
+	aliceDB, err := walletdb.Create("bdb", path.Join(alicePath, "wallet.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	aliceWallet := NewMockWalletBackend(&chaincfg.RegressionNetParams)
 	aliceConfig := paymentchannels.NodeConfig{
 		Params:     &chaincfg.RegressionNetParams,
-		DataDir:    path.Join(os.TempDir(), "pcAlice"),
+		DataDir:    alicePath,
 		PrivateKey: alicePrivKey,
 		Port:       alicePort,
 		Database:   aliceDB,
@@ -48,14 +53,14 @@ func TestNodeConnectivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobDB, err := walletdb.Create("bdb", path.Join(os.TempDir(), "pcBob", "wallet.db"))
+	bobDB, err := walletdb.Create("bdb", path.Join(bobPath, "wallet.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	bobWallet := NewMockWalletBackend(&chaincfg.RegressionNetParams)
 	bobConfig := paymentchannels.NodeConfig{
 		Params:     &chaincfg.RegressionNetParams,
-		DataDir:    path.Join(os.TempDir(), "pcBob"),
+		DataDir:    bobPath,
 		PrivateKey: bobPrivKey,
 		Port:       bobPort,
 		Database:   bobDB,
@@ -98,6 +103,20 @@ func TestNodeConnectivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second * 3)
+
+	aliceChannels, err := aliceNode.ListChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bobChannels, err := bobNode.ListChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(aliceChannels) != 1 || len(bobChannels) != 1 {
+		t.Fatal("alice and bob channels not saved correctly")
+	}
 
 	t.Log("Boom!!!")
 }

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
@@ -27,7 +30,6 @@ import (
 	"github.com/libp2p/go-libp2p-peerstore"
 	"github.com/libp2p/go-libp2p-routing"
 	"path"
-	"sync"
 )
 
 var (
@@ -103,8 +105,11 @@ type PaymentChannelNode struct {
 	// Database is the walletdb implementation where we will save our channel data.
 	Database walletdb.DB
 
+	// channelLock is a keyed mutex that we will use for locking channels when they
+	// are processing update and close messages.
+	channelLock *Kmutex
+
 	bootstrapPeers []peerstore.PeerInfo
-	lock           sync.RWMutex
 }
 
 // NewPaymentChannelNode is a constructor for our Node object
@@ -150,7 +155,6 @@ func NewPaymentChannelNode(config *NodeConfig) (*PaymentChannelNode, error) {
 		Wallet:         config.Wallet,
 		Database:       config.Database,
 		bootstrapPeers: config.BootstrapPeers,
-		lock:           sync.RWMutex{},
 	}
 	if err = initDatabase(node.Database); err != nil {
 		return nil, err
@@ -250,14 +254,13 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 
 	// Build ChannelOpen protobuf message
 	channelOpenMessage := pb.ChannelOpen{
-		ChannelID:            channel.ChannelID.String(),
-		AddressID:            channel.AddressID,
-		ChannelPubkey:        channel.LocalPrivkey.PubKey().SerializeCompressed(),
-		Delay:                uint32(channel.Delay),
-		FeePerByte:           uint32(channel.FeePerByte),
-		DustLimit:            uint64(channel.DustLimit),
-		PayoutScript:         channel.LocalPayoutScript,
-		RevocationPubkey:     channel.LocalRevocationPrivkey.PubKey().SerializeCompressed(),
+		AddressID:        channel.AddressID,
+		ChannelPubkey:    channel.LocalPrivkey.PubKey().SerializeCompressed(),
+		Delay:            uint32(channel.Delay),
+		FeePerByte:       uint32(channel.FeePerByte),
+		DustLimit:        uint64(channel.DustLimit),
+		PayoutScript:     channel.LocalPayoutScript,
+		RevocationPubkey: channel.LocalRevocationPrivkey.PubKey().SerializeCompressed(),
 	}
 	m, err := wrapMessage(&channelOpenMessage, pb.Message_CHANNEL_OPEN)
 	if err != nil {
@@ -302,10 +305,6 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 		sendErrorMessage(stream, "invalid ChannelAccept message")
 		return fmt.Errorf("error unmarshalling accept message from remote peer %s: %s", stream.Conn().RemotePeer().Pretty(), err.Error())
 	}
-	if channelAcceptMessage.ChannelID != channel.ChannelID.String() {
-		sendErrorMessage(stream, "channel ID does not match previous message")
-		return fmt.Errorf("remote peer %s responded with incorrect channel ID", stream.Conn().RemotePeer().Pretty())
-	}
 	remoteChannelPubkey, err := bchec.ParsePubKey(channelAcceptMessage.ChannelPubkey, bchec.S256())
 	if err != nil {
 		sendErrorMessage(stream, "invalid channel public key")
@@ -324,13 +323,23 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 	channel.RemoteRevocationPubkey = *remoteRevocationPubkey
 	channel.RemotePayoutScript = channelAcceptMessage.PayoutScript
 
+	// The channelID is the big endian sha256 hash of cat(openingPeerPublicKey, otherPeerPublicKey)
+	// chainhash.NewHash() will reverse the byte order if we use that function which is why we
+	// encode to hex first and use NewHashFromStr() which reserves the byte order.
+	cidBytes := sha256.Sum256(append(channel.LocalPrivkey.PubKey().SerializeCompressed(), channel.RemotePubkey.SerializeCompressed()...))
+	channelID, err := chainhash.NewHashFromStr(hex.EncodeToString(cidBytes[:]))
+	if err != nil {
+		return err
+	}
+	channel.ID = *channelID
+
 	// Build the 2 of 2 multisig P2SH address where we are going to send the funds to open the channel
 	// The channel opener's public key always goes first.
 	channelAddr, redeemScript, err := buildP2SHAddress(channel.LocalPrivkey.PubKey(), &channel.RemotePubkey, n.Params)
 	if err != nil {
 		return err
 	}
-	channel.ChannelAddress = channelAddr.String()
+	channel.ChannelAddress = channelAddr
 	channel.RedeemScript = redeemScript
 
 	outputScript, err := txscript.PayToAddrScript(channelAddr)
@@ -370,10 +379,9 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 	channel.FundingOutpoint = *wire.NewOutPoint(&fundingTxid, uint32(fundingIndex))
 
 	initialCommitment := pb.InitialCommitment{
-		ChannelID: channel.ChannelID.String(),
-		FundingTxid: fundingTxid.String(),
+		FundingTxid:          fundingTxid.String(),
 		InitialFundingAmount: uint64(amount),
-		FundingIndex: uint32(fundingIndex),
+		FundingIndex:         uint32(fundingIndex),
 	}
 	m2, err := wrapMessage(&initialCommitment, pb.Message_INITIAL_COMMIT)
 	if err != nil {
@@ -419,7 +427,7 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 	}
 	commitmentTx.TxIn[0].SignatureScript = scriptSig
 
-	if !channel.validateCommitmentSignature(commitmentTx, n.Params) {
+	if !channel.validateCommitmentSignature(commitmentTx) {
 		log.Errorf("Remote peer %s send invalid signature on initial commitment transaction", stream.Conn().RemotePeer().Pretty())
 		return fmt.Errorf("invalid signature on initial commit from %s", stream.Conn().RemotePeer().Pretty())
 	}
@@ -437,7 +445,7 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 		if err != nil {
 			return err
 		}
-		return bucket.Put(channel.ChannelID.CloneBytes(), serializedChannel)
+		return bucket.Put(channel.ID.CloneBytes(), serializedChannel)
 	})
 	if err != nil {
 		return err
@@ -451,8 +459,38 @@ func (n *PaymentChannelNode) SendPayment() {}
 // stub
 func (n *PaymentChannelNode) CloseChannel() {}
 
-// stub
-func (n *PaymentChannelNode) ListChannels() {}
+// ListChannels returns a slice of both open and closed channels
+func (n *PaymentChannelNode) ListChannels() ([]Channel, error) {
+	var channels []Channel
+	err := walletdb.View(n.Database, func(tx walletdb.ReadTx) error {
+		openBucket := tx.ReadBucket(paymentChannelBucket).NestedReadBucket(openChannelsBucket)
+		err := openBucket.ForEach(func(k, v []byte) error {
+			ch, err := deserializeChannel(v, n.Params)
+			if err != nil {
+				return err
+			}
+			channels = append(channels, *ch)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		closedBucket := tx.ReadBucket(paymentChannelBucket).NestedReadBucket(closedChannelsBucket)
+		err = closedBucket.ForEach(func(k, v []byte) error {
+			ch, err := deserializeChannel(v, n.Params)
+			if err != nil {
+				return err
+			}
+			channels = append(channels, *ch)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return channels, err
+}
 
 // stub
 func (n *PaymentChannelNode) ListTransactions() {}

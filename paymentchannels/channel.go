@@ -1,7 +1,7 @@
 package paymentchannels
 
 import (
-	"crypto/rand"
+	"encoding/hex"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -13,6 +13,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/libp2p/go-libp2p-crypto"
 	"github.com/libp2p/go-libp2p-peer"
+	"github.com/minio/sha256-simd"
 )
 
 // TODO: these should be config options
@@ -68,19 +69,20 @@ func (s ChannelState) String() string {
 	}
 }
 
+
+
 // Channel holds all the data relevant to a payment channel
 type Channel struct {
-	// ChannelID is the ID of the channel
-	// TODO: how do we want to create this? We would have the sender set it to a random ID,
-	// but then the recipient needs to reject channel open requests if he has the same ID in the
-	// db. Alternatively we could set it to the funding txid, but we don't know it initially.
-	ChannelID chainhash.Hash
+	// ID is the ID of the channel. It's calculated by taking the sha256 hash of
+	// the concatenation of the public key of the peer who initiated the channel
+	// open request and the public key of the peer who received the request.
+	ID chainhash.Hash
 
 	// State allows us to quickly tell what state the channel is in.
 	State ChannelState
 
 	// Incoming specifies whether the channel was opened by us or them
-	Incoming bool
+	Inbound bool
 
 	// AddressID is taken from the cashaddr. It can be used by software to map channels
 	// to external actions (like an order on a website).
@@ -161,7 +163,7 @@ type Channel struct {
 	TransactionCount uint64
 
 	// ChannelAddress is the address that holds the channel funds.
-	ChannelAddress string
+	ChannelAddress bchutil.Address
 
 	// RedeemScript is the payout redeem script for the ChannelAddress.
 	RedeemScript []byte
@@ -177,14 +179,6 @@ func (n *PaymentChannelNode) initNewOutgoingChannel(addr *bchutil.AddressPayment
 		return nil, err
 	}
 	peerID, err := peer.IDFromPublicKey(pub)
-	if err != nil {
-		return nil, err
-	}
-
-	// Make a new random channel ID
-	cidBytes := make([]byte, 32)
-	rand.Read(cidBytes)
-	channelID, err := chainhash.NewHash(cidBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -210,13 +204,12 @@ func (n *PaymentChannelNode) initNewOutgoingChannel(addr *bchutil.AddressPayment
 	}
 
 	channel := &Channel{
-		ChannelID:              *channelID,
 		AddressID:              addr.AddressID[:],
 		RemotePeerID:           peerID,
 		Delay:                  uint32(DefaultChannelDelay),
 		FeePerByte:             DefaultFeePerByte,
 		DustLimit:              DefaultDustLimit,
-		Incoming:               false,
+		Inbound:                false,
 		State:                  ChannelStateOpening,
 		LocalPrivkey:           *channelPrivateKey,
 		LocalRevocationPrivkey: *firstRevocationKey,
@@ -229,9 +222,9 @@ func (n *PaymentChannelNode) initNewOutgoingChannel(addr *bchutil.AddressPayment
 // initNewIncomingChannel will create a new channel that has been initialized with all the
 // values that are known at channel opening. This includes generating new keys to be used
 // in the multisig and breach remedy outputs.
-func (n *PaymentChannelNode) initNewIncomingChannel(channelID *chainhash.Hash, addressID []byte,
-	remoteChannelPubkey *bchec.PublicKey, remoteRevocationPubkey *bchec.PublicKey, dustLimt bchutil.Amount,
-	feePerByte bchutil.Amount, delay uint32, remotePayoutScript []byte, remotePeerID peer.ID) (*Channel, error) {
+func (n *PaymentChannelNode) initNewIncomingChannel(addressID []byte, remoteChannelPubkey *bchec.PublicKey,
+	remoteRevocationPubkey *bchec.PublicKey, dustLimt bchutil.Amount, feePerByte bchutil.Amount, delay uint32,
+	remotePayoutScript []byte, remotePeerID peer.ID) (*Channel, error) {
 
 	// Generate our private keys
 	channelPrivateKey, err := bchec.NewPrivateKey(bchec.S256())
@@ -239,6 +232,15 @@ func (n *PaymentChannelNode) initNewIncomingChannel(channelID *chainhash.Hash, a
 		return nil, err
 	}
 	firstRevocationKey, err := bchec.NewPrivateKey(bchec.S256())
+	if err != nil {
+		return nil, err
+	}
+
+	// The channelID is the big endian sha256 hash of cat(openingPeerPublicKey, otherPeerPublicKey)
+	// chainhash.NewHash() will reverse the byte order if we use that function which is why we
+	// encode to hex first and use NewHashFromStr() which reserves the byte order.
+	cidBytes := sha256.Sum256(append(remoteChannelPubkey.SerializeCompressed(), channelPrivateKey.PubKey().SerializeCompressed()...))
+	channelID, err := chainhash.NewHashFromStr(hex.EncodeToString(cidBytes[:]))
 	if err != nil {
 		return nil, err
 	}
@@ -260,13 +262,13 @@ func (n *PaymentChannelNode) initNewIncomingChannel(channelID *chainhash.Hash, a
 	}
 
 	channel := &Channel{
-		ChannelID:              *channelID,
+		ID:                     *channelID,
 		AddressID:              addressID,
 		RemotePeerID:           remotePeerID,
 		Delay:                  delay,
 		FeePerByte:             feePerByte,
 		DustLimit:              dustLimt,
-		Incoming:               true,
+		Inbound:                true,
 		State:                  ChannelStateOpening,
 		LocalPrivkey:           *channelPrivateKey,
 		RemotePubkey:           *remoteChannelPubkey,
@@ -274,7 +276,7 @@ func (n *PaymentChannelNode) initNewIncomingChannel(channelID *chainhash.Hash, a
 		RemoteRevocationPubkey: *remoteRevocationPubkey,
 		LocalPayoutScript:      script,
 		RemotePayoutScript:     remotePayoutScript,
-		ChannelAddress:         channelAddr.String(),
+		ChannelAddress:         channelAddr,
 		RedeemScript:           redeemScript,
 	}
 
@@ -429,18 +431,14 @@ func buildCommitmentScriptSig(sig1, sig2, redeemScript []byte) ([]byte, error) {
 	return builder.Script()
 }
 
-func (c *Channel) validateCommitmentSignature(tx *wire.MsgTx, params *chaincfg.Params) bool {
+func (c *Channel) validateCommitmentSignature(tx *wire.MsgTx) bool {
 	sigHashes := txscript.NewTxSigHashes(tx)
 
-	addr, err := bchutil.DecodeAddress(c.ChannelAddress, params)
+	scriptPubkey, err := txscript.PayToAddrScript(c.ChannelAddress)
 	if err != nil {
 		return false
 	}
-	scriptPubkey, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		return false
-	}
-	engine, err := txscript.NewEngine(scriptPubkey, tx, 0, txscript.StandardVerifyFlags, nil, sigHashes, int64(c.LocalBalance + c.RemoteBalance))
+	engine, err := txscript.NewEngine(scriptPubkey, tx, 0, txscript.StandardVerifyFlags, nil, sigHashes, int64(c.LocalBalance+c.RemoteBalance))
 	if err != nil {
 		return false
 	}

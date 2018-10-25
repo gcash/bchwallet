@@ -95,6 +95,10 @@ func readMessageWithTimeout(stream inet.Stream, timeout time.Duration) (*pb.Mess
 	}
 }
 
+// handleOpenChannelMessage does the processing for a new channel open message that comes off the
+// wire. The sender is the only one putting money in the channel at this point so all we need to
+// do is sign his commitment transaction. We don't need to worry about saving our own commitment
+// at this point.
 func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, stream inet.Stream) error {
 	defer stream.Close()
 	var channelOpenMessage pb.ChannelOpen
@@ -103,28 +107,8 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 		sendErrorMessage(stream, "Invalid message payload")
 		return err
 	}
-	// Make sure the new channel is using a random ID that we don't have in our database
-	// We will lock here to make sure no other OpenChannel messages come in using the same
-	// channelID before we have a chance to save this one.
-	node.lock.Lock()
-	defer node.lock.Unlock()
-	err = walletdb.View(node.Database, func(tx walletdb.ReadTx) error {
-		openBucket := tx.ReadBucket(paymentChannelBucket).NestedReadBucket(openChannelsBucket)
-		channel := openBucket.Get([]byte(channelOpenMessage.ChannelID))
-		if len(channel) > 0 {
-			return errors.New("channelID exists")
-		}
-		closedBucket := tx.ReadBucket(paymentChannelBucket).NestedReadBucket(closedChannelsBucket)
-		channel = closedBucket.Get([]byte(channelOpenMessage.ChannelID))
-		if len(channel) > 0 {
-			return errors.New("channelID exists")
-		}
-		return nil
-	})
-	if err != nil {
-		sendErrorMessage(stream, "Invalid channelID")
-		return errors.New("new channel open request uses a channelID that already exists in database")
-	}
+
+	// Perform some validation on the incoming message
 	if channelOpenMessage.DustLimit > uint64(MaxAcceptibleDustLimit) {
 		sendErrorMessage(stream, "Unacceptable dust limit")
 		return errors.New("new channel open request uses has unacceptable dust limit")
@@ -152,12 +136,7 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 		return errors.New("new channel open request contained invalid payout script")
 	}
 
-	channelID, err := chainhash.NewHashFromStr(channelOpenMessage.ChannelID)
-	if err != nil {
-		sendErrorMessage(stream, "Invalid channel ID")
-		return errors.New("new channel open request contained invalid channel ID")
-	}
-	channel, err := node.initNewIncomingChannel(channelID, channelOpenMessage.AddressID, remoteChannelPubkey,
+	channel, err := node.initNewIncomingChannel(channelOpenMessage.AddressID, remoteChannelPubkey,
 		remoteRevocationPubkey, bchutil.Amount(channelOpenMessage.DustLimit), bchutil.Amount(channelOpenMessage.FeePerByte),
 		channelOpenMessage.Delay, channelOpenMessage.PayoutScript, stream.Conn().RemotePeer())
 	if err != nil {
@@ -166,7 +145,6 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	}
 
 	channelAcceptMessage := pb.ChannelAccept{
-		ChannelID:        channel.ChannelID.String(),
 		ChannelPubkey:    channel.LocalPrivkey.PubKey().SerializeCompressed(),
 		PayoutScript:     channel.LocalPayoutScript,
 		RevocationPubkey: channel.LocalRevocationPrivkey.PubKey().SerializeCompressed(),
@@ -195,7 +173,7 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 		} else {
 			return fmt.Errorf("remote peer %s responsed with error message but we failed to unmarshall the payload", stream.Conn().RemotePeer().Pretty())
 		}
-	} else if message2.MessageType != pb.Message_INITIAL_COMMIT{ // Malfunctioning remote peer
+	} else if message2.MessageType != pb.Message_INITIAL_COMMIT { // Malfunctioning remote peer
 		sendErrorMessage(stream, "Invalid message type")
 		return fmt.Errorf("remote peer %s sent wrong message type", stream.Conn().RemotePeer().Pretty())
 	}
@@ -207,10 +185,6 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	if err != nil {
 		sendErrorMessage(stream, "invalid InitialCommitment message")
 		return fmt.Errorf("error unmarshalling initial commitment message from remote peer %s: %s", stream.Conn().RemotePeer().Pretty(), err.Error())
-	}
-	if initialCommitMessage.ChannelID != channel.ChannelID.String() {
-		sendErrorMessage(stream, "channel ID does not match previous message")
-		return fmt.Errorf("remote peer %s responded with incorrect channel ID", stream.Conn().RemotePeer().Pretty())
 	}
 	fundingTxid, err := chainhash.NewHashFromStr(initialCommitMessage.FundingTxid)
 	if err != nil {
@@ -227,7 +201,6 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	}
 
 	initCommitSigMessage := pb.InitialCommitmentSignature{
-		ChannelID: channel.ChannelID.String(),
 		Signature: sig,
 	}
 	m2, err := wrapMessage(&initCommitSigMessage, pb.Message_INITIAL_COMMIT_SIGNATURE)
@@ -239,11 +212,7 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 		return err
 	}
 
-	channelAdrr, err := bchutil.DecodeAddress(channel.ChannelAddress, node.Params)
-	if err != nil {
-		return err
-	}
-	err = node.Wallet.ImportAddress(waddrmgr.KeyScopeBIP0044, channelAdrr, nil, false)
+	err = node.Wallet.ImportAddress(waddrmgr.KeyScopeBIP0044, channel.ChannelAddress, nil, false)
 	if err != nil {
 		return err
 	}
@@ -255,7 +224,7 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 		if err != nil {
 			return err
 		}
-		return bucket.Put(channel.ChannelID.CloneBytes(), serializedChannel)
+		return bucket.Put(channel.ID.CloneBytes(), serializedChannel)
 	})
 	if err != nil {
 		return err
