@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 )
+
 var alicePath, bobPath string
+
 func TestMain(m *testing.M) {
 	alicePath = path.Join(os.TempDir(), "pcAlice")
 	bobPath = path.Join(os.TempDir(), "pcBob")
@@ -159,6 +161,14 @@ func TestNodeConnectivity(t *testing.T) {
 
 	fmt.Println(aliceOpenChannel.String())
 	fmt.Println(bobOpenChannel.String())
+
+	txs, err := aliceNode.ListTransactions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tx := range txs {
+		fmt.Println(tx)
+	}
 
 	t.Log("Boom!!!")
 }

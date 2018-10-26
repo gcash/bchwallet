@@ -3,6 +3,8 @@ package paymentchannels
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -220,7 +222,7 @@ func (node *PaymentChannelNode) handleOpenChannelMessage(message *pb.Message, st
 	}
 	channel.Status = ChannelStatusOpen
 
-	err = saveChannel(node.Database, channel)
+	err = saveChannel(node.Database, channel, nil)
 	if err != nil {
 		return err
 	}
@@ -261,6 +263,16 @@ func (node *PaymentChannelNode) handleChannelUpdateProposalMessage(message *pb.M
 	}
 	channel.RemoteBalance -= bchutil.Amount(channelUpdateMessage.Amount)
 	channel.LocalBalance += bchutil.Amount(channelUpdateMessage.Amount)
+
+	ser, err := proto.Marshal(&channelUpdateMessage)
+	if err != nil {
+		return err
+	}
+	messageHash := sha256.Sum256(ser)
+	ctxid, err := chainhash.NewHashFromStr(hex.EncodeToString(messageHash[:]))
+	if err != nil {
+		return err
+	}
 
 	newRemoteRevocationPubkey, err := bchec.ParsePubKey(channelUpdateMessage.NewRevocationPubkey, bchec.S256())
 	if err != nil {
@@ -310,8 +322,8 @@ func (node *PaymentChannelNode) handleChannelUpdateProposalMessage(message *pb.M
 
 	proposalAcceptMessage := pb.UpdateProposalAccept{
 		NewRevocationPubkey: channel.LocalRevocationPrivkey.PubKey().SerializeCompressed(),
-		Signature: remoteCommitmentSig,
-		RevocationPrivkey: oldRevocationPrivkey,
+		Signature:           remoteCommitmentSig,
+		RevocationPrivkey:   oldRevocationPrivkey,
 	}
 	m, err := wrapMessage(&proposalAcceptMessage, pb.Message_UPDATE_PROPOSAL_ACCEPT)
 	if err != nil {
@@ -369,7 +381,13 @@ func (node *PaymentChannelNode) handleChannelUpdateProposalMessage(message *pb.M
 	}
 
 	channel.TransactionCount++
-	err = saveChannel(node.Database, channel)
+	transaction := ChannelTransaction{
+		ID:        *ctxid,
+		ChannelID: channel.ID,
+		Amount:    bchutil.Amount(channelUpdateMessage.Amount),
+		Timestamp: time.Now(),
+	}
+	err = saveChannel(node.Database, channel, &transaction)
 	if err != nil {
 		return err
 	}

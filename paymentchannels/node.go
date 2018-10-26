@@ -19,6 +19,7 @@ import (
 	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	ggio "github.com/gogo/protobuf/io"
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-ds-leveldb"
@@ -30,6 +31,7 @@ import (
 	"github.com/libp2p/go-libp2p-peerstore"
 	"github.com/libp2p/go-libp2p-routing"
 	"path"
+	"time"
 )
 
 var (
@@ -447,7 +449,7 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 		return nil, err
 	}
 
-	err = saveChannel(n.Database, channel)
+	err = saveChannel(n.Database, channel, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +457,13 @@ func (n *PaymentChannelNode) OpenChannel(addr bchutil.Address, amount bchutil.Am
 }
 
 // Send payment will send a payment to the remote peer via an open channel
+//    +-------+                                       +-------+
+//    |       |--(1)----  ChannelUpdateProposal  ---->|       |
+//    |   A   |<-(2)-----  UpdateProposalAccept  -----|   B   |
+//    |       |--(3)------    FinalizeUpdate   ------>|       |
+//    +-------+                                       +-------+
+//
+//    - where node A is 'sender' and node B is 'recipient'
 func (n *PaymentChannelNode) SendPayment(channelID chainhash.Hash, amount bchutil.Amount) error {
 	n.channelLock.Lock(channelID)
 	defer n.channelLock.Unlock(channelID)
@@ -491,10 +500,19 @@ func (n *PaymentChannelNode) SendPayment(channelID chainhash.Hash, amount bchuti
 
 	// Build the channel update message and send it to the remote peer
 	channelUpdateMessage := pb.ChannelUpdateProposal{
-		Amount: int64(amount),
-		ChannelID: channel.ID.String(),
+		Amount:              int64(amount),
+		ChannelID:           channel.ID.String(),
 		NewRevocationPubkey: newRevocationPrivkey.PubKey().SerializeCompressed(),
-		Signature: remoteCommitmentSig,
+		Signature:           remoteCommitmentSig,
+	}
+	ser, err := proto.Marshal(&channelUpdateMessage)
+	if err != nil {
+		return err
+	}
+	messageHash := sha256.Sum256(ser)
+	ctxid, err := chainhash.NewHashFromStr(hex.EncodeToString(messageHash[:]))
+	if err != nil {
+		return err
 	}
 	m, err := wrapMessage(&channelUpdateMessage, pb.Message_CHANNEL_UPDATE_PROPOSAL)
 	if err != nil {
@@ -543,7 +561,7 @@ func (n *PaymentChannelNode) SendPayment(channelID chainhash.Hash, amount bchuti
 
 	// Save the remote peer's private key with the breach address it corresponds to
 	remoteRevocationPrivkey, _ := bchec.PrivKeyFromBytes(bchec.S256(), updateAcceptMessage.RevocationPrivkey)
-	if !bytes.Equal(remoteRevocationPrivkey.PubKey().SerializeCompressed(), channel.RemoteRevocationPubkey.SerializeCompressed()){
+	if !bytes.Equal(remoteRevocationPrivkey.PubKey().SerializeCompressed(), channel.RemoteRevocationPubkey.SerializeCompressed()) {
 		sendErrorMessage(stream, "Invalid revocation privkey")
 		return fmt.Errorf("remote peer %s sent invalid revocation privkey", stream.Conn().RemotePeer().Pretty())
 	}
@@ -606,7 +624,15 @@ func (n *PaymentChannelNode) SendPayment(channelID chainhash.Hash, amount bchuti
 	}
 
 	channel.TransactionCount++
-	err = saveChannel(n.Database, channel)
+
+	transaction := ChannelTransaction{
+		ID:        *ctxid,
+		ChannelID: channel.ID,
+		Amount:    -amount,
+		Timestamp: time.Now(),
+	}
+
+	err = saveChannel(n.Database, channel, &transaction)
 	if err != nil {
 		return err
 	}
@@ -649,8 +675,23 @@ func (n *PaymentChannelNode) ListChannels() ([]Channel, error) {
 	return channels, err
 }
 
-// stub
-func (n *PaymentChannelNode) ListTransactions() {}
+// ListTransactions return all the transactions that have been made across all channels
+func (n *PaymentChannelNode) ListTransactions() ([]*ChannelTransaction, error) {
+	var transactions []*ChannelTransaction
+	err := walletdb.View(n.Database, func(tx walletdb.ReadTx) error {
+		txBucket := tx.ReadBucket(paymentChannelBucket).NestedReadBucket(transactionsBucket)
+		err := txBucket.ForEach(func(k, v []byte) error {
+			tx, err := deserializeTransaction(v)
+			if err != nil {
+				return err
+			}
+			transactions = append(transactions, tx)
+			return nil
+		})
+		return err
+	})
+	return transactions, err
+}
 
 // GetChannel returns the channel for a given ID
 func (n *PaymentChannelNode) GetChannel(channelID chainhash.Hash) (*Channel, error) {

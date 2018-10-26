@@ -496,3 +496,35 @@ func (c *Channel) validateCommitmentSignature(tx *wire.MsgTx) bool {
 	}
 	return engine.Execute() == nil
 }
+
+// ChannelTransaction represents a transaction which updated the channel state
+type ChannelTransaction struct {
+	// ID represents the transaction ID of the transaction. It's calculated
+	// as the sha256 hash of the serialized ChannelUpdateProposal message.
+	ID chainhash.Hash
+
+	// ChannelID is the ID of the channel in which the transaction took place
+	ChannelID chainhash.Hash
+
+	// Amount is the amount that was transacted
+	Amount bchutil.Amount
+
+	// Timestamp is the time the transaction took place
+	Timestamp time.Time
+}
+
+func (tx *ChannelTransaction) String() string {
+	txJson := struct {
+		ID        string         `json:"ctxid"`
+		ChannelID string         `json:"channelID"`
+		Amount    bchutil.Amount `json:"amount"`
+		Timestamp time.Time      `json:"timestamp"`
+	}{
+		tx.ID.String(),
+		tx.ChannelID.String(),
+		tx.Amount,
+		tx.Timestamp,
+	}
+	out, _ := json.MarshalIndent(txJson, "", "    ")
+	return string(out)
+}

@@ -50,7 +50,7 @@ func initDatabase(db walletdb.DB) error {
 	return nil
 }
 
-func saveChannel(db walletdb.DB, channel *Channel) error {
+func saveChannel(db walletdb.DB, channel *Channel, transaction *ChannelTransaction) error {
 	bucketName := openChannelsBucket
 	if channel.Status != ChannelStatusOpen {
 		bucketName = closedChannelsBucket
@@ -61,7 +61,22 @@ func saveChannel(db walletdb.DB, channel *Channel) error {
 		if err != nil {
 			return err
 		}
-		return bucket.Put(channel.ID.CloneBytes(), serializedChannel)
+		err = bucket.Put(channel.ID.CloneBytes(), serializedChannel)
+		if err != nil {
+			return err
+		}
+		if transaction != nil {
+			bucket := tx.ReadWriteBucket(paymentChannelBucket).NestedReadWriteBucket(transactionsBucket)
+			serializedTx, err := serializeTransaction(*transaction)
+			if err != nil {
+				return err
+			}
+			err = bucket.Put(transaction.ID.CloneBytes(), serializedTx)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return err
 }
@@ -200,4 +215,26 @@ func deserializeChannel(ser []byte, params *chaincfg.Params) (*Channel, error) {
 		c.RemoteRevocationPrivkeys[addr] = *privkey
 	}
 	return &c, nil
+}
+
+func serializeTransaction(tx ChannelTransaction) ([]byte, error) {
+	var b bytes.Buffer
+	encoder := gob.NewEncoder(&b)
+
+	if err := encoder.Encode(tx); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
+}
+
+func deserializeTransaction(ser []byte) (*ChannelTransaction, error) {
+	r := bytes.NewReader(ser)
+	decoder := gob.NewDecoder(r)
+
+	var tx ChannelTransaction
+	if err := decoder.Decode(&tx); err != nil {
+		return nil, err
+	}
+	return &tx, nil
 }
