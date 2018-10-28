@@ -3,6 +3,7 @@ package chain
 import (
 	"errors"
 	"fmt"
+	"github.com/gcash/bchd/btcjson"
 	"sync"
 	"time"
 
@@ -64,6 +65,7 @@ func (s *NeutrinoClient) BackEnd() string {
 
 // Start replicates the RPC client's Start method.
 func (s *NeutrinoClient) Start() error {
+	s.CS.RegisterMempoolCallback(s.onRecvTx)
 	s.CS.Start()
 	s.clientMtx.Lock()
 	defer s.clientMtx.Unlock()
@@ -127,7 +129,7 @@ func (s *NeutrinoClient) GetBlockHeight(hash *chainhash.Hash) (int32, error) {
 
 // GetBestBlock replicates the RPC client's GetBestBlock command.
 func (s *NeutrinoClient) GetBestBlock() (*chainhash.Hash, int32, error) {
-	chainTip, err := s.CS.BestSnapshot()
+	chainTip, err := s.CS.BestBlock()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -332,6 +334,9 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 
 	s.clientMtx.Lock()
 	defer s.clientMtx.Unlock()
+
+	s.CS.NotifyMempoolReceived(addrs)
+
 	if !s.started {
 		return fmt.Errorf("can't do a rescan when the chain client " +
 			"is not started")
@@ -421,6 +426,8 @@ func (s *NeutrinoClient) NotifyBlocks() error {
 func (s *NeutrinoClient) NotifyReceived(addrs []bchutil.Address) error {
 	s.clientMtx.Lock()
 
+	s.CS.NotifyMempoolReceived(addrs)
+
 	// If we have a rescan running, we just need to add the appropriate
 	// addresses to the watch list.
 	if s.scanning {
@@ -503,7 +510,7 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 	}
 
 	// Handle RescanFinished notification if required.
-	bs, err := s.CS.BestSnapshot()
+	bs, err := s.CS.BestBlock()
 	if err != nil {
 		log.Errorf("Can't get chain service's best block: %s", err)
 		return
@@ -698,4 +705,17 @@ out:
 	s.Stop()
 	close(s.dequeueNotification)
 	s.wg.Done()
+}
+
+func (c *NeutrinoClient) onRecvTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
+	rec, err := wtxmgr.NewTxRecordFromMsgTx(tx.MsgTx(), time.Now())
+	if err != nil {
+		log.Errorf("Cannot create transaction record for relevant "+
+			"tx: %v", err)
+		return
+	}
+	select {
+	case c.enqueueNotification <- RelevantTx{rec, nil}:
+	case <-c.quit:
+	}
 }

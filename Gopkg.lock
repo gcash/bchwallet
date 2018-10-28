@@ -58,7 +58,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5805365970be772ed67b7890d3bfd9300d8be69814328ccd441f7e44a1533cf9"
+  digest = "1:2275989e01ed7e39a803a16114b0acb33366fc3fe4e0b66abfd45306d3d37718"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -75,7 +75,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "3049cb1e3e5c930cad8e8b8bdf682e2796dfa08c"
+  revision = "b10168fcf9eff0c869339898bce66833d7c28a07"
 
 [[projects]]
   branch = "master"
@@ -87,7 +87,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:b2191911872e8263271b269f8f2fda5a9d166848c5f9f27e5f785f626907fc0a"
+  digest = "1:52c0bca4d1c7d37712d259e17547e649e98c97c4db26d93b8c9ef756f16f2621"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
@@ -97,7 +97,7 @@
     "hdkeychain",
   ]
   pruneopts = "UT"
-  revision = "723ab93d2b4a9a36c385e44f547433d0a3417c35"
+  revision = "d51537ee11a6e6c31ba74f4b4accbc0edaf7a5d4"
 
 [[projects]]
   branch = "master"
@@ -181,7 +181,7 @@
     "ssh/terminal",
   ]
   pruneopts = "UT"
-  revision = "e3636079e1a4c1f337f212cc5cd2aca108f6c900"
+  revision = "e84da0312774c21d64ee2317962ef669b27ffb41"
 
 [[projects]]
   branch = "master"
@@ -197,18 +197,18 @@
     "trace",
   ]
   pruneopts = "UT"
-  revision = "146acd28ed5894421fb5aac80ca93bc1b1f46f87"
+  revision = "9b4f9f5ad5197c79fd623a3638e70d8b26cef344"
 
 [[projects]]
   branch = "master"
-  digest = "1:850d28ab022512e2cd3cf511a77f363c29e22689b4031f2050871f5de47ae4a0"
+  digest = "1:d2605ed96ca0244a457fa8e6c37d5c370ce98ea09dcc21e5e07d967bfcb78878"
   name = "golang.org/x/sys"
   packages = [
     "unix",
     "windows",
   ]
   pruneopts = "UT"
-  revision = "4497e2df6f9e69048a54498c7affbbec3294ad47"
+  revision = "95b1ffbd15a57cc5abb3f04402b9e8ec0016a52c"
 
 [[projects]]
   digest = "1:a2ab62866c75542dd18d2b069fec854577a20211d7c0ea6ae746072a1dccdd18"
@@ -239,10 +239,10 @@
   name = "google.golang.org/genproto"
   packages = ["googleapis/rpc/status"]
   pruneopts = "UT"
-  revision = "af9cb2a35e7f169ec875002c1829c9b315cddc04"
+  revision = "8b5d7a19e2d98fbad9aaf9c599776bf066d7c70f"
 
 [[projects]]
-  digest = "1:ab8e92d746fb5c4c18846b0879842ac8e53b3d352449423d0924a11f1020ae1b"
+  digest = "1:c3ad9841823db6da420a5625b367913b4ff54bbe60e8e3c98bd20e243e62e2d2"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -273,8 +273,8 @@
     "tap",
   ]
   pruneopts = "UT"
-  revision = "8dea3dc473e90c8179e519d91302d0597c0ca1d1"
-  version = "v1.15.0"
+  revision = "2e463a05d100327ca47ac218281906921038fd95"
+  version = "v1.16.0"
 
 [solve-meta]
   analyzer-name = "dep"
@@ -312,6 +312,8 @@
     "google.golang.org/grpc/codes",
     "google.golang.org/grpc/credentials",
     "google.golang.org/grpc/grpclog",
+    "google.golang.org/grpc/peer",
+    "google.golang.org/grpc/status",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1
