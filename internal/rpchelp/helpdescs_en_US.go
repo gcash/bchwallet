@@ -286,11 +286,12 @@ var helpDescsEnUS = map[string]string{
 	"sendtoaddress--synopsis": "Authors, signs, and sends a transaction that outputs some amount to a payment address.\n" +
 		"Unlike sendfrom, outputs are always chosen from the default account.\n" +
 		"A change output is automatically included to send extra output value back to the original account.",
-	"sendtoaddress-address":   "Address to pay",
-	"sendtoaddress-amount":    "Amount to send to the payment address valued in bitcoin",
-	"sendtoaddress-comment":   "Unused",
-	"sendtoaddress-commentto": "Unused",
-	"sendtoaddress--result0":  "The transaction hash of the sent transaction",
+	"sendtoaddress-address":               "Address to pay",
+	"sendtoaddress-amount":                "Amount to send to the payment address valued in bitcoin",
+	"sendtoaddress-comment":               "Unused",
+	"sendtoaddress-commentto":             "Unused",
+	"sendtoaddress--result0":              "The transaction hash of the sent transaction",
+	"sendtoaddress-subtractfeefromamount": "Boolean to subtract the fee from the amount sent",
 
 	// SetTxFeeCmd help.
 	"settxfee--synopsis": "Modify the increment used each time more fee is required for an authored transaction.",
