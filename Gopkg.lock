@@ -58,7 +58,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:2275989e01ed7e39a803a16114b0acb33366fc3fe4e0b66abfd45306d3d37718"
+  digest = "1:85d04ead635190cd23d8de74aa7b1a2d97b370fa8fd8e54c64ac49b306fc063b"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -75,7 +75,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "b10168fcf9eff0c869339898bce66833d7c28a07"
+  revision = "a75a80a1115a9925d3d2d91c7804eb8a2a3c5c54"
 
 [[projects]]
   branch = "master"
@@ -87,11 +87,12 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:52c0bca4d1c7d37712d259e17547e649e98c97c4db26d93b8c9ef756f16f2621"
+  digest = "1:7eb4577517abdf0f214f577e4e85c868c3fdf163ed476fe9ba27d676b9536eb8"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
     "base58",
+    "bloom",
     "gcs",
     "gcs/builder",
     "hdkeychain",
@@ -101,7 +102,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:9746d678880ad7d6e3012a5e82b8bf8ce4543fb7eedc17042562c5bc4b047fa9"
+  digest = "1:949c816f9f0a5ff235b37cb41dd551f82c7f6c2061a19d140c929eab911b60c8"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -112,7 +113,15 @@
     "headerlist",
   ]
   pruneopts = "UT"
-  revision = "8370fc5b60738382240033cf728a84641d9ee3a5"
+  revision = "bf4df3e0b4e91c359164d3327fe74df12585cac3"
+
+[[projects]]
+  digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
+  name = "github.com/go-errors/errors"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "a6af135bd4e28680facf08a3d206b454abc877a4"
+  version = "v1.0.1"
 
 [[projects]]
   digest = "1:4c0989ca0bcd10799064318923b9bc2db6b4d6338dd75f3f2d86c3511aaaf5cf"

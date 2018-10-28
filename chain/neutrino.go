@@ -707,7 +707,7 @@ out:
 	s.wg.Done()
 }
 
-func (c *NeutrinoClient) onRecvTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
+func (s *NeutrinoClient) onRecvTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
 	rec, err := wtxmgr.NewTxRecordFromMsgTx(tx.MsgTx(), time.Now())
 	if err != nil {
 		log.Errorf("Cannot create transaction record for relevant "+
@@ -715,7 +715,7 @@ func (c *NeutrinoClient) onRecvTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
 		return
 	}
 	select {
-	case c.enqueueNotification <- RelevantTx{rec, nil}:
-	case <-c.quit:
+	case s.enqueueNotification <- RelevantTx{rec, nil}:
+	case <-s.quit:
 	}
 }
