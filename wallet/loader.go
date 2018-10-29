@@ -58,6 +58,10 @@ type Loader struct {
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	recoveryWindow uint32) *Loader {
 
+	// KeyScopeBIP0044 is a global var. If we are loading the wallet make
+	// sure we set the bip44 coin type to whatever is specified in the params.
+	waddrmgr.KeyScopeBIP0044.Coin = chainParams.HDCoinType
+
 	return &Loader{
 		chainParams:    chainParams,
 		dbDirPath:      dbDirPath,
