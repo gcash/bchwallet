@@ -182,7 +182,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:f75aabe1fa842a4c3359615e493b59e135a1f7b2aee71727f9b46655bb75be82"
+  digest = "1:35d6047a7d7e05a84c0fac0de3ffa4d9288766e3bc304551970f078aa2f9fff1"
   name = "golang.org/x/crypto"
   packages = [
     "pbkdf2",
@@ -190,11 +190,11 @@
     "ssh/terminal",
   ]
   pruneopts = "UT"
-  revision = "e84da0312774c21d64ee2317962ef669b27ffb41"
+  revision = "45a5f77698d342a8c2ef8423abdf0ba6880b008a"
 
 [[projects]]
   branch = "master"
-  digest = "1:505dbee0833715a72a529bb57c354826ad42a4496fad787fa143699b4de1a6d0"
+  digest = "1:d7bb1ec1da715f83d407bd8a0fd92810bc8e36577286350d61b6fd62f9244236"
   name = "golang.org/x/net"
   packages = [
     "context",
@@ -206,7 +206,7 @@
     "trace",
   ]
   pruneopts = "UT"
-  revision = "9b4f9f5ad5197c79fd623a3638e70d8b26cef344"
+  revision = "c44066c5c816ec500d459a2a324a753f78531ae0"
 
 [[projects]]
   branch = "master"
