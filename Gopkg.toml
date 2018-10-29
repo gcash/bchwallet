@@ -74,6 +74,10 @@
   name = "github.com/lightninglabs/gozmq"
 
 [[constraint]]
+  name = "github.com/tyler-smith/go-bip39"
+  version = "1.0.0"
+
+[[constraint]]
   branch = "master"
   name = "golang.org/x/crypto"
 
@@ -83,7 +87,7 @@
 
 [[constraint]]
   name = "google.golang.org/grpc"
-  version = "1.15.0"
+  version = "1.16.0"
 
 [prune]
   go-tests = true

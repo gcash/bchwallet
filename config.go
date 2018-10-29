@@ -74,6 +74,7 @@ type config struct {
 
 	// SPV client options
 	UseSPV       bool          `long:"usespv" description:"Enables the experimental use of SPV rather than RPC for chain synchronization"`
+	BlocksOnly   bool          `long:"blocksonly" description:"Disables downloading unconfirmed transaction when in SPV mode"`
 	AddPeers     []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
 	ConnectPeers []string      `long:"connect" description:"Connect only to the specified peers at startup"`
 	MaxPeers     int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
