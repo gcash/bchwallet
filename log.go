@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/gcash/bchwallet/paymentchannels"
 	"io"
 	"os"
 	"path/filepath"
@@ -60,6 +61,7 @@ var (
 	grpcLog      = backendLog.Logger("GRPC")
 	legacyRPCLog = backendLog.Logger("RPCS")
 	bchnLog      = backendLog.Logger("BCHN")
+	pmtChLog     = backendLog.Logger("PMCH")
 )
 
 // Initialize package-global logger variables.
@@ -71,6 +73,7 @@ func init() {
 	rpcserver.UseLogger(grpcLog)
 	legacyrpc.UseLogger(legacyRPCLog)
 	neutrino.UseLogger(bchnLog)
+	paymentchannels.UseLogger(pmtChLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -82,6 +85,7 @@ var subsystemLoggers = map[string]bchlog.Logger{
 	"GRPC": grpcLog,
 	"RPCS": legacyRPCLog,
 	"BCHN": bchnLog,
+	"PMCH": pmtChLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and

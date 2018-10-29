@@ -1121,7 +1121,7 @@ out:
 }
 
 // CreateSimpleTx creates a new signed transaction spending unspent P2PKH
-// outputs with at laest minconf confirmations spending to any number of
+// outputs with at least minconf confirmations spending to any number of
 // address/amount pairs.  Change and an appropriate transaction fee are
 // automatically included, if necessary.  All transaction creation through this
 // function is serialized to prevent the creation of many transactions which
@@ -2600,6 +2600,83 @@ func (w *Wallet) DumpWIFPrivateKey(addr bchutil.Address) (string, error) {
 		return "", err
 	}
 	return wif.String(), nil
+}
+
+// ImportAddress will import a new address and listen on it for notifications
+func (w *Wallet) ImportAddress(scope waddrmgr.KeyScope, address bchutil.Address, bs *waddrmgr.BlockStamp, rescan bool) error {
+	manager, err := w.Manager.FetchScopedKeyManager(scope)
+	if err != nil {
+		return err
+	}
+
+	// The starting block for the key is the genesis block unless otherwise
+	// specified.
+	var newBirthday time.Time
+	if bs == nil {
+		bs = &waddrmgr.BlockStamp{
+			Hash:   *w.chainParams.GenesisHash,
+			Height: 0,
+		}
+	} else {
+		// Only update the new birthday time from default value if we
+		// actually have timestamp info in the header.
+		header, err := w.chainClient.GetBlockHeader(&bs.Hash)
+		if err == nil {
+			newBirthday = header.Timestamp
+		}
+	}
+
+	script, err := txscript.PayToAddrScript(address)
+	if err != nil {
+		return err
+	}
+
+	var props *waddrmgr.AccountProperties
+	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		addrmgrNs := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		_, err := manager.ImportScript(addrmgrNs, script, bs)
+		if err != nil {
+			return err
+		}
+		props, err = manager.AccountProperties(
+			addrmgrNs, waddrmgr.ImportedAddrAccount,
+		)
+		if err != nil {
+			return err
+		}
+		return w.Manager.SetBirthday(addrmgrNs, newBirthday)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Rescan blockchain for transactions with txout scripts paying to the
+	// imported address.
+	if rescan {
+		job := &RescanJob{
+			Addrs:      []bchutil.Address{address},
+			OutPoints:  nil,
+			BlockStamp: *bs,
+		}
+
+		// Submit rescan job and log when the import has completed.
+		// Do not block on finishing the rescan.  The rescan success
+		// or failure is logged elsewhere, and the channel is not
+		// required to be read, so discard the return value.
+		_ = w.SubmitRescan(job)
+	}
+	err = w.chainClient.NotifyReceived([]bchutil.Address{address})
+	if err != nil {
+		return fmt.Errorf("Failed to subscribe for address ntfns for "+
+			"address %s: %s", address.EncodeAddress(), err)
+	}
+
+	addrStr := address.EncodeAddress()
+	log.Infof("Imported payment address %s", addrStr)
+
+	w.NtfnServer.notifyAccountProperties(props)
+
+	return nil
 }
 
 // ImportPrivateKey imports a private key to the wallet and writes the new
