@@ -6,6 +6,8 @@ package wallet
 
 import (
 	"github.com/gcash/bchlog"
+
+	"github.com/gcash/bchwallet/walletdb/migration"
 )
 
 // log is a logger that is initialized with no output filters.  This
@@ -21,7 +23,7 @@ func init() {
 // DisableLog disables all library log output.  Logging output is disabled
 // by default until either UseLogger or SetLogWriter are called.
 func DisableLog() {
-	log = bchlog.Disabled
+	UseLogger(bchlog.Disabled)
 }
 
 // UseLogger uses a specified Logger to output package logging info.
@@ -29,6 +31,8 @@ func DisableLog() {
 // using bchlog.
 func UseLogger(logger bchlog.Logger) {
 	log = logger
+
+	migration.UseLogger(logger)
 }
 
 // LogClosure is a closure that can be printed with %v to be used to
