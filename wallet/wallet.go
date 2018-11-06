@@ -2341,7 +2341,7 @@ func (w *Wallet) AccountBalances(scope waddrmgr.KeyScope,
 			if !confirmed(requiredConfs, output.Height, syncBlock.Height) {
 				continue
 			}
-			if output.FromCoinBase && !confirmed(int32(w.ChainParams().CoinbaseMaturity),
+			if output.FromCoinBase && !confirmed(int32(w.chainParams.CoinbaseMaturity),
 				output.Height, syncBlock.Height) {
 				continue
 			}
@@ -3089,9 +3089,9 @@ func (w *Wallet) TotalReceivedForAddr(addr bchutil.Address, minConf int32) (bchu
 }
 
 // SendOutputs creates and sends payment transactions. It returns the
-// transaction hash upon success.
+// transaction upon success.
 func (w *Wallet) SendOutputs(outputs []*wire.TxOut, account uint32,
-	minconf int32, satPerKb bchutil.Amount) (*chainhash.Hash, error) {
+	minconf int32, satPerKb bchutil.Amount) (*wire.MsgTx, error) {
 
 	// Ensure the outputs to be created adhere to the network's consensus
 	// rules.
@@ -3110,7 +3110,17 @@ func (w *Wallet) SendOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
-	return w.publishTransaction(createdTx.Tx)
+	txHash, err := w.publishTransaction(createdTx.Tx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sanity check on the returned tx hash.
+	if *txHash != createdTx.Tx.TxHash() {
+		return nil, errors.New("tx hash mismatch")
+	}
+
+	return createdTx.Tx, nil
 }
 
 // SignatureError records the underlying error when validating a transaction
