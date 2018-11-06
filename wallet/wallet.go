@@ -2646,6 +2646,14 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *bchutil.WIF,
 		if err != nil {
 			return err
 		}
+
+		// We'll only update our birthday with the new one if it is
+		// before our current one. Otherwise, we won't rescan for
+		// potentially relevant chain events that occurred between them.
+		if newBirthday.After(w.Manager.Birthday()) {
+			return nil
+		}
+
 		return w.Manager.SetBirthday(addrmgrNs, newBirthday)
 	})
 	if err != nil {
