@@ -1,13 +1,7 @@
-// Copyright (c) 2015 The btcsuite developers
-// Use of this source code is governed by an ISC
-// license that can be found in the LICENSE file.
-
-package wallet
+package waddrmgr
 
 import (
 	"github.com/gcash/bchlog"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb/migration"
 )
 
 // log is a logger that is initialized with no output filters.  This
@@ -28,12 +22,9 @@ func DisableLog() {
 
 // UseLogger uses a specified Logger to output package logging info.
 // This should be used in preference to SetLogWriter if the caller is also
-// using bchlog.
+// using btclog.
 func UseLogger(logger bchlog.Logger) {
 	log = logger
-
-	migration.UseLogger(logger)
-	waddrmgr.UseLogger(logger)
 }
 
 // LogClosure is a closure that can be printed with %v to be used to
@@ -51,13 +42,4 @@ func (c logClosure) String() string {
 // the logging level is such that the message will actually be logged.
 func newLogClosure(c func() string) logClosure {
 	return logClosure(c)
-}
-
-// pickNoun returns the singular or plural form of a noun depending
-// on the count n.
-func pickNoun(n int, singular, plural string) string {
-	if n == 1 {
-		return singular
-	}
-	return plural
 }
