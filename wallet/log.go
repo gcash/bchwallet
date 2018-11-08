@@ -8,6 +8,7 @@ import (
 	"github.com/gcash/bchlog"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb/migration"
+	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // log is a logger that is initialized with no output filters.  This
@@ -34,6 +35,7 @@ func UseLogger(logger bchlog.Logger) {
 
 	migration.UseLogger(logger)
 	waddrmgr.UseLogger(logger)
+	wtxmgr.UseLogger(logger)
 }
 
 // LogClosure is a closure that can be printed with %v to be used to
