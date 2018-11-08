@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package wtxmgr_test
+package wtxmgr
 
 import (
 	"bytes"
@@ -19,8 +19,6 @@ import (
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
-	"github.com/gcash/bchwallet/wtxmgr"
-	. "github.com/gcash/bchwallet/wtxmgr"
 )
 
 // Received transaction output for mainnet outpoint
@@ -1572,7 +1570,7 @@ func testInsertMempoolDoubleSpendTx(t *testing.T, first bool) {
 		Time:  time.Now(),
 	}
 
-	var confirmedSpendRec *wtxmgr.TxRecord
+	var confirmedSpendRec *TxRecord
 	if first {
 		confirmedSpendRec = firstSpendRec
 	} else {

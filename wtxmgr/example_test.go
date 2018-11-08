@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package wtxmgr_test
+package wtxmgr
 
 import (
 	"fmt"
@@ -11,29 +11,28 @@ import (
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 var (
 	// Spends: bogus
 	// Outputs: 10 BCH
-	exampleTxRecordA *wtxmgr.TxRecord
+	exampleTxRecordA *TxRecord
 
 	// Spends: A:0
 	// Outputs: 5 BCH, 5 BCH
-	exampleTxRecordB *wtxmgr.TxRecord
+	exampleTxRecordB *TxRecord
 )
 
 func init() {
 	tx := spendOutput(&chainhash.Hash{}, 0, 10e8)
-	rec, err := wtxmgr.NewTxRecordFromMsgTx(tx, timeNow())
+	rec, err := NewTxRecordFromMsgTx(tx, timeNow())
 	if err != nil {
 		panic(err)
 	}
 	exampleTxRecordA = rec
 
 	tx = spendOutput(&exampleTxRecordA.Hash, 0, 5e8, 5e8)
-	rec, err = wtxmgr.NewTxRecordFromMsgTx(tx, timeNow())
+	rec, err = NewTxRecordFromMsgTx(tx, timeNow())
 	if err != nil {
 		panic(err)
 	}
@@ -183,12 +182,12 @@ func Example_basicUsage() {
 	}
 
 	// Create and open the transaction store in the provided namespace.
-	err = wtxmgr.Create(b)
+	err = Create(b)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	s, err := wtxmgr.Open(b, &chaincfg.TestNet3Params)
+	s, err := Open(b, &chaincfg.TestNet3Params)
 	if err != nil {
 		fmt.Println(err)
 		return

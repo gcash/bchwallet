@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package wtxmgr_test
+package wtxmgr
 
 import (
 	"bytes"
@@ -16,7 +16,6 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
-	. "github.com/gcash/bchwallet/wtxmgr"
 )
 
 type queryState struct {
