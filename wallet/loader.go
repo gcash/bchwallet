@@ -61,7 +61,13 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	// KeyScopeBIP0044 is a global var. If we are loading the wallet make
 	// sure we set the bip44 coin type to whatever is specified in the params.
 	waddrmgr.KeyScopeBIP0044.Coin = chainParams.HDCoinType
-
+	waddrmgr.DefaultKeyScopes[0] = waddrmgr.KeyScopeBIP0044
+	waddrmgr.ScopeAddrMap = map[waddrmgr.KeyScope]waddrmgr.ScopeAddrSchema{
+		waddrmgr.KeyScopeBIP0044: {
+			InternalAddrType: waddrmgr.PubKeyHash,
+			ExternalAddrType: waddrmgr.PubKeyHash,
+		},
+	}
 	return &Loader{
 		chainParams:    chainParams,
 		dbDirPath:      dbDirPath,
