@@ -2686,7 +2686,7 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *bchutil.WIF,
 		// before our current one. Otherwise, if we do, we can
 		// potentially miss detecting relevant chain events that
 		// occurred between them while rescanning.
-		birthdayBlock, err := w.Manager.BirthdayBlock(addrmgrNs)
+		birthdayBlock, _, err := w.Manager.BirthdayBlock(addrmgrNs)
 		if err != nil {
 			return err
 		}
@@ -2698,7 +2698,11 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *bchutil.WIF,
 		if err != nil {
 			return err
 		}
-		return w.Manager.SetBirthdayBlock(addrmgrNs, *bs)
+
+		// To ensure this birthday block is correct, we'll mark it as
+		// unverified to prompt a sanity check at the next restart to
+		// ensure it is correct as it was provided by the caller.
+		return w.Manager.SetBirthdayBlock(addrmgrNs, *bs, false)
 	})
 	if err != nil {
 		return "", err
