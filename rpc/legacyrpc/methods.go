@@ -1612,7 +1612,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 	if cmd.Inputs != nil {
 		cmdInputs = *cmd.Inputs
 	}
-	inputValues := make([]int64, len(cmdInputs))
+	var inputValues []int64
 	for _, rti := range cmdInputs {
 		inputHash, err := chainhash.NewHashFromStr(rti.Txid)
 		if err != nil {

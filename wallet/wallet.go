@@ -3225,7 +3225,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			// Either it was already signed or we just signed it.
 			// Find out if it is completely satisfied or still needs more.
 			vm, err := txscript.NewEngine(prevOutScript, tx, i,
-				txscript.StandardVerifyFlags, nil, nil, 0)
+				txscript.StandardVerifyFlags, nil, nil, inputValues[i])
 			if err == nil {
 				err = vm.Execute()
 			}
