@@ -442,6 +442,7 @@ func (w *Wallet) birthdaySanityCheck() (*waddrmgr.BlockStamp, error) {
 		}
 
 		candidate.Hash = *hash
+		candidate.Height = int32(newCandidateHeight)
 		candidate.Timestamp = header.Timestamp
 
 		log.Debugf("Checking next birthday block candidate: "+
