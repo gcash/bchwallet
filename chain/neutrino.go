@@ -364,7 +364,7 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 		select {
 		case s.enqueueNotification <- &RescanFinished{
 			Hash:   startHash,
-			Height: int32(bestBlock.Height),
+			Height: bestBlock.Height,
 			Time:   header.Timestamp,
 		}:
 		case <-s.quit:
