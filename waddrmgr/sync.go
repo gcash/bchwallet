@@ -110,3 +110,28 @@ func (m *Manager) SetBirthday(ns walletdb.ReadWriteBucket,
 	m.birthday = birthday
 	return putBirthday(ns, birthday)
 }
+
+// BirthdayBlock returns the birthday block, or earliest block a key could have
+// been used, for the manager. A boolean is also returned to indicate whether
+// the birthday block has been verified as correct.
+func (m *Manager) BirthdayBlock(ns walletdb.ReadBucket) (BlockStamp, bool, error) {
+	birthdayBlock, err := fetchBirthdayBlock(ns)
+	if err != nil {
+		return BlockStamp{}, false, err
+	}
+
+	return birthdayBlock, fetchBirthdayBlockVerification(ns), nil
+}
+
+// SetBirthdayBlock sets the birthday block, or earliest time a key could have
+// been used, for the manager. The verified boolean can be used to specify
+// whether this birthday block should be sanity checked to determine if there
+// exists a better candidate to prevent less block fetching.
+func (m *Manager) SetBirthdayBlock(ns walletdb.ReadWriteBucket,
+	block BlockStamp, verified bool) error {
+
+	if err := putBirthdayBlock(ns, block); err != nil {
+		return err
+	}
+	return putBirthdayBlockVerification(ns, verified)
+}

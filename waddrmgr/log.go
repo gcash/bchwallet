@@ -1,8 +1,4 @@
-// Copyright (c) 2013-2015 The btcsuite developers
-// Use of this source code is governed by an ISC
-// license that can be found in the LICENSE file.
-
-package wtxmgr
+package waddrmgr
 
 import (
 	"github.com/gcash/bchlog"
@@ -26,7 +22,7 @@ func DisableLog() {
 
 // UseLogger uses a specified Logger to output package logging info.
 // This should be used in preference to SetLogWriter if the caller is also
-// using bchlog.
+// using btclog.
 func UseLogger(logger bchlog.Logger) {
 	log = logger
 }

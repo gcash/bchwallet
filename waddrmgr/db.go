@@ -8,23 +8,21 @@ package waddrmgr
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchwallet/walletdb"
 )
 
-const (
-	// LatestMgrVersion is the most recent manager version.
-	LatestMgrVersion = 5
-)
-
 var (
+	// LatestMgrVersion is the most recent manager version.
+	LatestMgrVersion = getLatestVersion()
+
 	// latestMgrVersion is the most recent manager version as a variable so
 	// the tests can change it to force errors.
-	latestMgrVersion uint32 = LatestMgrVersion
+	latestMgrVersion = LatestMgrVersion
 )
 
 // ObtainUserInputFunc is a function that reads a user input and returns it as
@@ -255,9 +253,11 @@ var (
 	watchingOnlyName    = []byte("watchonly")
 
 	// Sync related key names (sync bucket).
-	syncedToName   = []byte("syncedto")
-	startBlockName = []byte("startblock")
-	birthdayName   = []byte("birthday")
+	syncedToName              = []byte("syncedto")
+	startBlockName            = []byte("startblock")
+	birthdayName              = []byte("birthday")
+	birthdayBlockName         = []byte("birthdayblock")
+	birthdayBlockVerifiedName = []byte("birthdayblockverified")
 )
 
 // uint32ToBytes converts a 32 bit unsigned integer into a 4-byte slice in
@@ -1874,6 +1874,10 @@ func fetchBlockHash(ns walletdb.ReadBucket, height int32) (*chainhash.Hash, erro
 	heightBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(heightBytes, uint32(height))
 	hashBytes := bucket.Get(heightBytes)
+	if hashBytes == nil {
+		err := errors.New("block not found")
+		return nil, managerError(ErrBlockNotFound, errStr, err)
+	}
 	if len(hashBytes) != 32 {
 		err := fmt.Errorf("couldn't get hash from database")
 		return nil, managerError(ErrDatabase, errStr, err)
@@ -1928,32 +1932,121 @@ func putStartBlock(ns walletdb.ReadWriteBucket, bs *BlockStamp) error {
 
 // fetchBirthday loads the manager's bithday timestamp from the database.
 func fetchBirthday(ns walletdb.ReadBucket) (time.Time, error) {
-	bucket := ns.NestedReadBucket(syncBucketName)
-
 	var t time.Time
 
-	buf := bucket.Get(birthdayName)
-	if len(buf) != 8 {
+	bucket := ns.NestedReadBucket(syncBucketName)
+	birthdayTimestamp := bucket.Get(birthdayName)
+	if len(birthdayTimestamp) != 8 {
 		str := "malformed birthday stored in database"
 		return t, managerError(ErrDatabase, str, nil)
 	}
 
-	t = time.Unix(int64(binary.BigEndian.Uint64(buf)), 0)
+	t = time.Unix(int64(binary.BigEndian.Uint64(birthdayTimestamp)), 0)
+
 	return t, nil
 }
 
 // putBirthday stores the provided birthday timestamp to the database.
 func putBirthday(ns walletdb.ReadWriteBucket, t time.Time) error {
+	var birthdayTimestamp [8]byte
+	binary.BigEndian.PutUint64(birthdayTimestamp[:], uint64(t.Unix()))
+
 	bucket := ns.NestedReadWriteBucket(syncBucketName)
-
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(t.Unix()))
-
-	err := bucket.Put(birthdayName, buf)
-	if err != nil {
+	if err := bucket.Put(birthdayName, birthdayTimestamp[:]); err != nil {
 		str := "failed to store birthday"
 		return managerError(ErrDatabase, str, err)
 	}
+
+	return nil
+}
+
+// fetchBirthdayBlock retrieves the birthday block from the database.
+//
+// The block is serialized as follows:
+//   [0:4]   block height
+//   [4:36]  block hash
+//   [36:44] block timestamp
+func fetchBirthdayBlock(ns walletdb.ReadBucket) (BlockStamp, error) {
+	var block BlockStamp
+
+	bucket := ns.NestedReadBucket(syncBucketName)
+	birthdayBlock := bucket.Get(birthdayBlockName)
+	if birthdayBlock == nil {
+		str := "birthday block not set"
+		return block, managerError(ErrBirthdayBlockNotSet, str, nil)
+	}
+	if len(birthdayBlock) != 44 {
+		str := "malformed birthday block stored in database"
+		return block, managerError(ErrDatabase, str, nil)
+	}
+
+	block.Height = int32(binary.BigEndian.Uint32(birthdayBlock[:4]))
+	copy(block.Hash[:], birthdayBlock[4:36])
+	t := int64(binary.BigEndian.Uint64(birthdayBlock[36:]))
+	block.Timestamp = time.Unix(t, 0)
+
+	return block, nil
+}
+
+// putBirthdayBlock stores the provided birthday block to the database.
+//
+// The block is serialized as follows:
+//   [0:4]   block height
+//   [4:36]  block hash
+//   [36:44] block timestamp
+func putBirthdayBlock(ns walletdb.ReadWriteBucket, block BlockStamp) error {
+	var birthdayBlock [44]byte
+	binary.BigEndian.PutUint32(birthdayBlock[:4], uint32(block.Height))
+	copy(birthdayBlock[4:36], block.Hash[:])
+	binary.BigEndian.PutUint64(birthdayBlock[36:], uint64(block.Timestamp.Unix()))
+
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	if err := bucket.Put(birthdayBlockName, birthdayBlock[:]); err != nil {
+		str := "failed to store birthday block"
+		return managerError(ErrDatabase, str, err)
+	}
+
+	return nil
+}
+
+// fetchBirthdayBlockVerification retrieves the bit that determines whether the
+// wallet has verified that its birthday block is correct.
+func fetchBirthdayBlockVerification(ns walletdb.ReadBucket) bool {
+	bucket := ns.NestedReadBucket(syncBucketName)
+	verifiedValue := bucket.Get(birthdayBlockVerifiedName)
+
+	// If there is no verification status, we can assume it has not been
+	// verified yet.
+	if verifiedValue == nil {
+		return false
+	}
+
+	// Otherwise, we'll determine if it's verified by the value stored.
+	verified := binary.BigEndian.Uint16(verifiedValue[:])
+	return verified != 0
+}
+
+// putBirthdayBlockVerification stores a bit that determines whether the
+// birthday block has been verified by the wallet to be correct.
+func putBirthdayBlockVerification(ns walletdb.ReadWriteBucket, verified bool) error {
+	// Convert the boolean to an integer in its binary representation as
+	// there is no way to insert a boolean directly as a value of a
+	// key/value pair.
+	verifiedValue := uint16(0)
+	if verified {
+		verifiedValue = 1
+	}
+
+	var verifiedBytes [2]byte
+	binary.BigEndian.PutUint16(verifiedBytes[:], verifiedValue)
+
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	err := bucket.Put(birthdayBlockVerifiedName, verifiedBytes[:])
+	if err != nil {
+		str := "failed to store birthday block verification"
+		return managerError(ErrDatabase, str, err)
+	}
+
 	return nil
 }
 
@@ -2097,215 +2190,5 @@ func createManagerNS(ns walletdb.ReadWriteBucket,
 		return managerError(ErrDatabase, str, err)
 	}
 
-	return nil
-}
-
-// upgradeToVersion2 upgrades the database from version 1 to version 2
-// 'usedAddrBucketName' a bucket for storing addrs flagged as marked is
-// initialized and it will be updated on the next rescan.
-func upgradeToVersion2(ns walletdb.ReadWriteBucket) error {
-	currentMgrVersion := uint32(2)
-
-	_, err := ns.CreateBucketIfNotExists(usedAddrBucketName)
-	if err != nil {
-		str := "failed to create used addresses bucket"
-		return managerError(ErrDatabase, str, err)
-	}
-
-	return putManagerVersion(ns, currentMgrVersion)
-}
-
-// upgradeManager upgrades the data in the provided manager namespace to newer
-// versions as neeeded.
-func upgradeManager(db walletdb.DB, namespaceKey []byte, pubPassPhrase []byte,
-	chainParams *chaincfg.Params, cbs *OpenCallbacks) error {
-
-	var version uint32
-	err := walletdb.View(db, func(tx walletdb.ReadTx) error {
-		ns := tx.ReadBucket(namespaceKey)
-		var err error
-		version, err = fetchManagerVersion(ns)
-		return err
-	})
-	if err != nil {
-		str := "failed to fetch version for update"
-		return managerError(ErrDatabase, str, err)
-	}
-
-	if version < 5 {
-		err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
-			ns := tx.ReadWriteBucket(namespaceKey)
-			return upgradeToVersion5(ns, pubPassPhrase)
-		})
-		if err != nil {
-			return err
-		}
-
-		// The manager is now at version 5.
-		version = 5
-	}
-
-	// Ensure the manager is upraded to the latest version.  This check is
-	// to intentionally cause a failure if the manager version is updated
-	// without writing code to handle the upgrade.
-	if version < latestMgrVersion {
-		str := fmt.Sprintf("the latest manager version is %d, but the "+
-			"current version after upgrades is only %d",
-			latestMgrVersion, version)
-		return managerError(ErrUpgrade, str, nil)
-	}
-
-	return nil
-}
-
-// upgradeToVersion5 upgrades the database from version 4 to version 5. After
-// this update, the new ScopedKeyManager features cannot be used. This is due
-// to the fact that in version 5, we now store the encrypted master private
-// keys on disk. However, using the BIP0044 key scope, users will still be able
-// to create old p2pkh addresses.
-func upgradeToVersion5(ns walletdb.ReadWriteBucket, pubPassPhrase []byte) error {
-	// First, we'll check if there are any existing segwit addresses, which
-	// can't be upgraded to the new version. If so, we abort and warn the
-	// user.
-	err := ns.NestedReadBucket(addrBucketName).ForEach(
-		func(k []byte, v []byte) error {
-			row, err := deserializeAddressRow(v)
-			if err != nil {
-				return err
-			}
-			if row.addrType > adtScript {
-				return fmt.Errorf("segwit address exists in " +
-					"wallet, can't upgrade from v4 to " +
-					"v5: well, we tried  ¯\\_(ツ)_/¯")
-			}
-			return nil
-		})
-	if err != nil {
-		return err
-	}
-
-	// Next, we'll write out the new database version.
-	if err := putManagerVersion(ns, 5); err != nil {
-		return err
-	}
-
-	// First, we'll need to create the new buckets that are used in the new
-	// database version.
-	scopeBucket, err := ns.CreateBucket(scopeBucketName)
-	if err != nil {
-		str := "failed to create scope bucket"
-		return managerError(ErrDatabase, str, err)
-	}
-	scopeSchemas, err := ns.CreateBucket(scopeSchemaBucketName)
-	if err != nil {
-		str := "failed to create scope schema bucket"
-		return managerError(ErrDatabase, str, err)
-	}
-
-	// With the buckets created, we can now create the default BIP0044
-	// scope which will be the only scope usable in the database after this
-	// update.
-	scopeKey := scopeToBytes(&KeyScopeBIP0044)
-	scopeSchema := ScopeAddrMap[KeyScopeBIP0044]
-	schemaBytes := scopeSchemaToBytes(&scopeSchema)
-	if err := scopeSchemas.Put(scopeKey[:], schemaBytes); err != nil {
-		return err
-	}
-	if err := createScopedManagerNS(scopeBucket, &KeyScopeBIP0044); err != nil {
-		return err
-	}
-
-	bip44Bucket := scopeBucket.NestedReadWriteBucket(scopeKey[:])
-
-	// With the buckets created, we now need to port over *each* item in
-	// the prior main bucket, into the new default scope.
-	mainBucket := ns.NestedReadWriteBucket(mainBucketName)
-
-	// First, we'll move over the encrypted coin type private and public
-	// keys to the new sub-bucket.
-	encCoinPrivKeys := mainBucket.Get(coinTypePrivKeyName)
-	encCoinPubKeys := mainBucket.Get(coinTypePubKeyName)
-
-	err = bip44Bucket.Put(coinTypePrivKeyName, encCoinPrivKeys)
-	if err != nil {
-		return err
-	}
-	err = bip44Bucket.Put(coinTypePubKeyName, encCoinPubKeys)
-	if err != nil {
-		return err
-	}
-
-	if err := mainBucket.Delete(coinTypePrivKeyName); err != nil {
-		return err
-	}
-	if err := mainBucket.Delete(coinTypePubKeyName); err != nil {
-		return err
-	}
-
-	// Next, we'll move over everything that was in the meta bucket to the
-	// meta bucket within the new scope.
-	metaBucket := ns.NestedReadWriteBucket(metaBucketName)
-	lastAccount := metaBucket.Get(lastAccountName)
-	if err := metaBucket.Delete(lastAccountName); err != nil {
-		return err
-	}
-
-	scopedMetaBucket := bip44Bucket.NestedReadWriteBucket(metaBucketName)
-	err = scopedMetaBucket.Put(lastAccountName, lastAccount)
-	if err != nil {
-		return err
-	}
-
-	// Finally, we'll recursively move over a set of keys which were
-	// formerly under the main bucket, into the new scoped buckets. We'll
-	// do so by obtaining a slice of all the keys that we need to modify
-	// and then recursing through each of them, moving both nested buckets
-	// and key/value pairs.
-	keysToMigrate := [][]byte{
-		acctBucketName, addrBucketName, usedAddrBucketName,
-		addrAcctIdxBucketName, acctNameIdxBucketName, acctIDIdxBucketName,
-	}
-
-	// Migrate each bucket recursively.
-	for _, bucketKey := range keysToMigrate {
-		err := migrateRecursively(ns, bip44Bucket, bucketKey)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// migrateRecursively moves a nested bucket from one bucket to another,
-// recursing into nested buckets as required.
-func migrateRecursively(src, dst walletdb.ReadWriteBucket,
-	bucketKey []byte) error {
-	// Within this bucket key, we'll migrate over, then delete each key.
-	bucketToMigrate := src.NestedReadWriteBucket(bucketKey)
-	newBucket, err := dst.CreateBucketIfNotExists(bucketKey)
-	if err != nil {
-		return err
-	}
-	err = bucketToMigrate.ForEach(func(k, v []byte) error {
-		if nestedBucket := bucketToMigrate.
-			NestedReadBucket(k); nestedBucket != nil {
-			// We have a nested bucket, so recurse into it.
-			return migrateRecursively(bucketToMigrate, newBucket, k)
-		}
-
-		if err := newBucket.Put(k, v); err != nil {
-			return err
-		}
-
-		return bucketToMigrate.Delete(k)
-	})
-	if err != nil {
-		return err
-	}
-	// Finally, we'll delete the bucket itself.
-	if err := src.DeleteNestedBucket(bucketKey); err != nil {
-		return err
-	}
 	return nil
 }
