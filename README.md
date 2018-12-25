@@ -17,6 +17,7 @@ disk.  bchwallet uses the
 `m/44'/<coin type>'/<account>'/<branch>/<address index>`
 HD path for all derived addresses, as described by
 [BIP0044](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki).
+The default general derivation path is `m/44'/0'/0'`.
 
 Due to the sensitive nature of public data in a BIP0032 wallet,
 bchwallet provides the option of encrypting not just private keys, but
