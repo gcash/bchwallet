@@ -141,9 +141,18 @@ bchwallet -u rpcuser -P rpcpass --create
 bchwallet -u rpcuser -P rpcpass
 ```
 
+Now you can run wallet commands through the `bchctl` command:
+
+```bash
+$ bchctl --listcommands
+
+$ bchctl -u rpcuser -P rpcpass --wallet getnewaddress
+```
+
 If everything appears to be working, it is recommended at this point to
 copy the sample bchd and bchwallet configurations and update with your
-RPC username and password.
+RPC username and password. Then you can use commands without providing
+the username and password with every command.
 
 PowerShell (Installed from MSI):
 ```
