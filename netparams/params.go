@@ -30,6 +30,14 @@ var TestNet3Params = Params{
 	RPCServerPort: "18332",
 }
 
+// RegtestParams contains parameters specific running bchwallet and
+// bchd on the regression test network (wire.TestNet).
+var RegtestParams = Params{
+	Params:        &chaincfg.RegressionNetParams,
+	RPCClientPort: "18334",
+	RPCServerPort: "18332",
+}
+
 // SimNetParams contains parameters specific to the simulation test network
 // (wire.SimNet).
 var SimNetParams = Params{
