@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package main
+package boot
 
 import (
 	"bufio"
@@ -19,6 +19,10 @@ import (
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet"
 	"github.com/gcash/bchwallet/walletdb"
+
+	// Normally a blank import is only used in the main package but since
+	// we need to use the boot package from both main and mobile we will
+	// use it here.
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
 )
 
