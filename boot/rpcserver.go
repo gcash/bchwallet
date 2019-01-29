@@ -136,12 +136,12 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 				err := errors.New("failed to create listeners for RPC server")
 				return nil, nil, err
 			}
-			creds := credentials.NewServerTLSFromCert(&keyPair)
-			server = grpc.NewServer(
-				grpc.Creds(creds),
-				grpc.StreamInterceptor(interceptStreaming),
-				grpc.UnaryInterceptor(interceptUnary),
-			)
+			opts := []grpc.ServerOption{grpc.StreamInterceptor(interceptStreaming), grpc.UnaryInterceptor(interceptUnary)}
+			if !cfg.DisableServerTLS {
+				creds := credentials.NewServerTLSFromCert(&keyPair)
+				opts = append(opts, grpc.Creds(creds))
+			}
+			server = grpc.NewServer(opts...)
 			rpcserver.RegisterServices(server)
 			rpcserver.StartWalletLoaderService(server, walletLoader, activeNet)
 			for _, lis := range listeners {
