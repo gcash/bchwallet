@@ -169,6 +169,14 @@
   revision = "462a8a75388506b68f76661af8d649f0b88e5301"
 
 [[projects]]
+  digest = "1:d64a0aa67f715fd28f5ddfe0d74c06b6d6fe0fed931d77e662f2c4694f6854dc"
+  name = "github.com/miekg/dns"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "56be65265e34e731425e0269a301774938827c60"
+  version = "v1.1.3"
+
+[[projects]]
   digest = "1:73e0d2644cf33beeafbfb79804143ac9738bed3c28a12fd5e61bd3b13ac95407"
   name = "github.com/tyler-smith/go-bip39"
   packages = [
@@ -181,9 +189,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:e7aa57d4da3abfc58f12532c5cfc8a8dda493a6c25055804065338e8110f752b"
+  digest = "1:b756c19fdb82272e6bb77e5e129d8e17c189b7011261429c52ddbf82b100f216"
   name = "golang.org/x/crypto"
   packages = [
+    "ed25519",
+    "ed25519/internal/edwards25519",
     "pbkdf2",
     "ripemd160",
     "ssh/terminal",
@@ -193,15 +203,20 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:7a2e3d6819e7a97a877f8604e737901c6941e76d56ae98a51a1ca2f13de351fb"
+  digest = "1:58e048bebb4e4d719df6c3142e0dbde213a4ac5d6a9e4c917550e37f812f7c83"
   name = "golang.org/x/net"
   packages = [
+    "bpf",
     "context",
     "http/httpguts",
     "http2",
     "http2/hpack",
     "idna",
+    "internal/iana",
+    "internal/socket",
     "internal/timeseries",
+    "ipv4",
+    "ipv6",
     "trace",
   ]
   pruneopts = "UT"
@@ -312,6 +327,7 @@
     "github.com/jessevdk/go-flags",
     "github.com/jrick/logrotate/rotator",
     "github.com/lightninglabs/gozmq",
+    "github.com/miekg/dns",
     "github.com/tyler-smith/go-bip39",
     "golang.org/x/crypto/ripemd160",
     "golang.org/x/crypto/ssh/terminal",

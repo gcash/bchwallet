@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"github.com/miekg/dns"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -166,6 +167,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 					AddPeers:     cfg.AddPeers,
 					BlocksOnly:   cfg.BlocksOnly,
 					Proxy:        cfg.Proxy,
+					NameResolver: buildNeutrinoDNSResolver(),
 				})
 			if err != nil {
 				log.Errorf("Couldn't create Neutrino ChainService: %s", err)
@@ -263,4 +265,29 @@ func startChainRPC(certs []byte) (*chain.RPCClient, error) {
 	}
 	err = rpcc.Start()
 	return rpcc, err
+}
+
+// buildNeutrinoDNSResolver returns a custom DNS resolver designed for use with
+// neutrino. Because neutrino is primarily going to run on mobile devices we
+// want it to be able to take advantage of orbot's DNS proxy which runs on port
+// 5400 on localhost if available. Therefore this resolve function first tries
+// localhost and if that fails proceeds to perform a normal DNS lookup. If
+// localhost is unavailable it should fail immediately.
+func buildNeutrinoDNSResolver() func(host string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		c := dns.Client{}
+		m := dns.Msg{}
+		m.SetQuestion(host+".", dns.TypeA)
+		r, _, err := c.Exchange(&m, "127.0.0.1:5400")
+		if err != nil {
+			return net.LookupIP(host)
+		}
+		var ips []net.IP
+		for _, ans := range r.Answer {
+			if Arecord, ok := ans.(*dns.A); ok {
+				ips = append(ips, Arecord.A)
+			}
+		}
+		return ips, nil
+	}
 }
