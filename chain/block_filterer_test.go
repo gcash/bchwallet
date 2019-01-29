@@ -592,6 +592,6 @@ func assertRelevantTxnsContains(t *testing.T, bf *chain.BlockFilterer, wantTx *w
 		}
 	}
 
-	t.Fatalf("unable to find tx: %x in %d relevant txns", wantTx,
+	t.Fatalf("unable to find tx: %s in %d relevant txns", wantTx.TxHash().String(),
 		len(bf.RelevantTxns))
 }
