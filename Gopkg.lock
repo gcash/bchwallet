@@ -87,12 +87,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:7eb4577517abdf0f214f577e4e85c868c3fdf163ed476fe9ba27d676b9536eb8"
+  digest = "1:52c0bca4d1c7d37712d259e17547e649e98c97c4db26d93b8c9ef756f16f2621"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
     "base58",
-    "bloom",
     "gcs",
     "gcs/builder",
     "hdkeychain",
@@ -102,7 +101,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:6949df6ebe93b5ad1a7f2409be041d08dfce58054662e852c58b3deee205d84e"
+  digest = "1:eab70fb00d9ca0411046f35046bb1e64d132b3f7b62dbb033df3ba8a5e69a62b"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -113,7 +112,7 @@
     "headerlist",
   ]
   pruneopts = "UT"
-  revision = "55e3241de200a08aae79b94b03a481a9668c01c3"
+  revision = "34d12af066c62bd94dcf8294c4f2815c9ffc175f"
 
 [[projects]]
   digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
