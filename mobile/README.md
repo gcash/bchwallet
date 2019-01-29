@@ -25,19 +25,19 @@ The following is an example of how to compile for Android:
 5. Build the language bindings. This generates a .aar file
     ```
     cd $GOPATH/src/github.com/gcash/bchwallet/mobile
-    gomobile bind -target=android -out=bchwallet.aar
+    gomobile bind -target=android -o=bchwallet.aar
     ```
 6. Import the .aar file as a dependency in Android Studio. See [this](https://stackoverflow.com/a/34919810) stack overflow answer for the steps
 of how to import import into your project. 
 
 7. You can now start the wallet from the Java code.
     ```java
-    String configPath = getFilesDir() + "/Android/data/" + getPackageName() + "/bchwallet/bchwallet.conf";
-    bchwallet.Mobile.StartWallet(configPath);
+    String configPath = getFilesDir() + "/bchwallet.conf";
+    mobile.Mobile.StartWallet(configPath);
     ```
 8. The wallet is now running and you can use the gRPC API to control it. 
 
-9. Use `bchwallet.Mobile.StopWallet()` to stop it and perform a clean shutdown.
+9. Use `mobile.Mobile.StopWallet()` to stop it and perform a clean shutdown.
 
 Note that `StartWallet` takes in a path to a config file. You will need to programatically create and save the config file on the device. As you do this make sure
 to set the `appdata` to a valid path on the device. You will also most likely want to use the `noinitialload` config option and create the wallet using the API.
