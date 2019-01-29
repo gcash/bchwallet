@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package main
+package boot
 
 import (
 	"fmt"
@@ -255,7 +255,7 @@ func parseAndSetDebugLevels(debugLevel string) error {
 // The above results in bchwallet functioning properly without any config
 // settings while still allowing the user to override settings with config files
 // and command line options.  Command line options always take precedence.
-func loadConfig() (*config, []string, error) {
+func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	// Default config.
 	cfg := config{
 		DebugLevel:             defaultLogLevel,
@@ -300,6 +300,10 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// Load additional config from file.
+	if optionalConfigPath != nil {
+		preCfg.ConfigFile = &cfgutil.ExplicitString{}
+		preCfg.ConfigFile.UnmarshalFlag(*optionalConfigPath)
+	}
 	var configFileError error
 	parser := flags.NewParser(&cfg, flags.Default)
 	configFilePath := preCfg.ConfigFile.Value

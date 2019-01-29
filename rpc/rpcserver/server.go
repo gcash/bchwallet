@@ -505,7 +505,6 @@ func (s *walletServer) ChangePassphrase(ctx context.Context, req *pb.ChangePassp
 // - InputIndexes request field is ignored.
 func (s *walletServer) SignTransaction(ctx context.Context, req *pb.SignTransactionRequest) (
 	*pb.SignTransactionResponse, error) {
-
 	defer zero.Bytes(req.Passphrase)
 
 	var tx wire.MsgTx

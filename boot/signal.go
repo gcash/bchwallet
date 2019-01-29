@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package main
+package boot
 
 import (
 	"os"
@@ -26,9 +26,9 @@ var simulateInterruptChannel = make(chan struct{}, 1)
 // Conditional compilation is used to also include SIGTERM on Unix.
 var signals = []os.Signal{os.Interrupt}
 
-// simulateInterrupt requests invoking the clean termination process by an
+// SimulateInterrupt requests invoking the clean termination process by an
 // internal component instead of a SIGINT.
-func simulateInterrupt() {
+func SimulateInterrupt() {
 	select {
 	case simulateInterruptChannel <- struct{}{}:
 	default:
