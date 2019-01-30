@@ -137,8 +137,7 @@ After creating a wallet, the `WalletService` service begins running.
   encryption.  This is the passphrase used for data that must always remain
   private, such as private keys.  The length of this field must not be zero.
 
-- `bytes seed`: The BIP0032 seed used to derive all wallet keys.  The length of
-  this field must be between 16 and 64 bytes, inclusive.
+- `string mnemonicSeed`: The BIP0039 mnemonic seed used to derive all wallet keys. 
 
 **Response:** `CreateWalletReponse`
 
@@ -294,14 +293,17 @@ ___
 
 #### `Network`
 
-The `Network` method returns the network identifier constant describing the
-server's active network.
+The `Network` method returns information about the network including the 
+identifier constant describing the server's active network, the current
+blockchain's height and hash of the best block.
 
 **Request:** `NetworkRequest`
 
 **Response:** `NetworkResponse`
 
 - `uint32 active_network`: The network identifier.
+- `string best_block`: The hash of the best block in the blockchain.
+- `int32 best_height`: The height of the blockchain.
 
 **Expected errors:** None
 
@@ -729,6 +731,102 @@ transaction paying to already known addresses or scripts.
 
 ___
 
+#### `CreateTransaction`
+
+The `CreateTransaction` method functions similar to `FundTransaction` but it 
+does all the heavy lifting to build the transaction rather than providing
+the building blocks for the transaction and leaving up to the caller to build it.
+The response to this query is a serialized transaction which can be directly 
+passed into `SignTransaction`
+
+**Request:** `CreateTransactionRequest`
+
+- `uint32 account`: Account number containing the keys controlling the output
+  set to query.
+
+- `repeated Output outputs`: A list of outputs to include with the transaction.
+  These outputs take an address string rather than a script for ease of use.
+  
+   **Nested message:** `Output`
+  
+    - `string address`: The address for this output to pay.
+  
+    - `int64 amount`: The amount to pay.
+
+- `int32 required_confirmations`: The minimum number of block confirmations
+  needed to consider including an output in the return set.  This may not be
+  negative.
+
+- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte.
+
+**Response:** `CreateTransactionResponse`
+
+- `bytes serialized_transaction`: The serialized transaction with the inputs and
+  outputs added.
+
+- `repeated int64 input_values`: The value (in satoshis) of each input. This is
+  needed to sign the transaction using the bitcoin cash signing algorithm.
+  
+- `int64 fee`: The fee that ended up being set when the transaction was created.
+
+**Expected errors:**
+
+- `InvalidArgument`: The target amount is negative.
+
+- `InvalidArgument`: The required confirmations is negative.
+
+- `Aborted`: The wallet database is closed.
+
+- `NotFound`: The account does not exist.
+
+**Stability:** Unstable
+
+___
+
+#### `SweepAccount`
+
+The `SweepAccount` method provides a function to sweep the full amount of funds
+in the account to a new address. The reason this function is needed is because
+`CreateTransaction` will attempt to add the fee to the requested amount, posssibly
+pushing it over the total balance in the wallet and resulting in a insufficient funds
+error. This requires the user to play a guessing game where they try to guess the
+exact fee the wallet will use and subtract that from their balance when creating a 
+spend. It's much easier to just have a sweep account function which grabs all the 
+inputs in the wallet, totals them up, and subtracts the fee from the total. So
+unlikely `CreateTransaction` the fee here is subtracted from the total amount
+rather than added.
+
+**Request:** `SweepAccount`
+
+- `uint32 account`: Account number containing the keys controlling the output
+  set to query.
+
+- `string sweep_to_address`: The address to sweep all the funds into.
+
+- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte.
+
+**Response:** `SweepAccountResponse`
+
+- `bytes serialized_transaction`: The serialized transaction with the inputs and
+  outputs added.
+
+- `repeated int64 input_values`: The value (in satoshis) of each input. This is
+  needed to sign the transaction using the bitcoin cash signing algorithm.
+  
+- `int64 total_amount`: The total amount that ended up being swept to the address.
+  
+- `int64 fee`: The fee that ended up being set when the transaction was created.
+
+**Expected errors:**
+
+- `Aborted`: The wallet database is closed.
+
+- `NotFound`: The account does not exist.
+
+**Stability:** Unstable
+
+___
+
 #### `SignTransaction`
 
 The `SignTransaction` method adds transaction input signatures to a serialized
@@ -788,6 +886,49 @@ wallet and republished later if it or a double spend are not mined.
   input scripts.
 
 - `Aborted`: The wallet database is closed.
+
+**Stability:** Unstable
+
+___
+
+#### `ValidateAddress`
+
+The `ValidateAddress` method is a helper function that will return whether or not
+an address is valid. That is, whether it's serialized properly, the checksum matches,
+and it's for the correct network. Since the cashaddr is difficult to implement this
+method saves the client the trouble of implementing it.
+
+**Request:** `ValidateAddressRequest`
+
+- `string address`: The address to validate.
+
+**Response:** `ValidateAddressResponse`
+
+- `bool valid`: Whether or not the address is valid.
+
+**Expected errors:**
+
+**Stability:** Unstable
+
+___
+
+#### `GenerateMnemonicSeed`
+
+The `GenerateMnemonicSeed` method is a helper function that will generate a BIP0039
+mnemonic seed. While there are more client libraries available for BIP0039 than 
+the cashaddr, it's still convenient to have this method in the RPC interface.
+
+**Request:** `GenerateMnemonicSeedRequest`
+
+- `uint32 bit_size`: The number of bits to use for the mnemonic string. 128 and 256 are
+  the most commonly used sizes. 128 bits results in a 12 word seed while 256 bits results 
+  in a 24 word seed.
+
+**Response:** `GenerateMnemonicSeedResponse`
+
+- `string mnemonic`: The generated seed.
+
+**Expected errors:**
 
 **Stability:** Unstable
 

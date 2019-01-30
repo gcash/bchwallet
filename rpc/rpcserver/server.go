@@ -423,7 +423,7 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTransactionRequest) (
 	*pb.CreateTransactionResponse, error) {
 
-	fee := bchutil.Amount(req.SatPerKBFee)
+	fee := bchutil.Amount(req.SatPerKbFee)
 	var outputs []*wire.TxOut
 	totalOut := int64(0)
 	for _, out := range req.Outputs {
@@ -499,7 +499,7 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 
 	txSize := txsizes.EstimateSerializeSize(len(inputs), outputs, false)
 
-	fee := (float64(txSize) / float64(1000)) * float64(req.SatPerKBFee)
+	fee := (float64(txSize) / float64(1000)) * float64(req.SatPerKbFee)
 
 	out.Value = totalIn - int64(fee)
 
@@ -684,15 +684,15 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	return &pb.PublishTransactionResponse{}, nil
 }
 
-func (s *walletServer) DecodeAddress(ctx context.Context, req *pb.DecodeAddressRequest) (
-	*pb.DecodeAddressResponse, error) {
+func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
+	*pb.ValidateAddressResponse, error) {
 
 	valid := false
 	_, err := bchutil.DecodeAddress(req.Address, s.wallet.ChainParams())
 	if err == nil {
 		valid = true
 	}
-	return &pb.DecodeAddressResponse{Valid: valid}, nil
+	return &pb.ValidateAddressResponse{Valid: valid}, nil
 }
 
 func (s *walletServer) GenerateMnemonicSeed(ctx context.Context, req *pb.GenerateMnemonicSeedRequest) (

@@ -43,7 +43,7 @@ service WalletService {
 	rpc PublishTransaction (PublishTransactionRequest) returns (PublishTransactionResponse);
 
 	// Utilities
-	rpc DecodeAddress(DecodeAddressRequest) returns (DecodeAddressResponse);
+	rpc ValidateAddress(ValidateAddressRequest) returns (ValidateAddressResponse);
 	rpc GenerateMnemonicSeed(GenerateMnemonicSeedRequest) returns (GenerateMnemonicSeedResponse);
 }
 
@@ -234,7 +234,7 @@ message CreateTransactionRequest {
 	uint32 account = 1;
 	repeated Output outputs = 2;
 	int32 required_confirmations = 3;
-	uint32 satPerKBFee = 4;
+	uint32 sat_per_kb_fee = 4;
 }
 message CreateTransactionResponse {
 	bytes serialized_transaction = 1;
@@ -244,8 +244,8 @@ message CreateTransactionResponse {
 
 message SweepAccountRequest {
 	uint32 account = 1;
-	string sweepToAddress = 2;
-	uint32 satPerKBFee = 4;
+	string sweep_to_address = 2;
+	uint32 sat_per_kb_fee = 3;
 }
 message SweepAccountResponse {
 	bytes serialized_transaction = 1;
@@ -331,7 +331,7 @@ message AccountNotificationsResponse {
 message CreateWalletRequest {
 	bytes public_passphrase = 1;
 	bytes private_passphrase = 2;
-	string mnemonicSeed = 3;
+	string mnemonic_seed = 3;
 }
 message CreateWalletResponse {}
 
@@ -356,10 +356,10 @@ message StartConsensusRpcRequest {
 }
 message StartConsensusRpcResponse {}
 
-message DecodeAddressRequest {
+message ValidateAddressRequest {
 	string address = 1;
 }
-message DecodeAddressResponse {
+message ValidateAddressResponse {
 	bool valid = 1;
 }
 
