@@ -58,7 +58,7 @@ func newHash(hexStr string) *chainhash.Hash {
 // snacl.ErrDecryptFailed.
 func failingSecretKeyGen(passphrase *[]byte,
 	config *ScryptOptions) (*snacl.SecretKey, error) {
-	return nil, snacl.ErrDecryptFailed
+	return nil, errors.New("failingSecretKeyGen intentionally failed to decrypt")
 }
 
 // testContext is used to store context information about a running test which
