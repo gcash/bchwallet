@@ -194,7 +194,12 @@ func (s *walletServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingR
 func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	*pb.NetworkResponse, error) {
 
-	return &pb.NetworkResponse{ActiveNetwork: uint32(s.wallet.ChainParams().Net)}, nil
+	bestHash, bestHeight, err := s.wallet.ChainClient().GetBestBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.NetworkResponse{ActiveNetwork: uint32(s.wallet.ChainParams().Net), BestBlock: bestHash.String(), BestHeight: bestHeight}, nil
 }
 
 func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberRequest) (

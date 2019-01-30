@@ -92,6 +92,8 @@ message PingResponse {}
 message NetworkRequest {}
 message NetworkResponse {
 	uint32 active_network = 1;
+	string best_block = 2;
+	int32 best_height = 3;
 }
 
 message AccountNumberRequest {
