@@ -1,7 +1,6 @@
 package boot
 
 import (
-	"github.com/miekg/dns"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"github.com/gcash/bchwallet/wallet"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/neutrino"
+	"github.com/miekg/dns"
 )
 
 var (
