@@ -298,6 +298,17 @@ func (s *walletServer) NextAddress(ctx context.Context, req *pb.NextAddressReque
 	return &pb.NextAddressResponse{Address: addr.EncodeAddress()}, nil
 }
 
+func (s *walletServer) CurrentAddress(ctx context.Context, req *pb.CurrentAddressRequest) (
+	*pb.CurrentAddressResponse, error) {
+
+	addr, err := s.wallet.CurrentAddress(req.Account, waddrmgr.KeyScopeBIP0044)
+	if err != nil {
+		return nil, translateError(err)
+	}
+
+	return &pb.CurrentAddressResponse{Address: addr.EncodeAddress()}, nil
+}
+
 func (s *walletServer) ImportPrivateKey(ctx context.Context, req *pb.ImportPrivateKeyRequest) (
 	*pb.ImportPrivateKeyResponse, error) {
 

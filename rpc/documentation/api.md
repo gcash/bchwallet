@@ -263,6 +263,7 @@ The service provides the following methods:
 - [`AccountNumber`](#accountnumber)
 - [`Accounts`](#accounts)
 - [`Balance`](#balance)
+- [`CurrentAddress`](#currentaddress)
 - [`GetTransactions`](#gettransactions)
 - [`ChangePassphrase`](#changepassphrase)
 - [`RenameAccount`](#renameaccount)
@@ -270,6 +271,10 @@ The service provides the following methods:
 - [`NextAddress`](#nextaddress)
 - [`ImportPrivateKey`](#importprivatekey)
 - [`FundTransaction`](#fundtransaction)
+- [`CreateTransaction`](#createtransaction)
+- [`SweepAccount`](#sweepaccount)
+- [`ValidateAddress`](#validateaddress)
+- [`GenerateMnemonicSeed`](#generatemnemonicseed)
 - [`SignTransaction`](#signtransaction)
 - [`PublishTransaction`](#publishtransaction)
 - [`TransactionNotifications`](#transactionnotifications)
@@ -415,6 +420,28 @@ and unspendable immature coinbase balances.
 
 **Stability:** Unstable: It may prove useful to modify this RPC to query
   multiple accounts together.
+
+___
+
+#### `CurrentAddress`
+
+The `CurrentAddress` method generates the last unused external address in the account.
+
+**Request:** `CurrentAddressRequest`
+
+- `uint32 account`: The number of the account to derive the next address for.
+
+**Response:** `CurrentAddressResponse`
+
+- `string address`: The payment address string.
+
+**Expected errors:**
+
+- `Aborted`: The wallet database is closed.
+
+- `NotFound`: The account does not exist.
+
+**Stability:** Unstable
 
 ___
 
