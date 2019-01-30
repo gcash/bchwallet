@@ -66,6 +66,7 @@ message TransactionDetails {
 		uint32 index = 1;
 		uint32 account = 2;
 		bool internal = 3;
+		string address = 4;
 	}
 	bytes hash = 1;
 	bytes transaction = 2;

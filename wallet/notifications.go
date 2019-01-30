@@ -134,10 +134,18 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 			continue
 		}
 		acct, internal := lookupOutputChain(dbtx, w, details, details.Credits[credIndex])
+
+		var outputAddress bchutil.Address
+		_, addrs, _, err := txscript.ExtractPkScriptAddrs(details.MsgTx.TxOut[i].PkScript, w.chainParams)
+		if err == nil && len(addrs) > 0 {
+			outputAddress = addrs[0]
+		}
+
 		output := TransactionSummaryOutput{
 			Index:    uint32(i),
 			Account:  acct,
 			Internal: internal,
+			Address:  outputAddress,
 		}
 		outputs = append(outputs, output)
 	}
@@ -384,6 +392,7 @@ type TransactionSummaryOutput struct {
 	Index    uint32
 	Account  uint32
 	Internal bool
+	Address  bchutil.Address
 }
 
 // AccountBalance associates a total (zero confirmation) balance with an

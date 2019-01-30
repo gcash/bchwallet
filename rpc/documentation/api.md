@@ -820,7 +820,7 @@ error. This requires the user to play a guessing game where they try to guess th
 exact fee the wallet will use and subtract that from their balance when creating a 
 spend. It's much easier to just have a sweep account function which grabs all the 
 inputs in the wallet, totals them up, and subtracts the fee from the total. So
-unlikely `CreateTransaction` the fee here is subtracted from the total amount
+unlike `CreateTransaction` the fee here is subtracted from the total amount
 rather than added.
 
 **Request:** `SweepAccount`
@@ -1141,6 +1141,9 @@ transaction was seen.
   - `bool internal`: Whether the output pays to an address derived from the
     account's internal key series.  This often means the output is a change
     output.
+  - `string address`: The payment address of this output. This field will be empty if
+    no address could be extracted from the script. This should not ever be the case as
+    the wallet only accepts payments to standard scripts.
 
 - `int64 fee`: The transaction fee, if calculable.  The fee is only calculable
   when every previous output spent by this transaction is also recorded by
