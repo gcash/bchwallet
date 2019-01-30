@@ -18,6 +18,9 @@ package rpcserver
 import (
 	"bytes"
 	"errors"
+
+	"github.com/gcash/bchwallet/wallet/txsizes"
+	"github.com/tyler-smith/go-bip39"
 	"google.golang.org/grpc/status"
 	"sync"
 	"sync/atomic"
@@ -412,6 +415,110 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 	}, nil
 }
 
+func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTransactionRequest) (
+	*pb.CreateTransactionResponse, error) {
+
+	fee := bchutil.Amount(req.SatPerKBFee)
+	var outputs []*wire.TxOut
+	totalOut := int64(0)
+	for _, out := range req.Outputs {
+		addr, err := bchutil.DecodeAddress(out.Address, s.wallet.ChainParams())
+		if err != nil {
+			return nil, err
+		}
+		script, err := txscript.PayToAddrScript(addr)
+		if err != nil {
+			return nil, err
+		}
+		totalOut += out.Amount
+		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
+	}
+
+	authoredTx, err := s.wallet.CreateSimpleTx(req.Account, outputs, req.RequiredConfirmations, fee)
+	if err != nil {
+		return nil, err
+	}
+	var serializedTx bytes.Buffer
+	err = authoredTx.Tx.BchEncode(&serializedTx, wire.ProtocolVersion, wire.BaseEncoding)
+	if err != nil {
+		return nil, err
+	}
+
+	var inputValues []int64
+	totalIn := int64(0)
+	for _, val := range authoredTx.PrevInputValues {
+		totalIn += int64(val.ToUnit(bchutil.AmountSatoshi))
+		inputValues = append(inputValues, int64(val.ToUnit(bchutil.AmountSatoshi)))
+	}
+
+	return &pb.CreateTransactionResponse{
+		SerializedTransaction: serializedTx.Bytes(),
+		InputValues:           inputValues,
+		Fee:                   totalIn - totalOut,
+	}, nil
+}
+
+func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountRequest) (
+	*pb.SweepAccountResponse, error) {
+
+	policy := wallet.OutputSelectionPolicy{
+		Account:               req.Account,
+		RequiredConfirmations: 0,
+	}
+	unspentOutputs, err := s.wallet.UnspentOutputs(policy)
+	if err != nil {
+		return nil, translateError(err)
+	}
+
+	totalIn := int64(0)
+	var inputs []*wire.TxIn
+	var inputValues []int64
+	for _, u := range unspentOutputs {
+		totalIn += u.Output.Value
+		inputValues = append(inputValues, u.Output.Value)
+		inputs = append(inputs, wire.NewTxIn(&u.OutPoint, nil))
+	}
+
+	addr, err := bchutil.DecodeAddress(req.SweepToAddress, s.wallet.ChainParams())
+	if err != nil {
+		return nil, err
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the value to zero as a placeholder while we calculate the estimate size
+	out := wire.NewTxOut(0, script)
+	outputs := []*wire.TxOut{out}
+
+	txSize := txsizes.EstimateSerializeSize(len(inputs), outputs, false)
+
+	fee := (float64(txSize) / float64(1000)) * float64(req.SatPerKBFee)
+
+	out.Value = totalIn - int64(fee)
+
+	tx := &wire.MsgTx{
+		Version:  wire.TxVersion,
+		TxIn:     inputs,
+		TxOut:    outputs,
+		LockTime: 0,
+	}
+
+	var serializedTx bytes.Buffer
+	err = tx.BchEncode(&serializedTx, wire.ProtocolVersion, wire.BaseEncoding)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.SweepAccountResponse{
+		SerializedTransaction: serializedTx.Bytes(),
+		InputValues:           inputValues,
+		TotalAmount:           out.Value,
+		Fee:                   int64(fee),
+	}, nil
+}
+
 func marshalGetTransactionsResult(wresp *wallet.GetTransactionsResult) (
 	*pb.GetTransactionsResponse, error) {
 
@@ -570,6 +677,31 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	}
 
 	return &pb.PublishTransactionResponse{}, nil
+}
+
+func (s *walletServer) DecodeAddress(ctx context.Context, req *pb.DecodeAddressRequest) (
+	*pb.DecodeAddressResponse, error) {
+
+	valid := false
+	_, err := bchutil.DecodeAddress(req.Address, s.wallet.ChainParams())
+	if err == nil {
+		valid = true
+	}
+	return &pb.DecodeAddressResponse{Valid: valid}, nil
+}
+
+func (s *walletServer) GenerateMnemonicSeed(ctx context.Context, req *pb.GenerateMnemonicSeedRequest) (
+	*pb.GenerateMnemonicSeedResponse, error) {
+
+	ent, err := bip39.NewEntropy(int(req.BitSize))
+	if err != nil {
+		return nil, err
+	}
+	mnemonic, err := bip39.NewMnemonic(ent)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GenerateMnemonicSeedResponse{Mnemonic: mnemonic}, nil
 }
 
 func marshalTransactionInputs(v []wallet.TransactionSummaryInput) []*pb.TransactionDetails_Input {
@@ -761,9 +893,12 @@ func (s *loaderServer) checkReady() bool {
 func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletRequest) (
 	*pb.CreateWalletResponse, error) {
 
+	seed := bip39.NewSeed(req.MnemonicSeed, "")
+
 	defer func() {
 		zero.Bytes(req.PrivatePassphrase)
-		zero.Bytes(req.Seed)
+		zero.Bytes(seed)
+		req.MnemonicSeed = ""
 	}()
 
 	// Use an insecure public passphrase when the request's is empty.
@@ -773,7 +908,7 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 	}
 
 	wallet, err := s.loader.CreateNewWallet(
-		pubPassphrase, req.PrivatePassphrase, req.Seed, time.Now(),
+		pubPassphrase, req.PrivatePassphrase, seed, time.Now(),
 	)
 	if err != nil {
 		return nil, translateError(err)
