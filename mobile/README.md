@@ -40,9 +40,9 @@ of how to import import into your project.
 9. Use `mobile.Mobile.StopWallet()` to stop it and perform a clean shutdown.
 
 Note that `StartWallet` takes in a path to a config file. You will need to programatically create and save the config file on the device. As you do this make sure
-to set the `appdata` to a valid path on the device. You will also most likely want to use the `noinitialload` config option and create the wallet using the API.
+to set the `appdata` and `logdir` to a valid path on the device. You will also most likely want to use the `noinitialload` config option and create the wallet using the API.
 
 Finally you may run into [this](https://github.com/golang/go/issues/29706) bug in gomobile which may require you to modify a python file in your Android SDK.
 
-Package wallet is licensed under the [copyfree](http://copyfree.org) ISC
+Package mobile is licensed under the [copyfree](http://copyfree.org) ISC
 License.
