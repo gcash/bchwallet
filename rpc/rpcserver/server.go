@@ -746,6 +746,7 @@ func marshalTransactionOutputs(v []wallet.TransactionSummaryOutput) []*pb.Transa
 			Account:  output.Account,
 			Internal: output.Internal,
 			Address:  address,
+			Amount:   int64(output.Amount.ToUnit(bchutil.AmountSatoshi)),
 		}
 	}
 	return outputs

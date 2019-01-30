@@ -146,6 +146,7 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 			Account:  acct,
 			Internal: internal,
 			Address:  outputAddress,
+			Amount:   bchutil.Amount(details.MsgTx.TxOut[i].Value),
 		}
 		outputs = append(outputs, output)
 	}
@@ -393,6 +394,7 @@ type TransactionSummaryOutput struct {
 	Account  uint32
 	Internal bool
 	Address  bchutil.Address
+	Amount   bchutil.Amount
 }
 
 // AccountBalance associates a total (zero confirmation) balance with an

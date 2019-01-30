@@ -1141,9 +1141,12 @@ transaction was seen.
   - `bool internal`: Whether the output pays to an address derived from the
     account's internal key series.  This often means the output is a change
     output.
+    
   - `string address`: The payment address of this output. This field will be empty if
     no address could be extracted from the script. This should not ever be the case as
     the wallet only accepts payments to standard scripts.
+    
+  - `int64 amount`: The amount sent to this output.
 
 - `int64 fee`: The transaction fee, if calculable.  The fee is only calculable
   when every previous output spent by this transaction is also recorded by
