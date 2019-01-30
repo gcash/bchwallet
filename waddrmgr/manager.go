@@ -1669,12 +1669,12 @@ func Create(ns walletdb.ReadWriteBucket, seed, pubPassphrase, privPassphrase []b
 	// crypto keys that will be generated next.
 	masterKeyPub, err := newSecretKey(&pubPassphrase, config)
 	if err != nil {
-		str := "failed to master public key"
+		str := "failed to master public key" + err.Error()
 		return managerError(ErrCrypto, str, err)
 	}
 	masterKeyPriv, err := newSecretKey(&privPassphrase, config)
 	if err != nil {
-		str := "failed to master private key"
+		str := "failed to master private key" + err.Error()
 		return managerError(ErrCrypto, str, err)
 	}
 	defer masterKeyPriv.Zero()
