@@ -58,7 +58,7 @@ func newHash(hexStr string) *chainhash.Hash {
 // snacl.ErrDecryptFailed.
 func failingSecretKeyGen(passphrase *[]byte,
 	config *ScryptOptions) (*snacl.SecretKey, error) {
-	return nil, snacl.ErrDecryptFailed
+	return nil, errors.New("failingSecretKeyGen intentionally failed to decrypt")
 }
 
 // testContext is used to store context information about a running test which
@@ -1119,7 +1119,7 @@ func testChangePassphrase(tc *testContext) bool {
 	// that intentionally errors.
 	testName := "ChangePassphrase (public) with invalid new secret key"
 
-	oldKeyGen := SetSecretKeyGen(failingSecretKeyGen)
+	SetSecretKeyGen(failingSecretKeyGen)
 	err := walletdb.Update(tc.db, func(tx walletdb.ReadWriteTx) error {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 		return tc.rootManager.ChangePassphrase(
@@ -1132,7 +1132,7 @@ func testChangePassphrase(tc *testContext) bool {
 
 	// Attempt to change public passphrase with invalid old passphrase.
 	testName = "ChangePassphrase (public) with invalid old passphrase"
-	SetSecretKeyGen(oldKeyGen)
+	SetSecretKeyGen(defaultNewSecretKey)
 	err = walletdb.Update(tc.db, func(tx walletdb.ReadWriteTx) error {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 		return tc.rootManager.ChangePassphrase(

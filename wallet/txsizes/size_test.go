@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/gcash/bchd/wire"
-	. "github.com/gcash/bchwallet/wallet/internal/txsizes"
+	. "github.com/gcash/bchwallet/wallet/txsizes"
 )
 
 const (

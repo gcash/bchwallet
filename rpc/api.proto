@@ -23,6 +23,7 @@ service WalletService {
 	rpc AccountNumber (AccountNumberRequest) returns (AccountNumberResponse);
 	rpc Accounts (AccountsRequest) returns (AccountsResponse);
 	rpc Balance (BalanceRequest) returns (BalanceResponse);
+	rpc CurrentAddress (CurrentAddressRequest) returns (CurrentAddressResponse);
 	rpc GetTransactions (GetTransactionsRequest) returns (GetTransactionsResponse);
 
 	// Notifications
@@ -37,8 +38,14 @@ service WalletService {
 	rpc NextAddress (NextAddressRequest) returns (NextAddressResponse);
 	rpc ImportPrivateKey (ImportPrivateKeyRequest) returns (ImportPrivateKeyResponse);
 	rpc FundTransaction (FundTransactionRequest) returns (FundTransactionResponse);
+	rpc CreateTransaction (CreateTransactionRequest) returns (CreateTransactionResponse);
+	rpc SweepAccount (SweepAccountRequest) returns (SweepAccountResponse);
 	rpc SignTransaction (SignTransactionRequest) returns (SignTransactionResponse);
 	rpc PublishTransaction (PublishTransactionRequest) returns (PublishTransactionResponse);
+
+	// Utilities
+	rpc ValidateAddress(ValidateAddressRequest) returns (ValidateAddressResponse);
+	rpc GenerateMnemonicSeed(GenerateMnemonicSeedRequest) returns (GenerateMnemonicSeedResponse);
 }
 
 service WalletLoaderService {
@@ -59,6 +66,8 @@ message TransactionDetails {
 		uint32 index = 1;
 		uint32 account = 2;
 		bool internal = 3;
+		string address = 4;
+		int64 amount = 5;
 	}
 	bytes hash = 1;
 	bytes transaction = 2;
@@ -86,6 +95,8 @@ message PingResponse {}
 message NetworkRequest {}
 message NetworkResponse {
 	uint32 active_network = 1;
+	string best_block = 2;
+	int32 best_height = 3;
 }
 
 message AccountNumberRequest {
@@ -155,6 +166,13 @@ message BalanceResponse {
 	int64 immature_reward = 3;
 }
 
+message CurrentAddressRequest {
+	uint32 account = 1;
+}
+message CurrentAddressResponse {
+	string address = 1;
+}
+
 message GetTransactionsRequest {
 	// Optionally specify the starting block from which to begin including all transactions.
 	// Either the starting block hash or height may be specified, but not both.
@@ -216,6 +234,34 @@ message FundTransactionResponse {
 	repeated PreviousOutput selected_outputs = 1;
 	int64 total_amount = 2;
 	bytes change_pk_script = 3;
+}
+
+message CreateTransactionRequest {
+	message Output {
+		string address = 1;
+		int64 amount = 2;
+	}
+	uint32 account = 1;
+	repeated Output outputs = 2;
+	int32 required_confirmations = 3;
+	uint32 sat_per_kb_fee = 4;
+}
+message CreateTransactionResponse {
+	bytes serialized_transaction = 1;
+	repeated int64 input_values = 2;
+	int64 fee = 3;
+}
+
+message SweepAccountRequest {
+	uint32 account = 1;
+	string sweep_to_address = 2;
+	uint32 sat_per_kb_fee = 3;
+}
+message SweepAccountResponse {
+	bytes serialized_transaction = 1;
+	repeated int64 input_values = 2;
+	int64 total_amount = 3;
+	int64 fee = 4;
 }
 
 message SignTransactionRequest {
@@ -295,7 +341,7 @@ message AccountNotificationsResponse {
 message CreateWalletRequest {
 	bytes public_passphrase = 1;
 	bytes private_passphrase = 2;
-	bytes seed = 3;
+	string mnemonic_seed = 3;
 }
 message CreateWalletResponse {}
 
@@ -319,3 +365,17 @@ message StartConsensusRpcRequest {
 	bytes certificate = 4;
 }
 message StartConsensusRpcResponse {}
+
+message ValidateAddressRequest {
+	string address = 1;
+}
+message ValidateAddressResponse {
+	bool valid = 1;
+}
+
+message GenerateMnemonicSeedRequest {
+	uint32 bit_size = 1;
+}
+message GenerateMnemonicSeedResponse {
+	string mnemonic = 1;
+}
