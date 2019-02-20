@@ -66,7 +66,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:65442762129cb79948b97a0ef1640954d1a30a843efcf3e072d97b3a34938465"
+  digest = "1:1a388af20f617dba6bdf09a0ed9bdd1672ba2445b5e134d9437f79df7786e5f9"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -83,7 +83,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "62da1f1314d0307e976749506983abeec330a0a1"
+  revision = "a8909dc65f140b8a0b4e31a49216d7c38c81b9dd"
 
 [[projects]]
   branch = "master"
@@ -95,7 +95,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:52c0bca4d1c7d37712d259e17547e649e98c97c4db26d93b8c9ef756f16f2621"
+  digest = "1:b712292f186947461318894fb29dffa9d5ec5a7869722913f69f080f70fa86e5"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
@@ -105,7 +105,7 @@
     "hdkeychain",
   ]
   pruneopts = "UT"
-  revision = "64c691e106aa5321e47a3b3eba65b3c42fbc1f75"
+  revision = "b9d516f30ecaa4d6369791efa06569413e16a9e7"
 
 [[projects]]
   branch = "master"
