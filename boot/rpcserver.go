@@ -212,6 +212,7 @@ func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServer
 		grpcLog.Infof("Unary method %s invoked by %s", info.FullMethod,
 			p.Addr.String())
 	}
+
 	err = rpcserver.ServiceReady(serviceName(info.FullMethod))
 	if err != nil {
 		return nil, err

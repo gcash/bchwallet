@@ -3,6 +3,8 @@
 
 # Binaries
 bchwallet
+bchwallet.aar
+bchwallet-sources.jar
 
 # Compiled packages
 pkg

@@ -706,20 +706,6 @@ func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddr
 	return &pb.ValidateAddressResponse{Valid: valid}, nil
 }
 
-func (s *walletServer) GenerateMnemonicSeed(ctx context.Context, req *pb.GenerateMnemonicSeedRequest) (
-	*pb.GenerateMnemonicSeedResponse, error) {
-
-	ent, err := bip39.NewEntropy(int(req.BitSize))
-	if err != nil {
-		return nil, err
-	}
-	mnemonic, err := bip39.NewMnemonic(ent)
-	if err != nil {
-		return nil, err
-	}
-	return &pb.GenerateMnemonicSeedResponse{Mnemonic: mnemonic}, nil
-}
-
 func marshalTransactionInputs(v []wallet.TransactionSummaryInput) []*pb.TransactionDetails_Input {
 	inputs := make([]*pb.TransactionDetails_Input, len(v))
 	for i := range v {
@@ -1041,4 +1027,18 @@ func (s *loaderServer) StartConsensusRPC(ctx context.Context, req *pb.StartConse
 	}
 
 	return &pb.StartConsensusRpcResponse{}, nil
+}
+
+func (s *loaderServer) GenerateMnemonicSeed(ctx context.Context, req *pb.GenerateMnemonicSeedRequest) (
+	*pb.GenerateMnemonicSeedResponse, error) {
+
+	ent, err := bip39.NewEntropy(int(req.BitSize))
+	if err != nil {
+		return nil, err
+	}
+	mnemonic, err := bip39.NewMnemonic(ent)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GenerateMnemonicSeedResponse{Mnemonic: mnemonic}, nil
 }
