@@ -27,7 +27,11 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
+// AuthenticationTokenKey is the key used in the context to authenticate clients.
+// If this is set to anything other than "" in the config, then the server expects
+// the client to set a key value in the context metadata to 'AuthenticationToken: cfg.AuthToken'
 const AuthenticationTokenKey = "AuthenticationToken"
+
 // openRPCKeyPair creates or loads the RPC TLS keypair specified by the
 // application config.  This function respects the cfg.OneTimeTLSKey setting.
 func openRPCKeyPair() (tls.Certificate, error) {
