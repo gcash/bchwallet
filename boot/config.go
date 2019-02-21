@@ -99,6 +99,8 @@ type config struct {
 	LegacyRPCMaxWebsockets int64                   `long:"rpcmaxwebsockets" description:"Max number of legacy RPC websocket connections"`
 	Username               string                  `short:"u" long:"username" description:"Username for legacy RPC and bchd authentication (if bchdusername is unset)"`
 	Password               string                  `short:"P" long:"password" default-mask:"-" description:"Password for legacy RPC and bchd authentication (if bchdpassword is unset)"`
+	AuthToken              string                  `short:"A" long:"authtoken" description:"An authentication token for the gRPC API to authenticate clients"`
+
 
 	// EXPERIMENTAL RPC server options
 	//
