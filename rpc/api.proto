@@ -45,7 +45,6 @@ service WalletService {
 
 	// Utilities
 	rpc ValidateAddress(ValidateAddressRequest) returns (ValidateAddressResponse);
-	rpc GenerateMnemonicSeed(GenerateMnemonicSeedRequest) returns (GenerateMnemonicSeedResponse);
 }
 
 service WalletLoaderService {
@@ -54,6 +53,7 @@ service WalletLoaderService {
 	rpc OpenWallet (OpenWalletRequest) returns (OpenWalletResponse);
 	rpc CloseWallet (CloseWalletRequest) returns (CloseWalletResponse);
 	rpc StartConsensusRPC (StartConsensusRpcRequest) returns (StartConsensusRpcResponse);
+	rpc GenerateMnemonicSeed(GenerateMnemonicSeedRequest) returns (GenerateMnemonicSeedResponse);
 }
 
 message TransactionDetails {

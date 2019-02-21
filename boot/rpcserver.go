@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"io/ioutil"
 	"net"
 	"os"
@@ -25,6 +26,11 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 )
+
+// AuthenticationTokenKey is the key used in the context to authenticate clients.
+// If this is set to anything other than "" in the config, then the server expects
+// the client to set a key value in the context metadata to 'AuthenticationToken: cfg.AuthToken'
+const AuthenticationTokenKey = "AuthenticationToken"
 
 // openRPCKeyPair creates or loads the RPC TLS keypair specified by the
 // application config.  This function respects the cfg.OneTimeTLSKey setting.
@@ -194,7 +200,13 @@ func interceptStreaming(srv interface{}, ss grpc.ServerStream, info *grpc.Stream
 		grpcLog.Infof("Streaming method %s invoked by %s", info.FullMethod,
 			p.Addr.String())
 	}
-	err := rpcserver.ServiceReady(serviceName(info.FullMethod))
+
+	err := validateAuthenticationToken(ss.Context())
+	if err != nil {
+		return err
+	}
+
+	err = rpcserver.ServiceReady(serviceName(info.FullMethod))
 	if err != nil {
 		return err
 	}
@@ -212,6 +224,12 @@ func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServer
 		grpcLog.Infof("Unary method %s invoked by %s", info.FullMethod,
 			p.Addr.String())
 	}
+
+	err = validateAuthenticationToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	err = rpcserver.ServiceReady(serviceName(info.FullMethod))
 	if err != nil {
 		return nil, err
@@ -222,6 +240,14 @@ func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServer
 			info.FullMethod, p.Addr.String(), err)
 	}
 	return resp, err
+}
+
+func validateAuthenticationToken(ctx context.Context) error {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if cfg.AuthToken != "" && (!ok || len(md.Get(AuthenticationTokenKey)) == 0 || md.Get(AuthenticationTokenKey)[0] != cfg.AuthToken) {
+		return errors.New("invalid authentication token")
+	}
+	return nil
 }
 
 type listenFunc func(net string, laddr string) (net.Listener, error)
