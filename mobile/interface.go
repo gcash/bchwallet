@@ -1,6 +1,9 @@
 package mobile
 
-import "github.com/gcash/bchwallet/boot"
+import (
+	"github.com/gcash/bchwallet/boot"
+	"os"
+)
 
 // StartWallet is the function exposed to the mobile device to start the bchwallet.
 // configPath is the path to the bchwallet.conf file that should be saved on your mobile device.
@@ -18,4 +21,6 @@ func StartWallet(configPath string) {
 // StopWallet will stop the wallet and perform a clean shutdown.
 func StopWallet() {
 	boot.SimulateInterrupt()
+	<-boot.InterruptHandlersDone
+	os.Exit(1)
 }

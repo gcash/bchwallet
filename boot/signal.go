@@ -16,9 +16,9 @@ var interruptChannel chan os.Signal
 // to be invoked on SIGINT (Ctrl+C) signals.
 var addHandlerChannel = make(chan func())
 
-// interruptHandlersDone is closed after all interrupt handlers run the first
+// InterruptHandlersDone is closed after all interrupt handlers run the first
 // time an interrupt is signaled.
-var interruptHandlersDone = make(chan struct{})
+var InterruptHandlersDone = make(chan struct{})
 
 var simulateInterruptChannel = make(chan struct{}, 1)
 
@@ -48,7 +48,7 @@ func mainInterruptHandler() {
 			idx := len(interruptCallbacks) - 1 - i
 			interruptCallbacks[idx]()
 		}
-		close(interruptHandlersDone)
+		close(InterruptHandlersDone)
 	}
 
 	for {
@@ -57,7 +57,7 @@ func mainInterruptHandler() {
 			log.Infof("Received signal (%s).  Shutting down...", sig)
 			invokeCallbacks()
 			return
-		case <-simulateInterruptChannel:
+		case <- simulateInterruptChannel:
 			log.Info("Received shutdown request.  Shutting down...")
 			invokeCallbacks()
 			return
