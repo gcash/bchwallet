@@ -57,7 +57,7 @@ func mainInterruptHandler() {
 			log.Infof("Received signal (%s).  Shutting down...", sig)
 			invokeCallbacks()
 			return
-		case <- simulateInterruptChannel:
+		case <-simulateInterruptChannel:
 			log.Info("Received shutdown request.  Shutting down...")
 			invokeCallbacks()
 			return

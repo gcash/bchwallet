@@ -3,6 +3,7 @@ package mobile
 import (
 	"github.com/gcash/bchwallet/boot"
 	"os"
+	"time"
 )
 
 // StartWallet is the function exposed to the mobile device to start the bchwallet.
@@ -21,6 +22,7 @@ func StartWallet(configPath string) {
 // StopWallet will stop the wallet and perform a clean shutdown.
 func StopWallet() {
 	boot.SimulateInterrupt()
-	<-boot.InterruptHandlersDone
-	os.Exit(1)
+	time.AfterFunc(time.Second*2, func() {
+		os.Exit(1)
+	})
 }

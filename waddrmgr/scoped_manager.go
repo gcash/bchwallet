@@ -2,6 +2,7 @@ package waddrmgr
 
 import (
 	"fmt"
+	"github.com/go-errors/errors"
 	"sync"
 
 	"github.com/gcash/bchd/bchec"
@@ -1111,6 +1112,60 @@ func (s *ScopedKeyManager) LastExternalAddress(ns walletdb.ReadBucket,
 	}
 
 	return nil, managerError(ErrAddressNotFound, "no previous external address", nil)
+}
+
+// FirstUnusedExternalAddress returns the first unused external address found
+// in the keychain.
+//
+// This function will return an error if the provided account number is greater
+// than the MaxAccountNum constant or there is no account information for the
+// passed account.  Any other errors returned are generally unexpected.
+func (s *ScopedKeyManager) FirstUnusedExternalAddress(ns walletdb.ReadBucket,
+	account uint32) (ManagedAddress, error) {
+
+	// Enforce maximum account number.
+	if account > MaxAccountNum {
+		err := managerError(ErrAccountNumTooHigh, errAcctTooHigh, nil)
+		return nil, err
+	}
+
+	var first *ManagedAddress
+	var breakEarlyErr = errors.New("this error is used to break early when the first unused is found")
+	s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
+		if first == nil && !maddr.Used(ns) {
+			first = &maddr
+			return breakEarlyErr
+		}
+		return nil
+	})
+	if first == nil {
+		return nil, managerError(ErrAddressNotFound, "no unused external address", nil)
+	}
+	return *first, nil
+}
+
+// CountUnused returns the total number of unused addresses in the keychain.
+//
+// This function will return an error if the provided account number is greater
+// than the MaxAccountNum constant or there is no account information for the
+// passed account.  Any other errors returned are generally unexpected.
+func (s *ScopedKeyManager) CountUnused(ns walletdb.ReadBucket,
+	account uint32, internal bool) (int, error) {
+
+	// Enforce maximum account number.
+	if account > MaxAccountNum {
+		err := managerError(ErrAccountNumTooHigh, errAcctTooHigh, nil)
+		return 0, err
+	}
+
+	unused := 0
+	err := s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
+		if maddr.Internal() == internal && !maddr.Used(ns) {
+			unused++
+		}
+		return nil
+	})
+	return unused, err
 }
 
 // LastInternalAddress returns the most recently requested chained internal
