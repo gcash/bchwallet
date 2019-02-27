@@ -119,6 +119,9 @@ type Wallet struct {
 	started bool
 	quit    chan struct{}
 	quitMu  sync.Mutex
+
+	syncInterruptChan chan struct{}
+	syncLock          sync.Mutex
 }
 
 // Start starts the goroutines necessary to manage a wallet.
@@ -637,6 +640,9 @@ func (w *Wallet) recovery(startHeight int32) error {
 	if err != nil {
 		return err
 	}
+	w.syncLock.Lock()
+	defer w.syncLock.Unlock()
+
 	tx, err := w.db.BeginReadWriteTx()
 	if err != nil {
 		return err
@@ -652,6 +658,25 @@ func (w *Wallet) recovery(startHeight int32) error {
 	if err != nil {
 		tx.Rollback()
 		return err
+	}
+
+	maybeHandleInterrupt := func() error {
+		select {
+		case <-w.syncInterruptChan:
+			err := tx.Commit()
+			if err != nil {
+				return err
+			}
+			w.syncLock.Unlock()
+			w.syncLock.Lock()
+			tx, err = w.db.BeginReadWriteTx()
+			if err != nil {
+				return err
+			}
+			addrMgrNS = tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		default:
+		}
+		return nil
 	}
 
 	// We'll also retrieve our chain backend client in order to filter the
@@ -671,6 +696,10 @@ func (w *Wallet) recovery(startHeight int32) error {
 
 		recoveryMgr.AddToBlockBatch(hash, height, header.Timestamp)
 
+		if err := maybeHandleInterrupt(); err != nil {
+			return err
+		}
+
 		// We'll checkpoint our current batch every 2K blocks, so we'll
 		// need to start a new database transaction. If our current
 		// batch is empty, then this will act as a NOP.
@@ -678,7 +707,7 @@ func (w *Wallet) recovery(startHeight int32) error {
 			blockBatch := recoveryMgr.BlockBatch()
 			err := w.recoverDefaultScopes(
 				chainClient, tx, addrMgrNS, blockBatch,
-				recoveryMgr.State(),
+				recoveryMgr.State(), maybeHandleInterrupt,
 			)
 			if err != nil {
 				return err
@@ -720,7 +749,7 @@ func (w *Wallet) recovery(startHeight int32) error {
 	// with the remaining blocks if it did not reach its maximum size.
 	blockBatch := recoveryMgr.BlockBatch()
 	err = w.recoverDefaultScopes(
-		chainClient, tx, addrMgrNS, blockBatch, recoveryMgr.State(),
+		chainClient, tx, addrMgrNS, blockBatch, recoveryMgr.State(), maybeHandleInterrupt,
 	)
 	if err != nil {
 		tx.Rollback()
@@ -766,7 +795,8 @@ func (w *Wallet) recoverDefaultScopes(
 	tx walletdb.ReadWriteTx,
 	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
-	recoveryState *RecoveryState) error {
+	recoveryState *RecoveryState,
+	handleInterrupt func() error) error {
 
 	scopedMgrs, err := w.defaultScopeManagers()
 	if err != nil {
@@ -774,7 +804,7 @@ func (w *Wallet) recoverDefaultScopes(
 	}
 
 	return w.recoverScopedAddresses(
-		chainClient, tx, ns, batch, recoveryState, scopedMgrs,
+		chainClient, tx, ns, batch, recoveryState, scopedMgrs, handleInterrupt,
 	)
 }
 
@@ -794,7 +824,8 @@ func (w *Wallet) recoverScopedAddresses(
 	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
 	recoveryState *RecoveryState,
-	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager) error {
+	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager,
+	handleInterrupt func() error) error {
 
 	// If there are no blocks in the batch, we are done.
 	if len(batch) == 0 {
@@ -810,6 +841,10 @@ expandHorizons:
 		if err != nil {
 			return err
 		}
+	}
+
+	if err := handleInterrupt(); err != nil {
+		return err
 	}
 
 	// With the internal and external horizons properly expanded, we now
@@ -3566,6 +3601,7 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 		changePassphrases:   make(chan changePassphrasesRequest),
 		chainParams:         params,
 		quit:                make(chan struct{}),
+		syncInterruptChan:   make(chan struct{}, 10000),
 	}
 
 	w.NtfnServer = newNotificationServer(w)
