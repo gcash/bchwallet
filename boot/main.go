@@ -121,7 +121,7 @@ func WalletMain(optionalConfigPath *string) error {
 		}()
 	}
 
-	<-InterruptHandlersDone
+	<-interruptHandlersDone
 	log.Info("Shutdown complete")
 	return nil
 }

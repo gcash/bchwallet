@@ -22,7 +22,7 @@ func StartWallet(configPath string) {
 // StopWallet will stop the wallet and perform a clean shutdown.
 func StopWallet() {
 	boot.SimulateInterrupt()
-	time.AfterFunc(time.Second*2, func() {
+	time.AfterFunc(time.Second*3, func() {
 		os.Exit(1)
 	})
 }
