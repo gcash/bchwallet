@@ -79,6 +79,10 @@ const (
 	// saltSize is the number of bytes of the salt used when hashing
 	// private passphrases.
 	saltSize = 32
+
+	// NumInitialAddrs is the number of internal and external addresses to
+	// pre-generate when the wallet is created.
+	NumInitialAddrs = 20
 )
 
 // isReservedAccountName returns true if the account name is reserved.
@@ -646,6 +650,44 @@ func (m *Manager) MarkUsed(ns walletdb.ReadWriteBucket, address bchutil.Address)
 		// We've found the manager that this address belongs to, so we
 		// can mark the address as used and return.
 		return scopedMgr.MarkUsed(ns, address)
+	}
+
+	// If we get to this point, then we weren't able to find the address in
+	// any of the managers, so we'll exit with an error.
+	str := fmt.Sprintf("unable to find key for addr %v", address)
+	return managerError(ErrAddressNotFound, str, nil)
+}
+
+// MaybeExtendAddress tells the scopedManger to extend the keychain by one if the number of used
+// keys is below the buffer.
+func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket, address bchutil.Address) error {
+	m.mtx.RLock()
+	defer m.mtx.RUnlock()
+
+	// Run through all the known scoped managers, and attempt to extend each one.
+
+	// First, we'll figure out which scoped manager this address belong to.
+	for _, scopedMgr := range m.scopedManagers {
+		maddr, err := scopedMgr.Address(ns, address)
+		if err != nil {
+			continue
+		}
+		// We've found the manager that this address belongs to, so we
+		// can extend it and return.
+		unused, err := scopedMgr.CountUnused(ns, maddr.Account(), maddr.Internal())
+		if err != nil {
+			return err
+		}
+		if maddr.Internal() {
+			if unused < NumInitialAddrs {
+				_, err = scopedMgr.NextInternalAddresses(ns, maddr.Account(), 1)
+			}
+		} else {
+			if unused < NumInitialAddrs {
+				_, err = scopedMgr.NextExternalAddresses(ns, maddr.Account(), 1)
+			}
+		}
+		return err
 	}
 
 	// If we get to this point, then we weren't able to find the address in

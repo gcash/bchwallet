@@ -312,6 +312,10 @@ func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, 
 				if err != nil {
 					return err
 				}
+				err = w.Manager.MaybeExtendAddress(addrmgrNs, addr)
+				if err != nil {
+					return err
+				}
 				log.Debugf("Marked address %v used", addr)
 				continue
 			}

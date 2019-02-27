@@ -1504,44 +1504,19 @@ func (w *Wallet) CalculateAccountBalances(account uint32, confirms int32) (Balan
 }
 
 // CurrentAddress gets the most recently requested Bitcoin payment address
-// from a wallet for a particular key-chain scope.  If the address has already
-// been used (there is at least one transaction spending to it in the
-// blockchain or bchd mempool), the next chained address is returned.
+// from a wallet for a particular key-chain scope. This should never return
+// a used address because we maintain a buffer of unused addresses.
 func (w *Wallet) CurrentAddress(account uint32, scope waddrmgr.KeyScope) (bchutil.Address, error) {
-	chainClient, err := w.requireChainClient()
-	if err != nil {
-		return nil, err
-	}
-
 	manager, err := w.Manager.FetchScopedKeyManager(scope)
 	if err != nil {
 		return nil, err
 	}
 
-	var (
-		addr  bchutil.Address
-		props *waddrmgr.AccountProperties
-	)
-	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-		addrmgrNs := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-		maddr, err := manager.LastExternalAddress(addrmgrNs, account)
+	var addr bchutil.Address
+	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
+		maddr, err := manager.FirstUnusedExternalAddress(addrmgrNs, account)
 		if err != nil {
-			// If no address exists yet, create the first external
-			// address.
-			if waddrmgr.IsError(err, waddrmgr.ErrAddressNotFound) {
-				addr, props, err = w.newAddress(
-					addrmgrNs, account, scope,
-				)
-			}
-			return err
-		}
-
-		// Get next chained address if the last one has already been
-		// used.
-		if maddr.Used(addrmgrNs) {
-			addr, props, err = w.newAddress(
-				addrmgrNs, account, scope,
-			)
 			return err
 		}
 
@@ -1550,17 +1525,6 @@ func (w *Wallet) CurrentAddress(account uint32, scope waddrmgr.KeyScope) (bchuti
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	// If the props have been initially, then we had to create a new address
-	// to satisfy the query. Notify the rpc server about the new address.
-	if props != nil {
-		err = chainClient.NotifyReceived([]bchutil.Address{addr})
-		if err != nil {
-			return nil, err
-		}
-
-		w.NtfnServer.notifyAccountProperties(props)
 	}
 
 	return addr, nil
@@ -3477,6 +3441,26 @@ func Create(db walletdb.DB, pubPass, privPass, seed []byte, params *chaincfg.Par
 		)
 		if err != nil {
 			return err
+		}
+		addrMgr, err := waddrmgr.Open(addrmgrNs, pubPass, params)
+		if err != nil {
+			return err
+		}
+		for _, scope := range waddrmgr.DefaultKeyScopes {
+			manager, err := addrMgr.FetchScopedKeyManager(scope)
+			if err != nil {
+				return err
+			}
+
+			// Generate some addresses at wallet creation
+			_, err = manager.NextExternalAddresses(addrmgrNs, 0, waddrmgr.NumInitialAddrs)
+			if err != nil {
+				return err
+			}
+			_, err = manager.NextInternalAddresses(addrmgrNs, 0, waddrmgr.NumInitialAddrs)
+			if err != nil {
+				return err
+			}
 		}
 		return wtxmgr.Create(txmgrNs)
 	})
