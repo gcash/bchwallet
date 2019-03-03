@@ -1245,6 +1245,18 @@ func (w *Wallet) CreateSimpleTx(account uint32, outputs []*wire.TxOut,
 	return resp.tx, resp.err
 }
 
+// CreateUnsignedTx creates a new unsigned transaction spending unspent P2PKH
+// outputs with at laest minconf confirmations spending to any number of
+// address/amount pairs.  Change and an appropriate transaction fee are
+// automatically included, if necessary.  All transaction creation through this
+// function is serialized to prevent the creation of many transactions which
+// spend the same outputs.
+func (w *Wallet) CreateUnsignedTx(account uint32, outputs []*wire.TxOut,
+	minconf int32, satPerKb bchutil.Amount) (*txauthor.AuthoredTx, error) {
+
+	return w.createUnsigned(outputs, account, minconf, satPerKb)
+}
+
 type (
 	unlockRequest struct {
 		passphrase []byte
@@ -1586,7 +1598,34 @@ func (w *Wallet) CurrentAddress(account uint32, scope waddrmgr.KeyScope) (bchuti
 	var addr bchutil.Address
 	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
-		maddr, err := manager.FirstUnusedExternalAddress(addrmgrNs, account)
+		maddr, err := manager.FirstUnusedAddress(addrmgrNs, account, false)
+		if err != nil {
+			return err
+		}
+
+		addr = maddr.Address()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return addr, nil
+}
+
+// CurrentChangeAddress gets the most recently requested Bitcoin change address
+// from a wallet for a particular key-chain scope. This should never return
+// a used address because we maintain a buffer of unused addresses.
+func (w *Wallet) CurrentChangeAddress(account uint32, scope waddrmgr.KeyScope) (bchutil.Address, error) {
+	manager, err := w.Manager.FetchScopedKeyManager(scope)
+	if err != nil {
+		return nil, err
+	}
+
+	var addr bchutil.Address
+	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
+		maddr, err := manager.FirstUnusedAddress(addrmgrNs, account, true)
 		if err != nil {
 			return err
 		}

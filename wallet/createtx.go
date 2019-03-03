@@ -188,6 +188,77 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 	return tx, nil
 }
 
+// createUnsigned creates a unsigned transaction which includes each output from
+// outputs.  Previous outputs to reedeem are chosen from the passed account's
+// UTXO set and minconf policy. An additional output may be added to return
+// change to the wallet.  An appropriate fee is included based on the wallet's
+// current relay fee.  The wallet must be unlocked to create the transaction.
+func (w *Wallet) createUnsigned(outputs []*wire.TxOut, account uint32,
+	minconf int32, feeSatPerKb bchutil.Amount) (tx *txauthor.AuthoredTx, err error) {
+
+	chainClient, err := w.requireChainClient()
+	if err != nil {
+		return nil, err
+	}
+
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+
+		// Get current block's height and hash.
+		bs, err := chainClient.BlockStamp()
+		if err != nil {
+			return err
+		}
+
+		eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
+		if err != nil {
+			return err
+		}
+
+		inputSource := makeInputSource(eligible)
+		changeSource := func() ([]byte, error) {
+			// Derive the change output script.  As a hack to allow
+			// spending from the imported account, change addresses
+			// are created from account 0.
+			var changeAddr bchutil.Address
+			var err error
+			if account == waddrmgr.ImportedAddrAccount {
+				changeAddr, err = w.CurrentChangeAddress(0, waddrmgr.KeyScopeBIP0044)
+			} else {
+				changeAddr, err = w.CurrentChangeAddress(account, waddrmgr.KeyScopeBIP0044)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return txscript.PayToAddrScript(changeAddr)
+		}
+		tx, err = txauthor.NewUnsignedTransaction(outputs, feeSatPerKb,
+			inputSource, changeSource)
+		if err != nil {
+			return err
+		}
+
+		// Randomize change position, if change exists, before signing.
+		// This doesn't affect the serialize size, so the change amount
+		// will still be valid.
+		if tx.ChangeIndex >= 0 {
+			tx.RandomizeChangePosition()
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if tx.ChangeIndex >= 0 && account == waddrmgr.ImportedAddrAccount {
+		changeAmount := bchutil.Amount(tx.Tx.TxOut[tx.ChangeIndex].Value)
+		log.Warnf("Spend from imported account produced change: moving"+
+			" %v from imported account into default account.", changeAmount)
+	}
+
+	return tx, nil
+}
+
 func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minconf int32, bs *waddrmgr.BlockStamp) ([]wtxmgr.Credit, error) {
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)

@@ -454,7 +454,7 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
 	}
 
-	authoredTx, err := s.wallet.CreateSimpleTx(req.Account, outputs, req.RequiredConfirmations, fee)
+	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, fee)
 	if err != nil {
 		return nil, err
 	}
