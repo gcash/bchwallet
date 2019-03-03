@@ -10,6 +10,14 @@
   version = "v1.0.1"
 
 [[projects]]
+  digest = "1:1c9dffe45896d21dc8e183fdc3cdb405249e6c7dd3d00792e534af3597d5e4fc"
+  name = "github.com/avast/retry-go"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "08d411bf8302219fe47ca04dbdf9de892010c5e5"
+  version = "v2.2.0"
+
+[[projects]]
   branch = "master"
   digest = "1:965fa961ce7d2a2b0586ff1510c7268d9a8db78c0f08e15c3510ce7cceb963a9"
   name = "github.com/boltdb/bolt"
@@ -58,7 +66,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:39f9b36bee2c61dfab31f0325e20236b53820a7423b3d84675ab3b8ce3bcf4c1"
+  digest = "1:65442762129cb79948b97a0ef1640954d1a30a843efcf3e072d97b3a34938465"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -75,7 +83,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "625a18ff0937941d9a28358d440d94ad506c886e"
+  revision = "62da1f1314d0307e976749506983abeec330a0a1"
 
 [[projects]]
   branch = "master"
@@ -100,8 +108,8 @@
   revision = "64c691e106aa5321e47a3b3eba65b3c42fbc1f75"
 
 [[projects]]
-  branch = "master"
-  digest = "1:eab70fb00d9ca0411046f35046bb1e64d132b3f7b62dbb033df3ba8a5e69a62b"
+  branch = "backport"
+  digest = "1:22c38055aa5fe52a9dee106a991b30b2b47462039fdd31717b6f0128b6b06859"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -112,7 +120,7 @@
     "headerlist",
   ]
   pruneopts = "UT"
-  revision = "34d12af066c62bd94dcf8294c4f2815c9ffc175f"
+  revision = "620cc70e986eb77ff0aaba8495948892d9ca6967"
 
 [[projects]]
   digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
@@ -186,6 +194,14 @@
   pruneopts = "UT"
   revision = "2af0a847066a4f2669040ccd44a79c8eca10806a"
   version = "v1.0.0"
+
+[[projects]]
+  branch = "master"
+  digest = "1:4479bb99d61e9c3c22493799b4651cacfba699fc6d468cf998ea71fa2ff33bab"
+  name = "github.com/zquestz/grab"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "abcee96e61b1d6def96b6616dec78a8ef12793e5"
 
 [[projects]]
   branch = "master"
@@ -323,6 +339,7 @@
     "github.com/gcash/bchutil/gcs/builder",
     "github.com/gcash/bchutil/hdkeychain",
     "github.com/gcash/neutrino",
+    "github.com/go-errors/errors",
     "github.com/golang/protobuf/proto",
     "github.com/jessevdk/go-flags",
     "github.com/jrick/logrotate/rotator",
@@ -336,6 +353,7 @@
     "google.golang.org/grpc/codes",
     "google.golang.org/grpc/credentials",
     "google.golang.org/grpc/grpclog",
+    "google.golang.org/grpc/metadata",
     "google.golang.org/grpc/peer",
     "google.golang.org/grpc/status",
   ]

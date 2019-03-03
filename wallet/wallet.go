@@ -3389,6 +3389,9 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	if err != nil {
 		return nil, err
 	}
+	w.syncInterruptChan <- struct{}{}
+	w.syncLock.Lock()
+	defer w.syncLock.Unlock()
 	err = walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 		return w.addRelevantTx(dbTx, txRec, nil)
 	})
