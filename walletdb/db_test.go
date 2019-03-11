@@ -6,11 +6,10 @@ package walletdb_test
 
 import (
 	"fmt"
-	"os"
-	"testing"
-
 	"github.com/gcash/bchwallet/walletdb"
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
+	"os"
+	"testing"
 )
 
 var (

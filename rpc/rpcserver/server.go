@@ -194,6 +194,10 @@ func (s *walletServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingR
 func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	*pb.NetworkResponse, error) {
 
+	if s.wallet.ChainClient() == nil {
+		return nil, translateError(errors.New("chain client to available yet"))
+	}
+
 	bestHash, bestHeight, err := s.wallet.ChainClient().GetBestBlock()
 	if err != nil {
 		return nil, err
@@ -450,7 +454,7 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
 	}
 
-	authoredTx, err := s.wallet.CreateSimpleTx(req.Account, outputs, req.RequiredConfirmations, fee)
+	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, fee)
 	if err != nil {
 		return nil, err
 	}
