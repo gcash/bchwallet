@@ -20,8 +20,8 @@ func TestDownloadBip0070PaymentRequest(t *testing.T) {
 	httpmock.ActivateNonDefault(client)
 	defer httpmock.DeactivateAndReset()
 
-	downloader := NewPaymentRequestDownloader(&chaincfg.TestNet3Params, nil)
-	downloader.client = client
+	prClient := NewPaymentRequestClient(&chaincfg.TestNet3Params, nil)
+	prClient.httpClient = client
 
 	serializedResponse, err := hex.DecodeString(testPaymentRequest)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestDownloadBip0070PaymentRequest(t *testing.T) {
 		},
 	)
 
-	pr, err := downloader.DownloadBip0070PaymentRequest(uri)
+	pr, err := prClient.DownloadBip0070PaymentRequest(uri)
 	if err != nil {
 		t.Error(err)
 	}

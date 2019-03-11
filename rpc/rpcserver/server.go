@@ -703,24 +703,62 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (
 	*pb.DownloadPaymentRequestResponse, error) {
 
-	dl := pymtproto.NewPaymentRequestDownloader(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-	pr, err := dl.DownloadBip0070PaymentRequest(req.Uri)
+	client := pymtproto.NewPaymentRequestClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	pr, err := client.DownloadBip0070PaymentRequest(req.Uri)
 	if err != nil {
 		return nil, err
 	}
 	resp := &pb.DownloadPaymentRequestResponse{
-		PayToName: pr.PayToName,
-		Expires: pr.Expires.Unix(),
-		Memo: pr.Memo,
-		PaymentUrl: pr.PaymentUrl,
+		PayToName:    pr.PayToName,
+		Expires:      pr.Expires.Unix(),
+		Memo:         pr.Memo,
+		PaymentUrl:   pr.PaymentUrl,
 		MerchantData: pr.MerchantData,
 	}
 	for _, out := range pr.Outputs {
 		output := &pb.DownloadPaymentRequestResponse_Output{
-			Amount: int64(out.Amount.ToUnit(bchutil.AmountSatoshi)),
+			Amount:  int64(out.Amount.ToUnit(bchutil.AmountSatoshi)),
 			Address: out.Address.String(),
 		}
 		resp.Outputs = append(resp.Outputs, output)
+	}
+	return resp, nil
+}
+
+func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (
+	*pb.PostPaymentResponse, error) {
+
+	client := pymtproto.NewPaymentRequestClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+
+	refundAddr, err := bchutil.DecodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
+	if err != nil {
+		return nil, err
+	}
+
+	payment := &pymtproto.Payment{
+		PaymentURL:   req.PaymentUrl,
+		MerchantData: req.MerchantData,
+		Memo:         req.Memo,
+		RefundOutput: pymtproto.Output{
+			Amount:  bchutil.Amount(req.RefundOutput.Amount),
+			Address: refundAddr,
+		},
+	}
+
+	for _, serializedTx := range req.Transactions {
+		tx := &wire.MsgTx{}
+		if err := tx.BchDecode(bytes.NewReader(serializedTx), wire.ProtocolVersion, wire.BaseEncoding); err != nil {
+			return nil, err
+		}
+		payment.Transactions = append(payment.Transactions, tx)
+	}
+
+	ackMemo, err := client.PostPayment(payment)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.PostPaymentResponse{
+		Memo: ackMemo,
 	}
 	return resp, nil
 }
