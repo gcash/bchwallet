@@ -703,7 +703,7 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (
 	*pb.DownloadPaymentRequestResponse, error) {
 
-	client := pymtproto.NewPaymentRequestClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
 	pr, err := client.DownloadBip0070PaymentRequest(req.Uri)
 	if err != nil {
 		return nil, err
@@ -712,7 +712,7 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 		PayToName:    pr.PayToName,
 		Expires:      pr.Expires.Unix(),
 		Memo:         pr.Memo,
-		PaymentUrl:   pr.PaymentUrl,
+		PaymentUrl:   pr.PaymentURL,
 		MerchantData: pr.MerchantData,
 	}
 	for _, out := range pr.Outputs {
@@ -728,7 +728,7 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (
 	*pb.PostPaymentResponse, error) {
 
-	client := pymtproto.NewPaymentRequestClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
 
 	refundAddr, err := bchutil.DecodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
 	if err != nil {

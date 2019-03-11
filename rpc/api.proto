@@ -45,7 +45,7 @@ service WalletService {
 
 	// Payment Requests
 	rpc DownloadPaymentRequest (DownloadPaymentRequestRequest) returns (DownloadPaymentRequestResponse);
-	rpc PostPayment(PostPaymentRequest) returns (PostPaymentResponse);
+	rpc PostPayment (PostPaymentRequest) returns (PostPaymentResponse);
 
 	// Utilities
 	rpc ValidateAddress(ValidateAddressRequest) returns (ValidateAddressResponse);

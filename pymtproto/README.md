@@ -9,7 +9,7 @@ payment requests and POSTing payments back to the merchant server.
 
 Example Usage:
 ```go
-client := NewPaymentRequestClient(&chaincfg.MainnetParams, nil)
+client := NewPaymentProtocolClient(&chaincfg.MainnetParams, nil)
 paymentRequest, err := client.DownloadBip0070PaymentRequest("bitcoincash:?r=https://test.bitpay.com/i/KqSWvRBKC58CgdpfsttzBC")
 ```
 

@@ -19,28 +19,34 @@ import (
 	"time"
 )
 
+// PaymentRequest is returned by the DownloadBip0070PaymentRequest method. It
+// contains all the relevant information from the downloaded payment request.
 type PaymentRequest struct {
 	PayToName    string
 	Outputs      []Output
 	Expires      time.Time
 	Memo         string
-	PaymentUrl   string
+	PaymentURL   string
 	MerchantData []byte
 }
 
+// Output represents an address and amount to be paid.
 type Output struct {
 	Address bchutil.Address
 	Amount  bchutil.Amount
 }
 
-type PaymentRequestClient struct {
-	httpClient  *http.Client
-	params      *chaincfg.Params
-	proxyDialer proxy.Dialer
+// PaymentProtocolClient is used to download payment requests and make payments.
+// We use an object for this to make testing a little easier.
+type PaymentProtocolClient struct {
+	httpClient           *http.Client
+	params               *chaincfg.Params
+	proxyDialer          proxy.Dialer
+	skipExpirationChecks bool
 }
 
-// NewPaymentRequestClient returns a PaymentRequestDownloader that can be used to get the payment request
-func NewPaymentRequestClient(params *chaincfg.Params, proxyDialer proxy.Dialer) *PaymentRequestClient {
+// NewPaymentProtocolClient returns a PaymentRequestDownloader that can be used to get the payment request.
+func NewPaymentProtocolClient(params *chaincfg.Params, proxyDialer proxy.Dialer) *PaymentProtocolClient {
 	// Use proxy on http connection if one is provided
 	dial := net.Dial
 	if proxyDialer != nil {
@@ -48,7 +54,7 @@ func NewPaymentRequestClient(params *chaincfg.Params, proxyDialer proxy.Dialer) 
 	}
 	tbTransport := &http.Transport{Dial: dial}
 	client := &http.Client{Transport: tbTransport, Timeout: time.Minute}
-	return &PaymentRequestClient{
+	return &PaymentProtocolClient{
 		httpClient:  client,
 		params:      params,
 		proxyDialer: proxyDialer,
@@ -60,7 +66,7 @@ func NewPaymentRequestClient(params *chaincfg.Params, proxyDialer proxy.Dialer) 
 // correctly and signed with a valid X509 certificate. The cert will be checked against
 // the OS's certificate store. A PaymentRequest object with the relevant data extracted
 // is returned.
-func (c *PaymentRequestClient) DownloadBip0070PaymentRequest(uri string) (*PaymentRequest, error) {
+func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*PaymentRequest, error) {
 	// Extract the `r` parameter from the URI
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -100,7 +106,7 @@ func (c *PaymentRequestClient) DownloadBip0070PaymentRequest(uri string) (*Payme
 
 	// We're only accepting `x509+sha256` certs. The alternatives are `none` which is insecure
 	// and `x509+sha1` which is also insecure. So `x509+sha256` it is.
-	if paymentRequest.PkiType == nil || string(*paymentRequest.PkiType) != "x509+sha256" {
+	if paymentRequest.PkiType == nil || *paymentRequest.PkiType != "x509+sha256" {
 		return nil, errors.New("payment request PkiType is not x509+sha256")
 	}
 
@@ -121,8 +127,10 @@ func (c *PaymentRequestClient) DownloadBip0070PaymentRequest(uri string) (*Payme
 	}
 
 	// If the certificate is expired or not valid yet we return and error
-	if time.Now().After(certs[0].NotAfter) {
-		return nil, errors.New("certificate is expired")
+	if !c.skipExpirationChecks {
+		if time.Now().After(certs[0].NotAfter) {
+			return nil, errors.New("certificate is expired")
+		}
 	}
 	if time.Now().Before(certs[0].NotBefore) {
 		return nil, errors.New("certificate is not valid yet")
@@ -184,12 +192,18 @@ func (c *PaymentRequestClient) DownloadBip0070PaymentRequest(uri string) (*Payme
 	}
 	pr.Expires = time.Unix(int64(*paymentDetails.Expires), 0)
 
+	if !c.skipExpirationChecks {
+		if pr.Expires.Before(time.Now()) {
+			return nil, errors.New("payment request is expired")
+		}
+	}
+
 	if paymentDetails.Memo != nil {
 		pr.Memo = *paymentDetails.Memo
 	}
 
 	if paymentDetails.PaymentUrl != nil {
-		pr.PaymentUrl = *paymentDetails.PaymentUrl
+		pr.PaymentURL = *paymentDetails.PaymentUrl
 	}
 
 	if paymentDetails.MerchantData != nil {
@@ -199,6 +213,8 @@ func (c *PaymentRequestClient) DownloadBip0070PaymentRequest(uri string) (*Payme
 	return pr, nil
 }
 
+// Payment is an object that holds all information needed to POST a payment back
+// to the merchant server. All fields except memo are required.
 type Payment struct {
 	PaymentURL   string
 	MerchantData []byte
@@ -210,7 +226,7 @@ type Payment struct {
 // PostPayment sends a payment response back to the merchant's server. Any errors
 // that are encountered in the process are returned along with an optional "memo"
 // that the merchant can include in the ACK.
-func (c *PaymentRequestClient) PostPayment(payment *Payment) (memo string, err error) {
+func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err error) {
 	// Build the payment protobuf object
 	var transactions [][]byte
 	for _, tx := range payment.Transactions {
@@ -235,7 +251,7 @@ func (c *PaymentRequestClient) PostPayment(payment *Payment) (memo string, err e
 		Amount: &refundAmount,
 	})
 
-	// Marshall the protobuf
+	// Marshal the protobuf
 	serializedPayment, err := proto.Marshal(paymentProto)
 	if err != nil {
 		return "", err
@@ -255,15 +271,16 @@ func (c *PaymentRequestClient) PostPayment(payment *Payment) (memo string, err e
 	if err != nil {
 		return "", err
 	}
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("http status not OK: %d", resp.StatusCode)
-
 	}
 
 	serializedPaymentAck, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
+
 	paymentAck := new(payments.PaymentACK)
 	if err := proto.Unmarshal(serializedPaymentAck, paymentAck); err != nil {
 		return "", err
