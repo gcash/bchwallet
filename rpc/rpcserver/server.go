@@ -695,8 +695,8 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	if err != nil {
 		return nil, translateError(err)
 	}
-
-	return &pb.PublishTransactionResponse{}, nil
+	txid := msgTx.TxHash()
+	return &pb.PublishTransactionResponse{Hash: txid[:]}, nil
 }
 
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
