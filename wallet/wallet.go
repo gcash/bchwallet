@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"golang.org/x/net/proxy"
 	"sort"
 	"strings"
 	"sync"
@@ -122,6 +123,8 @@ type Wallet struct {
 
 	syncInterruptChan chan struct{}
 	syncLock          sync.Mutex
+
+	proxyDialer proxy.Dialer
 }
 
 // Start starts the goroutines necessary to manage a wallet.
@@ -3515,6 +3518,18 @@ func (w *Wallet) ChainParams() *chaincfg.Params {
 // with the wallet's database.
 func (w *Wallet) Database() walletdb.DB {
 	return w.db
+}
+
+// SetProxyDialer sets a proxy dialer object which can be used by any
+// functions that need access to the proxy.
+func (w *Wallet) SetProxyDialer(dialer proxy.Dialer) {
+	w.proxyDialer = dialer
+}
+
+// GetProxyDialer returns the proxy dialer. It may be nil if the dialer
+// was never set.
+func (w *Wallet) GetProxyDialer() proxy.Dialer {
+	return w.proxyDialer
 }
 
 // Create creates an new wallet, writing it to an empty database.  If the passed

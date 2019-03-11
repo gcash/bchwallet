@@ -219,7 +219,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:58e048bebb4e4d719df6c3142e0dbde213a4ac5d6a9e4c917550e37f812f7c83"
+  digest = "1:6b0b5bf31a4f2378a78c9b77a94ca074f93f67e50b04056fc2df7baac6e8e8f2"
   name = "golang.org/x/net"
   packages = [
     "bpf",
@@ -230,9 +230,11 @@
     "idna",
     "internal/iana",
     "internal/socket",
+    "internal/socks",
     "internal/timeseries",
     "ipv4",
     "ipv6",
+    "proxy",
     "trace",
   ]
   pruneopts = "UT"
@@ -315,6 +317,14 @@
   revision = "2e463a05d100327ca47ac218281906921038fd95"
   version = "v1.16.0"
 
+[[projects]]
+  branch = "v1"
+  digest = "1:628e0b0440dd467e26b26575195ff5c6eb1477a51b05f46afdfb6c1970e0138c"
+  name = "gopkg.in/jarcoal/httpmock.v1"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "c8b53f8af6a91ef7252d80af22daa67a244c8850"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
@@ -349,6 +359,7 @@
     "golang.org/x/crypto/ripemd160",
     "golang.org/x/crypto/ssh/terminal",
     "golang.org/x/net/context",
+    "golang.org/x/net/proxy",
     "google.golang.org/grpc",
     "google.golang.org/grpc/codes",
     "google.golang.org/grpc/credentials",
@@ -356,6 +367,7 @@
     "google.golang.org/grpc/metadata",
     "google.golang.org/grpc/peer",
     "google.golang.org/grpc/status",
+    "gopkg.in/jarcoal/httpmock.v1",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1
