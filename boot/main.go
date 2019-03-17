@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -69,6 +70,21 @@ func WalletMain(optionalConfigPath *string) error {
 	// the wallet when loaded later.
 	go rpcClientConnectLoop(legacyRPCServer, loader)
 
+	var proxyDialer proxy.Dialer
+	if cfg.Proxy != "" {
+		var auth *proxy.Auth
+		if cfg.ProxyUser != "" && cfg.ProxyPass != "" {
+			auth = &proxy.Auth{
+				User:     cfg.ProxyUser,
+				Password: cfg.ProxyPass,
+			}
+		}
+		proxyDialer, err = proxy.SOCKS5("tcp", cfg.Proxy, auth, proxy.Direct)
+		if err != nil {
+			log.Errorf("Unable to build the proxy dialer: %v", err)
+		}
+	}
+
 	loader.RunAfterLoad(func(w *wallet.Wallet) {
 		if rpcs != nil {
 			rpcserver.StartWalletService(rpcs, w)
@@ -77,6 +93,8 @@ func WalletMain(optionalConfigPath *string) error {
 		if legacyRPCServer != nil {
 			legacyRPCServer.RegisterWallet(w)
 		}
+
+		w.SetProxyDialer(proxyDialer)
 	})
 
 	if !cfg.NoInitialLoad {

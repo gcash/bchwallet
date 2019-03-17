@@ -18,6 +18,7 @@ package rpcserver
 import (
 	"bytes"
 	"errors"
+	"github.com/gcash/bchwallet/pymtproto"
 
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
@@ -440,7 +441,6 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 
 	fee := bchutil.Amount(req.SatPerKbFee)
 	var outputs []*wire.TxOut
-	totalOut := int64(0)
 	for _, out := range req.Outputs {
 		addr, err := bchutil.DecodeAddress(out.Address, s.wallet.ChainParams())
 		if err != nil {
@@ -450,7 +450,6 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 		if err != nil {
 			return nil, err
 		}
-		totalOut += out.Amount
 		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
 	}
 
@@ -469,6 +468,10 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 	for _, val := range authoredTx.PrevInputValues {
 		totalIn += int64(val.ToUnit(bchutil.AmountSatoshi))
 		inputValues = append(inputValues, int64(val.ToUnit(bchutil.AmountSatoshi)))
+	}
+	totalOut := int64(0)
+	for _, out := range authoredTx.Tx.TxOut {
+		totalOut += out.Value
 	}
 
 	return &pb.CreateTransactionResponse{
@@ -697,6 +700,69 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	}
 	txid := msgTx.TxHash()
 	return &pb.PublishTransactionResponse{Hash: txid[:]}, nil
+}
+
+func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (
+	*pb.DownloadPaymentRequestResponse, error) {
+
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	pr, err := client.DownloadBip0070PaymentRequest(req.Uri)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.DownloadPaymentRequestResponse{
+		PayToName:    pr.PayToName,
+		Expires:      pr.Expires.Unix(),
+		Memo:         pr.Memo,
+		PaymentUrl:   pr.PaymentURL,
+		MerchantData: pr.MerchantData,
+	}
+	for _, out := range pr.Outputs {
+		output := &pb.DownloadPaymentRequestResponse_Output{
+			Amount:  int64(out.Amount.ToUnit(bchutil.AmountSatoshi)),
+			Address: out.Address.String(),
+		}
+		resp.Outputs = append(resp.Outputs, output)
+	}
+	return resp, nil
+}
+
+func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (
+	*pb.PostPaymentResponse, error) {
+
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+
+	refundAddr, err := bchutil.DecodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
+	if err != nil {
+		return nil, err
+	}
+
+	payment := &pymtproto.Payment{
+		PaymentURL:   req.PaymentUrl,
+		MerchantData: req.MerchantData,
+		Memo:         req.Memo,
+		RefundOutput: pymtproto.Output{
+			Amount:  bchutil.Amount(req.RefundOutput.Amount),
+			Address: refundAddr,
+		},
+	}
+
+	for _, serializedTx := range req.Transactions {
+		tx := &wire.MsgTx{}
+		if err := tx.BchDecode(bytes.NewReader(serializedTx), wire.ProtocolVersion, wire.BaseEncoding); err != nil {
+			return nil, err
+		}
+		payment.Transactions = append(payment.Transactions, tx)
+	}
+
+	ackMemo, err := client.PostPayment(payment)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.PostPaymentResponse{
+		Memo: ackMemo,
+	}
+	return resp, nil
 }
 
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (

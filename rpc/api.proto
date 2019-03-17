@@ -43,6 +43,10 @@ service WalletService {
 	rpc SignTransaction (SignTransactionRequest) returns (SignTransactionResponse);
 	rpc PublishTransaction (PublishTransactionRequest) returns (PublishTransactionResponse);
 
+	// Payment Requests
+	rpc DownloadPaymentRequest (DownloadPaymentRequestRequest) returns (DownloadPaymentRequestResponse);
+	rpc PostPayment (PostPaymentRequest) returns (PostPaymentResponse);
+
 	// Utilities
 	rpc ValidateAddress(ValidateAddressRequest) returns (ValidateAddressResponse);
 }
@@ -380,4 +384,37 @@ message GenerateMnemonicSeedRequest {
 }
 message GenerateMnemonicSeedResponse {
 	string mnemonic = 1;
+}
+
+message DownloadPaymentRequestRequest {
+	string uri = 1;
+}
+message DownloadPaymentRequestResponse {
+	message Output {
+		string address = 1;
+		int64 amount = 2;
+	}
+
+	string pay_to_name = 1;
+	repeated Output outputs = 2;
+	int64 expires = 3;
+	string memo = 4;
+	string payment_url = 5;
+	bytes merchant_data = 6;
+}
+
+message PostPaymentRequest {
+	message Output {
+		string address = 1;
+		int64 amount = 2;
+	}
+
+	string payment_url = 1;
+	bytes merchant_data = 2;
+	repeated bytes transactions = 3;
+	Output refund_output = 4;
+	string memo = 5;
+}
+message PostPaymentResponse {
+	string memo = 1;
 }
