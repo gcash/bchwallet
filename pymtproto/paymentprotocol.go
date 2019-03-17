@@ -106,8 +106,16 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 
 	// We're only accepting `x509+sha256` certs. The alternatives are `none` which is insecure
 	// and `x509+sha1` which is also insecure. So `x509+sha256` it is.
-	if paymentRequest.PkiType == nil || *paymentRequest.PkiType != "x509+sha256" {
-		return nil, errors.New("payment request PkiType is not x509+sha256")
+	if paymentRequest.PkiType == nil {
+		return nil, errors.New("payment request PkiType is nil")
+	}
+	switch *paymentRequest.PkiType {
+	case "x509-sha256":
+		break
+	case "x509-sha1":
+		return nil, errors.New("payment request PkiType is nil")
+	default:
+		return nil, errors.New("payment request type unknown")
 	}
 
 	// Unmarshal the certificate object
