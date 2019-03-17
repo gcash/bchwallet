@@ -133,6 +133,9 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		}
 		certs = append(certs, cert)
 	}
+	if len(certs) < 2 {
+		return nil, errors.New("invalid number of certs")
+	}
 
 	// If the certificate is expired or not valid yet we return and error
 	if !c.skipExpirationChecks {
