@@ -106,16 +106,13 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 
 	// We're only accepting `x509+sha256` certs. The alternatives are `none` which is insecure
 	// and `x509+sha1` which is also insecure. So `x509+sha256` it is.
-	if paymentRequest.PkiType == nil {
-		return nil, errors.New("payment request PkiType is nil")
-	}
-	switch *paymentRequest.PkiType {
-	case "x509-sha256":
+	switch paymentRequest.GetPkiType() {
+	case "x509+sha256":
 		break
-	case "x509-sha1":
+	case "x509+sha1":
 		return nil, errors.New("payment request PkiType is nil")
 	default:
-		return nil, errors.New("payment request type unknown")
+		return nil, errors.New("payment request PkiType unknown")
 	}
 
 	// Unmarshal the certificate object
@@ -198,10 +195,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		}
 		pr.Outputs = append(pr.Outputs, output)
 	}
-	if paymentDetails.Expires == nil {
-		return nil, errors.New("expiration time is nil")
-	}
-	pr.Expires = time.Unix(int64(*paymentDetails.Expires), 0)
+	pr.Expires = time.Unix(int64(paymentDetails.GetExpires()), 0)
 
 	if !c.skipExpirationChecks {
 		if pr.Expires.Before(time.Now()) {
@@ -209,17 +203,9 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		}
 	}
 
-	if paymentDetails.Memo != nil {
-		pr.Memo = *paymentDetails.Memo
-	}
-
-	if paymentDetails.PaymentUrl != nil {
-		pr.PaymentURL = *paymentDetails.PaymentUrl
-	}
-
-	if paymentDetails.MerchantData != nil {
-		pr.MerchantData = paymentDetails.MerchantData
-	}
+	pr.Memo = paymentDetails.GetMemo()
+	pr.PaymentURL = paymentDetails.GetPaymentUrl()
+	pr.MerchantData = paymentDetails.GetMerchantData()
 
 	return pr, nil
 }
