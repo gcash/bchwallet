@@ -441,7 +441,6 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 
 	fee := bchutil.Amount(req.SatPerKbFee)
 	var outputs []*wire.TxOut
-	totalOut := int64(0)
 	for _, out := range req.Outputs {
 		addr, err := bchutil.DecodeAddress(out.Address, s.wallet.ChainParams())
 		if err != nil {
@@ -451,7 +450,6 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 		if err != nil {
 			return nil, err
 		}
-		totalOut += out.Amount
 		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
 	}
 
@@ -470,6 +468,10 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 	for _, val := range authoredTx.PrevInputValues {
 		totalIn += int64(val.ToUnit(bchutil.AmountSatoshi))
 		inputValues = append(inputValues, int64(val.ToUnit(bchutil.AmountSatoshi)))
+	}
+	totalOut := int64(0)
+	for _, out := range authoredTx.Tx.TxOut {
+		totalOut += out.Value
 	}
 
 	return &pb.CreateTransactionResponse{

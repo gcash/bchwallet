@@ -110,7 +110,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	case "x509+sha256":
 		break
 	case "x509+sha1":
-		return nil, errors.New("payment request PkiType is nil")
+		return nil, errors.New("payment request PkiType x509+sha1 is insecure")
 	default:
 		return nil, errors.New("payment request PkiType unknown")
 	}
