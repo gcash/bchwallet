@@ -99,11 +99,7 @@ func TestTxToOutputsDryRun(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		err = w.TxStore.AddCredit(ns, rec, block, 0, false)
-		if err != nil {
-			return err
-		}
-		return nil
+		return w.TxStore.AddCredit(ns, rec, block, 0, false)
 	}); err != nil {
 		t.Fatalf("failed inserting tx: %v", err)
 	}
@@ -134,8 +130,8 @@ func TestTxToOutputsDryRun(t *testing.T) {
 		t.Fatalf("unable to get addresses: %v", err)
 	}
 
-	if len(addresses) != 1 {
-		t.Fatalf("expected 1 address, found %v", len(addresses))
+	if len(addresses) != 40 {
+		t.Fatalf("expected 40 addresses, found %v", len(addresses))
 	}
 
 	dryRunTx2, err := w.txToOutputs(txOuts, 0, 1, 1000, true)
@@ -149,8 +145,8 @@ func TestTxToOutputsDryRun(t *testing.T) {
 		t.Fatalf("unable to get addresses: %v", err)
 	}
 
-	if len(addresses) != 1 {
-		t.Fatalf("expected 1 address, found %v", len(addresses))
+	if len(addresses) != 40 {
+		t.Fatalf("expected 40 addresses, found %v", len(addresses))
 	}
 
 	// The two dry-run TXs should be invalid, since they don't have
@@ -182,8 +178,8 @@ func TestTxToOutputsDryRun(t *testing.T) {
 		t.Fatalf("unable to get addresses: %v", err)
 	}
 
-	if len(addresses) != 2 {
-		t.Fatalf("expected 2 addresses, found %v", len(addresses))
+	if len(addresses) != 41 {
+		t.Fatalf("expected 41 addresses, found %v", len(addresses))
 	}
 
 	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues)

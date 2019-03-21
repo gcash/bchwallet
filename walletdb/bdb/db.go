@@ -227,7 +227,7 @@ func (b *bucket) ReadWriteCursor() walletdb.ReadWriteCursor {
 // This function is part of the walletdb.ReadWriteBucket interface implementation.
 func (b *bucket) Tx() walletdb.ReadWriteTx {
 	return &transaction{
-		(*bbolt.Bucket)(b).Tx(),
+		(*bolt.Bucket)(b).Tx(),
 	}
 }
 

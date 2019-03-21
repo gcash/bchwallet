@@ -128,7 +128,6 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
-
 	eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
 	if err != nil {
 		return nil, err

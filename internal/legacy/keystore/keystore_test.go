@@ -296,7 +296,7 @@ func TestChaining(t *testing.T) {
 			D:         new(big.Int).SetBytes(nextPrivCompressed),
 		}
 		data := "String to sign."
-		sig, err := privkeyUncompressed.Sign([]byte(data))
+		sig, err := privkeyUncompressed.SignECDSA([]byte(data))
 		if err != nil {
 			t.Errorf("%s: Unable to sign data with next private key (chained from uncompressed pubkey): %v",
 				test.name, err)
@@ -308,7 +308,7 @@ func TestChaining(t *testing.T) {
 				test.name)
 			return
 		}
-		sig, err = privkeyCompressed.Sign([]byte(data))
+		sig, err = privkeyCompressed.SignECDSA([]byte(data))
 		if err != nil {
 			t.Errorf("%s: Unable to sign data with next private key (chained from compressed pubkey): %v",
 				test.name, err)
@@ -426,7 +426,7 @@ func TestWalletPubkeyChaining(t *testing.T) {
 
 	// Sign some data with the private key, then verify signature with the pubkey.
 	hash := []byte("hash to sign")
-	sig, err := key1.Sign(hash)
+	sig, err := key1.SignECDSA(hash)
 	if err != nil {
 		t.Errorf("Unable to sign hash with the created private key: %v", err)
 		return
@@ -458,7 +458,7 @@ func TestWalletPubkeyChaining(t *testing.T) {
 
 	// Do a signature check here as well, this time for the next
 	// address after the one made without the private key.
-	sig, err = nextKey.Sign(hash)
+	sig, err = nextKey.SignECDSA(hash)
 	if err != nil {
 		t.Errorf("Unable to sign hash with the created private key: %v", err)
 		return
