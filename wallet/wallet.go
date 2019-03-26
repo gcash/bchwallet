@@ -457,6 +457,18 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 	return w.rescanWithTarget(addrs, unspent, nil)
 }
 
+// isDevEnv determines whether the wallet is currently under a local developer
+// environment, e.g. simnet or regtest.
+func (w *Wallet) isDevEnv() bool {
+	switch uint32(w.ChainParams().Net) {
+	case uint32(chaincfg.RegressionNetParams.Net):
+	case uint32(chaincfg.SimNetParams.Net):
+	default:
+		return false
+	}
+	return true
+}
+
 // scanChain is a helper method that scans the chain from the starting height
 // until the tip of the chain. The onBlock callback can be used to perform
 // certain operations for every block that we process as we scan the chain.
@@ -470,7 +482,7 @@ func (w *Wallet) scanChain(startHeight int32,
 
 	// isCurrent is a helper function that we'll use to determine if the
 	// chain backend is currently synced. When running with a btcd or
-	// bitcoind backend, It will use the height of the latest checkpoint as
+	// bitcoind backend, it will use the height of the latest checkpoint as
 	// its lower bound.
 	var latestCheckptHeight int32
 	if len(w.chainParams.Checkpoints) > 0 {
@@ -478,9 +490,10 @@ func (w *Wallet) scanChain(startHeight int32,
 			Checkpoints[len(w.chainParams.Checkpoints)-1].Height
 	}
 	isCurrent := func(bestHeight int32) bool {
-		// If the best height is zero, we assume the chain backend
-		// still is looking for peers to sync to.
-		if bestHeight == 0 {
+		// If the best height is zero, we assume the chain backend is
+		// still looking for peers to sync to in the case of a global
+		// network, e.g., testnet and mainnet.
+		if bestHeight == 0 && !w.isDevEnv() {
 			return false
 		}
 
@@ -512,14 +525,19 @@ func (w *Wallet) scanChain(startHeight int32,
 			return err
 		}
 
-		// If we've reached our best height and we're not current, we'll
-		// wait for blocks at tip to ensure we go through all existent
-		// blocks.
-		for height == bestHeight && !isCurrent(bestHeight) {
+		// If we've reached our best height, we'll wait for blocks at
+		// tip to ensure we go through all existent blocks in the chain.
+		// We'll update our bestHeight before checking if we're current
+		// with the chain to ensure we process any additional blocks
+		// that came in while we were scanning from our starting point.
+		for height == bestHeight {
 			time.Sleep(100 * time.Millisecond)
 			_, bestHeight, err = chainClient.GetBestBlock()
 			if err != nil {
 				return err
+			}
+			if isCurrent(bestHeight) {
+				break
 			}
 		}
 	}
@@ -606,11 +624,24 @@ func (w *Wallet) syncToBirthday() (*waddrmgr.BlockStamp, error) {
 	}
 
 	// If a birthday stamp has yet to be found, we'll return an error
-	// indicating so.
-	if birthdayStamp == nil {
+	// indicating so, but only if this is a live chain like it is the case
+	// with testnet and mainnet.
+	if birthdayStamp == nil && !w.isDevEnv() {
 		tx.Rollback()
 		return nil, fmt.Errorf("did not find a suitable birthday "+
 			"block with a timestamp greater than %v", birthday)
+	}
+
+	// Otherwise, if we're in a development environment and we've yet to
+	// find a birthday block due to the chain not being current, we'll
+	// use the last block we've synced to as our birthday to proceed.
+	if birthdayStamp == nil {
+		syncedTo := w.Manager.SyncedTo()
+		err := w.Manager.SetBirthdayBlock(ns, syncedTo, true)
+		if err != nil {
+			return nil, err
+		}
+		birthdayStamp = &syncedTo
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1188,6 +1219,7 @@ type (
 		outputs     []*wire.TxOut
 		minconf     int32
 		feeSatPerKB bchutil.Amount
+		dryRun      bool
 		resp        chan createTxResponse
 	}
 	createTxResponse struct {
@@ -1218,7 +1250,7 @@ out:
 				continue
 			}
 			tx, err := w.txToOutputs(txr.outputs, txr.account,
-				txr.minconf, txr.feeSatPerKB)
+				txr.minconf, txr.feeSatPerKB, txr.dryRun)
 			heldUnlock.release()
 			txr.resp <- createTxResponse{tx, err}
 		case <-quit:
@@ -1229,19 +1261,24 @@ out:
 }
 
 // CreateSimpleTx creates a new signed transaction spending unspent P2PKH
-// outputs with at laest minconf confirmations spending to any number of
+// outputs with at least minconf confirmations spending to any number of
 // address/amount pairs.  Change and an appropriate transaction fee are
 // automatically included, if necessary.  All transaction creation through this
 // function is serialized to prevent the creation of many transactions which
 // spend the same outputs.
+//
+// NOTE: The dryRun argument can be set true to create a tx that doesn't alter
+// the database. A tx created with this set to true SHOULD NOT be broadcasted.
 func (w *Wallet) CreateSimpleTx(account uint32, outputs []*wire.TxOut,
-	minconf int32, satPerKb bchutil.Amount) (*txauthor.AuthoredTx, error) {
+	minconf int32, satPerKb bchutil.Amount, dryRun bool) (
+	*txauthor.AuthoredTx, error) {
 
 	req := createTxRequest{
 		account:     account,
 		outputs:     outputs,
 		minconf:     minconf,
 		feeSatPerKB: satPerKb,
+		dryRun:      dryRun,
 		resp:        make(chan createTxResponse),
 	}
 	w.createTxRequests <- req
@@ -2862,96 +2899,29 @@ func (w *Wallet) LockedOutpoints() []btcjson.TransactionInput {
 // credits that are not known to have been mined into a block, and attempts
 // to send each to the chain server for relay.
 func (w *Wallet) resendUnminedTxs() {
-	chainClient, err := w.requireChainClient()
-	if err != nil {
-		log.Errorf("No chain server available to resend unmined transactions")
-		return
-	}
-
 	var txs []*wire.MsgTx
-	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		txmgrNs := tx.ReadBucket(wtxmgrNamespaceKey)
 		var err error
 		txs, err = w.TxStore.UnminedTxs(txmgrNs)
 		return err
 	})
 	if err != nil {
-		log.Errorf("Cannot load unmined transactions for resending: %v", err)
+		log.Errorf("Unable to retrieve unconfirmed transactions to "+
+			"resend: %v", err)
 		return
 	}
 
 	for _, tx := range txs {
-		resp, err := chainClient.SendRawTransaction(tx, false)
+		txHash, err := w.publishTransaction(tx)
 		if err != nil {
-			// If the transaction has already been accepted into the
-			// mempool, we can continue without logging the error.
-			switch {
-			case strings.Contains(err.Error(), "already have transaction"):
-				fallthrough
-			case strings.Contains(err.Error(), "txn-already-known"):
-				continue
-			}
-
-			log.Debugf("Could not resend transaction %v: %v",
+			log.Debugf("Unable to rebroadcast transaction %v: %v",
 				tx.TxHash(), err)
-
-			// We'll only stop broadcasting transactions if we
-			// detect that the output has already been fully spent,
-			// is an orphan, or is conflicting with another
-			// transaction.
-			//
-			// TODO(roasbeef): SendRawTransaction needs to return
-			// concrete error types, no need for string matching
-			switch {
-			// The following are errors returned from bchd's
-			// mempool.
-			case strings.Contains(err.Error(), "spent"):
-			case strings.Contains(err.Error(), "orphan"):
-			case strings.Contains(err.Error(), "conflict"):
-			case strings.Contains(err.Error(), "already exists"):
-			case strings.Contains(err.Error(), "negative"):
-
-			// The following errors are returned from bitcoind's
-			// mempool.
-			case strings.Contains(err.Error(), "Missing inputs"):
-			case strings.Contains(err.Error(), "already in block chain"):
-			case strings.Contains(err.Error(), "fee not met"):
-
-			default:
-				continue
-			}
-
-			// As the transaction was rejected, we'll attempt to
-			// remove the unmined transaction all together.
-			// Otherwise, we'll keep attempting to rebroadcast this,
-			// and we may be computing our balance incorrectly if
-			// this transaction credits or debits to us.
-			//
-			// TODO(wilmer): if already confirmed, move to mined
-			// bucket - need to determine the confirmation block.
-			err := walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
-				txmgrNs := dbTx.ReadWriteBucket(wtxmgrNamespaceKey)
-
-				txRec, err := wtxmgr.NewTxRecordFromMsgTx(
-					tx, time.Now(),
-				)
-				if err != nil {
-					return err
-				}
-
-				return w.TxStore.RemoveUnminedTx(txmgrNs, txRec)
-			})
-			if err != nil {
-				log.Warnf("unable to remove conflicting "+
-					"tx %v: %v", tx.TxHash(), err)
-				continue
-			}
-
-			log.Infof("Removed conflicting tx: %v", spew.Sdump(tx))
-
 			continue
 		}
-		log.Debugf("Resent unmined transaction %v", resp)
+
+		log.Debugf("Successfully rebroadcast unconfirmed transaction %v",
+			txHash)
 	}
 }
 
@@ -3248,12 +3218,14 @@ func (w *Wallet) SendOutputs(outputs []*wire.TxOut, account uint32,
 	// transaction will be added to the database in order to ensure that we
 	// continue to re-broadcast the transaction upon restarts until it has
 	// been confirmed.
-	createdTx, err := w.CreateSimpleTx(account, outputs, minconf, satPerKb)
+	createdTx, err := w.CreateSimpleTx(
+		account, outputs, minconf, satPerKb, false,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	txHash, err := w.publishTransaction(createdTx.Tx)
+	txHash, err := w.reliablyPublishTransaction(createdTx.Tx)
 	if err != nil {
 		return nil, err
 	}
@@ -3409,16 +3381,16 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 // This function is unstable and will be removed once syncing code is moved out
 // of the wallet.
 func (w *Wallet) PublishTransaction(tx *wire.MsgTx) error {
-	_, err := w.publishTransaction(tx)
+	_, err := w.reliablyPublishTransaction(tx)
 	return err
 }
 
-// publishTransaction is the private version of PublishTransaction which
-// contains the primary logic required for publishing a transaction, updating
-// the relevant database state, and finally possible removing the transaction
-// from the database (along with cleaning up all inputs used, and outputs
-// created) if the transaction is rejected by the back end.
-func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
+// reliablyPublishTransaction is a superset of publishTransaction which contains
+// the primary logic required for publishing a transaction, updating the
+// relevant database state, and finally possible removing the transaction from
+// the database (along with cleaning up all inputs used, and outputs created) if
+// the transaction is rejected by the backend.
+func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	chainClient, err := w.requireChainClient()
 	if err != nil {
 		return nil, err
@@ -3468,41 +3440,93 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 		}
 	}
 
+	return w.publishTransaction(tx)
+}
+
+// publishTransaction attempts to send an unconfirmed transaction to the
+// wallet's current backend. In the event that sending the transaction fails for
+// whatever reason, it will be removed from the wallet's unconfirmed transaction
+// store.
+func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
+	chainClient, err := w.requireChainClient()
+	if err != nil {
+		return nil, err
+	}
+
 	txid, err := chainClient.SendRawTransaction(tx, false)
 	switch {
 	case err == nil:
 		return txid, nil
 
-	// The following are errors returned from bchd's mempool.
-	case strings.Contains(err.Error(), "spent"):
-		fallthrough
-	case strings.Contains(err.Error(), "orphan"):
-		fallthrough
-	case strings.Contains(err.Error(), "conflict"):
+	// Since we have different backends that can be used with the wallet,
+	// we'll need to check specific errors for each one.
+	//
+	// If the transaction is already in the mempool, we can just return now.
+	//
+	// This error is returned when broadcasting/sending a transaction to a
+	// btcd node that already has it in their mempool.
+	case strings.Contains(err.Error(), "already have transaction"):
 		fallthrough
 
-	// The following errors are returned from bitcoind's mempool.
-	case strings.Contains(err.Error(), "fee not met"):
+	// This error is returned when broadcasting a transaction to a bitcoind
+	// node that already has it in their mempool.
+	case strings.Contains(err.Error(), "txn-already-in-mempool"):
+		return txid, nil
+
+	// If the transaction has already confirmed, we can safely remove it
+	// from the unconfirmed store as it should already exist within the
+	// confirmed store. We'll avoid returning an error as the broadcast was
+	// in a sense successful.
+	//
+	// This error is returned when broadcasting/sending a transaction that
+	// has already confirmed to a btcd node.
+	case strings.Contains(err.Error(), "transaction already exists"):
 		fallthrough
-	case strings.Contains(err.Error(), "Missing inputs"):
+
+	// This error is returned when broadcasting a transaction that has
+	// already confirmed to a bitcoind node.
+	case strings.Contains(err.Error(), "txn-already-known"):
 		fallthrough
-	case strings.Contains(err.Error(), "already in block chain"):
-		// If the transaction was rejected, then we'll remove it from
-		// the txstore, as otherwise, we'll attempt to continually
-		// re-broadcast it, and the utxo state of the wallet won't be
-		// accurate.
+
+	// This error is returned when sending a transaction that has already
+	// confirmed to a bitcoind node over RPC.
+	case strings.Contains(err.Error(), "transaction already in block chain"):
 		dbErr := walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 			txmgrNs := dbTx.ReadWriteBucket(wtxmgrNamespaceKey)
+			txRec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
+			if err != nil {
+				return err
+			}
 			return w.TxStore.RemoveUnminedTx(txmgrNs, txRec)
 		})
 		if dbErr != nil {
-			return nil, fmt.Errorf("unable to broadcast tx: %v, "+
-				"unable to remove invalid tx: %v", err, dbErr)
+			log.Warnf("Unable to remove confirmed transaction %v "+
+				"from unconfirmed store: %v", tx.TxHash(), dbErr)
 		}
 
-		return nil, err
+		return txid, nil
 
+	// If the transaction was rejected for whatever other reason, then we'll
+	// remove it from the transaction store, as otherwise, we'll attempt to
+	// continually re-broadcast it, and the UTXO state of the wallet won't
+	// be accurate.
 	default:
+		dbErr := walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
+			txmgrNs := dbTx.ReadWriteBucket(wtxmgrNamespaceKey)
+			txRec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
+			if err != nil {
+				return err
+			}
+			return w.TxStore.RemoveUnminedTx(txmgrNs, txRec)
+		})
+		if dbErr != nil {
+			log.Warnf("Unable to remove invalid transaction %v: %v",
+				tx.TxHash(), dbErr)
+		} else {
+			log.Infof("Removed invalid transaction: %v",
+				spew.Sdump(tx))
+		}
+
 		return nil, err
 	}
 }

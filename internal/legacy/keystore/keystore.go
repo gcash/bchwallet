@@ -2255,7 +2255,7 @@ func (a *bchAddress) verifyKeypairs() error {
 	}
 
 	data := "String to sign."
-	sig, err := privKey.Sign([]byte(data))
+	sig, err := privKey.SignECDSA([]byte(data))
 	if err != nil {
 		return err
 	}
