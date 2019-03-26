@@ -65,8 +65,16 @@
   revision = "d8f796af33cc11cb798c1aaeb27a4ebc5099927d"
 
 [[projects]]
+  digest = "1:1e9a0ec4f7e852123fefad9aadd7647eed1e9fd3716118e99a4b3dc463705c82"
+  name = "github.com/dchest/siphash"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "34f201214d993633bb24f418ba11736ab8b55aa7"
+  version = "v1.2.1"
+
+[[projects]]
   branch = "master"
-  digest = "1:1a388af20f617dba6bdf09a0ed9bdd1672ba2445b5e134d9437f79df7786e5f9"
+  digest = "1:fd226b1d219f42aec4fa29357e5886b9eaadfeef59ec70dd5e5546c4ff888627"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -83,7 +91,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "a8909dc65f140b8a0b4e31a49216d7c38c81b9dd"
+  revision = "85dbb1aa095c4d9a6013b6bdbea0057dea07802b"
 
 [[projects]]
   branch = "master"
