@@ -109,18 +109,21 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:38ff2ab64948cb459fee94181f3264c46e754c31ada4b588be8358cab6a7b385"
+  digest = "1:b518b9c0ca53f733c5694d7300b437f261820ad97f40fa599440c4c10af0f13a"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
+    "blockntfns",
+    "blockntfns/queue",
     "cache",
     "cache/lru",
     "filterdb",
     "headerfs",
     "headerlist",
+    "pushtx",
   ]
   pruneopts = "UT"
-  revision = "8d71e27af75cd3d7447cc2527325d760dd00c4c7"
+  revision = "63c133a2c283c100ee287863eed3b8fa7a659bb4"
 
 [[projects]]
   digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
