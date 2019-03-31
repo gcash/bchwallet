@@ -184,6 +184,7 @@ out:
 			n := msg.Notification
 			log.Infof("Rescanned through block %v (height %d)",
 				n.Hash, n.Height)
+			w.NtfnServer.notifyRescan(n.Hash, n.Height, false)
 
 		case msg := <-w.rescanFinished:
 			n := msg.Notification
@@ -193,6 +194,7 @@ out:
 				"%s, height %d)", len(addrs), noun, n.Hash,
 				n.Height)
 
+			w.NtfnServer.notifyRescan(n.Hash, n.Height, true)
 			go w.resendUnminedTxs()
 
 		case <-quit:

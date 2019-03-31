@@ -36,6 +36,7 @@ type NotificationServer struct {
 	currentTxNtfn  *TransactionNotifications // coalesce this since wallet does not add mined txs together
 	spentness      map[uint32][]chan *SpentnessNotifications
 	accountClients []chan *AccountNotification
+	rescanClients  []chan *RescanNotification
 	mu             sync.Mutex // Only protects registered client channels
 	wallet         *Wallet    // smells like hacks
 }
@@ -637,6 +638,76 @@ func (c *AccountNotificationsClient) Done() {
 			if c.C == ch {
 				clients[i] = clients[len(clients)-1]
 				s.accountClients = clients[:len(clients)-1]
+				close(ch)
+				break
+			}
+		}
+		s.mu.Unlock()
+	}()
+}
+
+// RescanNotification is a notification which contains the rescan progress.
+// It provides the hash and height the rescan is up to as well as a bool
+// signifying if the rescan is finished.
+type RescanNotification struct {
+	Hash     *chainhash.Hash
+	Height   int32
+	Finished bool
+}
+
+func (s *NotificationServer) notifyRescan(hash *chainhash.Hash, height int32, finished bool) {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	clients := s.rescanClients
+	if len(clients) == 0 {
+		return
+	}
+	n := &RescanNotification{
+		Hash:     hash,
+		Height:   height,
+		Finished: finished,
+	}
+	for _, c := range clients {
+		c <- n
+	}
+}
+
+// RescanNotificationsClient receives RescanNotifications over the channel C.
+type RescanNotificationsClient struct {
+	C      chan *RescanNotification
+	server *NotificationServer
+}
+
+// RescanNotifications returns a client for receiving RescanNotifications over
+// a channel.  The channel is unbuffered.  When finished, the client's Done
+// method should be called to disassociate the client from the server.
+func (s *NotificationServer) RescanNotifications() RescanNotificationsClient {
+	c := make(chan *RescanNotification)
+	s.mu.Lock()
+	s.rescanClients = append(s.rescanClients, c)
+	s.mu.Unlock()
+	return RescanNotificationsClient{
+		C:      c,
+		server: s,
+	}
+}
+
+// Done deregisters the client from the server and drains any remaining
+// messages.  It must be called exactly once when the client is finished
+// receiving notifications.
+func (c *RescanNotificationsClient) Done() {
+	go func() {
+		for range c.C {
+		}
+	}()
+	go func() {
+		s := c.server
+		s.mu.Lock()
+		clients := s.rescanClients
+		for i, ch := range clients {
+			if c.C == ch {
+				clients[i] = clients[len(clients)-1]
+				s.rescanClients = clients[:len(clients)-1]
 				close(ch)
 				break
 			}

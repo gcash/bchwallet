@@ -954,6 +954,32 @@ func (s *walletServer) AccountNotifications(req *pb.AccountNotificationsRequest,
 	}
 }
 
+func (s *walletServer) RescanNotifications(req *pb.RescanNotificationsRequest,
+	svr pb.WalletService_RescanNotificationsServer) error {
+
+	n := s.wallet.NtfnServer.RescanNotifications()
+	defer n.Done()
+
+	ctxDone := svr.Context().Done()
+	for {
+		select {
+		case v := <-n.C:
+			resp := pb.RescanNotificationsResponse{
+				Hash:     v.Hash[:],
+				Height:   v.Height,
+				Finished: v.Finished,
+			}
+			err := svr.Send(&resp)
+			if err != nil {
+				return translateError(err)
+			}
+
+		case <-ctxDone:
+			return nil
+		}
+	}
+}
+
 // StartWalletLoaderService creates an implementation of the WalletLoaderService
 // and registers it with the gRPC server.
 func StartWalletLoaderService(server *grpc.Server, loader *wallet.Loader, activeNet *netparams.Params) {
