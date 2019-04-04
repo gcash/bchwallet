@@ -1002,6 +1002,7 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 	defer func() {
 		zero.Bytes(req.PrivatePassphrase)
 		zero.Bytes(seed)
+		req.WalletBirthday = 0
 		req.MnemonicSeed = ""
 	}()
 
@@ -1012,7 +1013,7 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 	}
 
 	wallet, err := s.loader.CreateNewWallet(
-		pubPassphrase, req.PrivatePassphrase, seed, time.Now(),
+		pubPassphrase, req.PrivatePassphrase, seed, time.Unix(req.WalletBirthday, 0),
 	)
 	if err != nil {
 		return nil, translateError(err)

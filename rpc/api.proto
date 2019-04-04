@@ -356,6 +356,7 @@ message CreateWalletRequest {
 	bytes public_passphrase = 1;
 	bytes private_passphrase = 2;
 	string mnemonic_seed = 3;
+	int64 wallet_birthday = 4;
 }
 message CreateWalletResponse {}
 
