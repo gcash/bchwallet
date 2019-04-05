@@ -261,21 +261,21 @@ func PublicPass(reader *bufio.Reader, privPass []byte,
 // the user along with prompting them for confirmation.  When the user answers
 // yes, a the user is prompted for it.  All prompts are repeated until the user
 // enters a valid response.
-func Seed(reader *bufio.Reader) ([]byte, error) {
+func Seed(reader *bufio.Reader) ([]byte, bool, error) {
 	// Ascertain the wallet generation seed.
 	useUserSeed, err := promptListBool(reader, "Do you have an "+
 		"existing wallet seed you want to use?", "no")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !useUserSeed {
 		entropy, err := bip39.NewEntropy(128)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		mnemonic, err := bip39.NewMnemonic(entropy)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		seed := bip39.NewSeed(mnemonic, "")
 
@@ -293,7 +293,7 @@ func Seed(reader *bufio.Reader) ([]byte, error) {
 				`and secure location, enter "OK" to continue: `)
 			confirmSeed, err := reader.ReadString('\n')
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			confirmSeed = strings.TrimSpace(confirmSeed)
 			confirmSeed = strings.Trim(confirmSeed, `"`)
@@ -302,14 +302,14 @@ func Seed(reader *bufio.Reader) ([]byte, error) {
 			}
 		}
 
-		return seed, nil
+		return seed, true, nil
 	}
 
 	for {
 		fmt.Print("Enter existing wallet seed: ")
 		mnemonic, err := reader.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		seed := bip39.NewSeed(strings.TrimSpace(mnemonic), "")
 		if err != nil || len(seed) < hdkeychain.MinSeedBytes ||
@@ -322,6 +322,6 @@ func Seed(reader *bufio.Reader) ([]byte, error) {
 			continue
 		}
 
-		return seed, nil
+		return seed, false, nil
 	}
 }

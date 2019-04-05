@@ -43,6 +43,7 @@ service WalletService {
 	rpc SweepAccount (SweepAccountRequest) returns (SweepAccountResponse);
 	rpc SignTransaction (SignTransactionRequest) returns (SignTransactionResponse);
 	rpc PublishTransaction (PublishTransactionRequest) returns (PublishTransactionResponse);
+	rpc Rescan(RescanRequest) returns (RescanResponse);
 
 	// Payment Requests
 	rpc DownloadPaymentRequest (DownloadPaymentRequestRequest) returns (DownloadPaymentRequestResponse);
@@ -297,6 +298,9 @@ message PublishTransactionResponse {
 	bytes hash = 1;
 }
 
+message RescanRequest {}
+message RescanResponse {}
+
 message TransactionNotificationsRequest {}
 message TransactionNotificationsResponse {
 	// Sorted by increasing height.  This is a repeated field so many new blocks
@@ -356,6 +360,7 @@ message CreateWalletRequest {
 	bytes public_passphrase = 1;
 	bytes private_passphrase = 2;
 	string mnemonic_seed = 3;
+	int64 wallet_birthday = 4;
 }
 message CreateWalletResponse {}
 

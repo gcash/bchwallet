@@ -189,13 +189,23 @@ func createWallet(cfg *config) error {
 	// Ascertain the wallet generation seed.  This will either be an
 	// automatically generated value the user has already confirmed or a
 	// value the user has entered which has already been validated.
-	seed, err := prompt.Seed(reader)
+	seed, isNew, err := prompt.Seed(reader)
 	if err != nil {
 		return err
 	}
 
+	// If the user entered a seed they likely intend to import an existing
+	// wallet. In this case we set the birthday to before the genesis to
+	// do a full rescan from genesis.
+	//
+	// If a new seed was created we can just set the birthday to now.
+	birthday := time.Time{}
+	if isNew {
+		birthday = time.Now()
+	}
+
 	fmt.Println("Creating the wallet...")
-	w, err := loader.CreateNewWallet(pubPass, privPass, seed, time.Now())
+	w, err := loader.CreateNewWallet(pubPass, privPass, seed, birthday)
 	if err != nil {
 		return err
 	}

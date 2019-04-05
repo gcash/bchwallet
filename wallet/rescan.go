@@ -10,6 +10,7 @@ import (
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/waddrmgr"
+	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/wtxmgr"
 )
 
@@ -48,6 +49,50 @@ type rescanBatch struct {
 	outpoints   map[wire.OutPoint]bchutil.Address
 	bs          waddrmgr.BlockStamp
 	errChans    []chan error
+}
+
+// NewRescanJob creates a new RescanJob using the active data
+// in the wallet. This can then be passed into SubmitRescan
+// to do a rescan from the wallet's birthday.
+func (w *Wallet) NewRescanJob() (*RescanJob, error) {
+	var (
+		addrs         []bchutil.Address
+		unspent       []wtxmgr.Credit
+		birthdayBlock waddrmgr.BlockStamp
+		err           error
+	)
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
+		birthdayBlock, _, err = w.Manager.BirthdayBlock(addrmgrNs)
+		if err != nil {
+			return err
+		}
+		addrs, unspent, err = w.activeData(dbtx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	outpoints := make(map[wire.OutPoint]bchutil.Address, len(unspent))
+	for _, output := range unspent {
+		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
+			output.PkScript, w.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		outpoints[output.OutPoint] = outputAddrs[0]
+	}
+
+	job := &RescanJob{
+		InitialSync: true,
+		Addrs:       addrs,
+		OutPoints:   outpoints,
+		BlockStamp:  birthdayBlock,
+	}
+	return job, nil
 }
 
 // SubmitRescan submits a RescanJob to the RescanManager.  A channel is

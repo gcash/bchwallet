@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"errors"
 	"github.com/gcash/bchwallet/pymtproto"
-
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
 	"google.golang.org/grpc/status"
@@ -702,6 +701,17 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	return &pb.PublishTransactionResponse{Hash: txid[:]}, nil
 }
 
+func (s *walletServer) Rescan(ctx context.Context, req *pb.RescanRequest) (
+	*pb.RescanResponse, error) {
+
+	job, err := s.wallet.NewRescanJob()
+	if err != nil {
+		return nil, err
+	}
+	s.wallet.SubmitRescan(job)
+	return &pb.RescanResponse{}, nil
+}
+
 func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (
 	*pb.DownloadPaymentRequestResponse, error) {
 
@@ -1002,6 +1012,7 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 	defer func() {
 		zero.Bytes(req.PrivatePassphrase)
 		zero.Bytes(seed)
+		req.WalletBirthday = 0
 		req.MnemonicSeed = ""
 	}()
 
@@ -1012,7 +1023,7 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 	}
 
 	wallet, err := s.loader.CreateNewWallet(
-		pubPassphrase, req.PrivatePassphrase, seed, time.Now(),
+		pubPassphrase, req.PrivatePassphrase, seed, time.Unix(req.WalletBirthday, 0),
 	)
 	if err != nil {
 		return nil, translateError(err)
