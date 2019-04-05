@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"errors"
 	"github.com/gcash/bchwallet/pymtproto"
-
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
 	"google.golang.org/grpc/status"
@@ -700,6 +699,17 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 	}
 	txid := msgTx.TxHash()
 	return &pb.PublishTransactionResponse{Hash: txid[:]}, nil
+}
+
+func (s *walletServer) Rescan(ctx context.Context, req *pb.RescanRequest) (
+	*pb.RescanResponse, error) {
+
+	job, err := s.wallet.NewRescanJob()
+	if err != nil {
+		return nil, err
+	}
+	s.wallet.SubmitRescan(job)
+	return &pb.RescanResponse{}, nil
 }
 
 func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (

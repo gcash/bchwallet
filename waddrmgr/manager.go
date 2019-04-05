@@ -82,7 +82,7 @@ const (
 
 	// NumInitialAddrs is the number of internal and external addresses to
 	// pre-generate when the wallet is created.
-	NumInitialAddrs = 20
+	NumInitialAddrs = 10
 )
 
 // isReservedAccountName returns true if the account name is reserved.

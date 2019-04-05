@@ -271,7 +271,7 @@ func Seed(reader *bufio.Reader) ([]byte, bool, error) {
 	if !useUserSeed {
 		entropy, err := bip39.NewEntropy(128)
 		if err != nil {
-			return nil,false, err
+			return nil, false, err
 		}
 		mnemonic, err := bip39.NewMnemonic(entropy)
 		if err != nil {
