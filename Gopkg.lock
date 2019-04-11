@@ -66,7 +66,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:f6a4b2ce954fba6250732a96056f09c292b32fc72bdcb432eea9528ef0080f77"
+  digest = "1:184778a832f93dd88ca99663634d5e49b623fa9b42cd834dfac6d9ed1c64a0fe"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -83,7 +83,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "e3acc6c966bac9408b65649dd55b00bd8d32a14c"
+  revision = "4a296e5dab4562b41259515a9647b4244d6c6fb5"
 
 [[projects]]
   branch = "master"
@@ -109,7 +109,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:b00158f106077d726a4b6e5954e2f52e067f65fd833c7a491ce65f3afaf22748"
+  digest = "1:0ada0b041f7a958a0a0924b9cda3bbf0149a12d250c9e8b54fd43baf1874b36a"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -123,7 +123,7 @@
     "pushtx",
   ]
   pruneopts = "UT"
-  revision = "ab52dd9e9337231d33a4462a1fa33174912ac407"
+  revision = "eb51220a7ec8c4522d7cf676333469088dcdb37b"
 
 [[projects]]
   digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
