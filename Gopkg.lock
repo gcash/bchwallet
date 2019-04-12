@@ -10,14 +10,6 @@
   version = "v1.0.1"
 
 [[projects]]
-  digest = "1:1c9dffe45896d21dc8e183fdc3cdb405249e6c7dd3d00792e534af3597d5e4fc"
-  name = "github.com/avast/retry-go"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "08d411bf8302219fe47ca04dbdf9de892010c5e5"
-  version = "v2.2.0"
-
-[[projects]]
   branch = "master"
   digest = "1:965fa961ce7d2a2b0586ff1510c7268d9a8db78c0f08e15c3510ce7cceb963a9"
   name = "github.com/boltdb/bolt"
@@ -74,7 +66,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:fd226b1d219f42aec4fa29357e5886b9eaadfeef59ec70dd5e5546c4ff888627"
+  digest = "1:184778a832f93dd88ca99663634d5e49b623fa9b42cd834dfac6d9ed1c64a0fe"
   name = "github.com/gcash/bchd"
   packages = [
     "addrmgr",
@@ -91,7 +83,7 @@
     "wire",
   ]
   pruneopts = "UT"
-  revision = "85dbb1aa095c4d9a6013b6bdbea0057dea07802b"
+  revision = "4a296e5dab4562b41259515a9647b4244d6c6fb5"
 
 [[projects]]
   branch = "master"
@@ -103,7 +95,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:b712292f186947461318894fb29dffa9d5ec5a7869722913f69f080f70fa86e5"
+  digest = "1:e8049e4480d147695094a4d2af8dc61e22459d7d337dea0e551a5e78fe366399"
   name = "github.com/gcash/bchutil"
   packages = [
     ".",
@@ -113,11 +105,11 @@
     "hdkeychain",
   ]
   pruneopts = "UT"
-  revision = "b9d516f30ecaa4d6369791efa06569413e16a9e7"
+  revision = "f909784c02593590644a5527b3f2237b8406bb7e"
 
 [[projects]]
   branch = "master"
-  digest = "1:b518b9c0ca53f733c5694d7300b437f261820ad97f40fa599440c4c10af0f13a"
+  digest = "1:0ada0b041f7a958a0a0924b9cda3bbf0149a12d250c9e8b54fd43baf1874b36a"
   name = "github.com/gcash/neutrino"
   packages = [
     ".",
@@ -131,7 +123,7 @@
     "pushtx",
   ]
   pruneopts = "UT"
-  revision = "63c133a2c283c100ee287863eed3b8fa7a659bb4"
+  revision = "eb51220a7ec8c4522d7cf676333469088dcdb37b"
 
 [[projects]]
   digest = "1:aacef5f5e45685f2aeda5534d0a750dee6859de7e9088cdd06192787bb01ae6d"
@@ -263,17 +255,25 @@
   revision = "4ed8d59d0b35e1e29334a206d1b3f38b1e5dfb31"
 
 [[projects]]
-  digest = "1:a2ab62866c75542dd18d2b069fec854577a20211d7c0ea6ae746072a1dccdd18"
+  digest = "1:0b1e6ebd6318297981e2f3ae09851a1b2c0d3f63668abfc4294d69f0b94d6593"
   name = "golang.org/x/text"
   packages = [
     "collate",
     "collate/build",
+    "feature/plural",
+    "internal",
+    "internal/catmsg",
     "internal/colltab",
+    "internal/format",
     "internal/gen",
+    "internal/number",
+    "internal/stringset",
     "internal/tag",
     "internal/triegen",
     "internal/ucd",
     "language",
+    "message",
+    "message/catalog",
     "secure/bidirule",
     "transform",
     "unicode/bidi",

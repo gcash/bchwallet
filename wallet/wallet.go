@@ -694,23 +694,30 @@ func (w *Wallet) recovery(startHeight int32) error {
 		return err
 	}
 
-	maybeHandleInterrupt := func() error {
+	// Because the recovery holds a db lock for the entire duration and
+	// because recovery takes so long, this blocks all other APIs from
+	// using the db during recovery. maybeHandleInterrupt reads from an
+	// interrupt channel. If interrupted it will commit everything to the
+	// db which will release the lock to other processes to read from the
+	// db. Then reset the tx and buckets to start again.
+	maybeHandleInterrupt := func() (walletdb.ReadWriteBucket, error) {
 		select {
 		case <-w.syncInterruptChan:
 			err := tx.Commit()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			w.syncLock.Unlock()
 			w.syncLock.Lock()
 			tx, err = w.db.BeginReadWriteTx()
 			if err != nil {
-				return err
+				return nil, err
 			}
-			addrMgrNS = tx.ReadWriteBucket(waddrmgrNamespaceKey)
+			newAddrMgrNS := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+			return newAddrMgrNS, nil
 		default:
 		}
-		return nil
+		return addrMgrNS, nil
 	}
 
 	// We'll also retrieve our chain backend client in order to filter the
@@ -730,7 +737,8 @@ func (w *Wallet) recovery(startHeight int32) error {
 
 		recoveryMgr.AddToBlockBatch(hash, height, header.Timestamp)
 
-		if err := maybeHandleInterrupt(); err != nil {
+		addrMgrNS, err = maybeHandleInterrupt()
+		if err != nil {
 			return err
 		}
 
@@ -831,7 +839,7 @@ func (w *Wallet) recoverDefaultScopes(
 	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
 	recoveryState *RecoveryState,
-	handleInterrupt func() error) error {
+	handleInterrupt func() (walletdb.ReadWriteBucket, error)) error {
 
 	scopedMgrs, err := w.defaultScopeManagers()
 	if err != nil {
@@ -860,7 +868,7 @@ func (w *Wallet) recoverScopedAddresses(
 	batch []wtxmgr.BlockMeta,
 	recoveryState *RecoveryState,
 	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager,
-	handleInterrupt func() error) error {
+	handleInterrupt func() (walletdb.ReadWriteBucket, error)) error {
 
 	// If there are no blocks in the batch, we are done.
 	if len(batch) == 0 {
@@ -868,6 +876,8 @@ func (w *Wallet) recoverScopedAddresses(
 	}
 
 	log.Infof("Scanning %d blocks for recoverable addresses", len(batch))
+
+	var err error
 
 expandHorizons:
 	for scope, scopedMgr := range scopedMgrs {
@@ -878,7 +888,8 @@ expandHorizons:
 		}
 	}
 
-	if err := handleInterrupt(); err != nil {
+	ns, err = handleInterrupt()
+	if err != nil {
 		return err
 	}
 

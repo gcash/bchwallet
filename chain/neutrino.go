@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/gcash/bchd/btcjson"
@@ -256,7 +257,7 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 	// the set of outpoints currently being watched.
 	watchListSize := len(req.ExternalAddrs) +
 		len(req.InternalAddrs) +
-		len(req.WatchedOutPoints)
+		(len(req.WatchedOutPoints) * 2)
 
 	watchList := make([][]byte, 0, watchListSize)
 
@@ -278,13 +279,20 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 		watchList = append(watchList, p2shAddr)
 	}
 
-	for _, addr := range req.WatchedOutPoints {
+	for op, addr := range req.WatchedOutPoints {
 		addr, err := txscript.PayToAddrScript(addr)
 		if err != nil {
 			return nil, err
 		}
 
 		watchList = append(watchList, addr)
+
+		var buf bytes.Buffer
+		if err := op.Serialize(&buf); err != nil {
+			return nil, err
+		}
+
+		watchList = append(watchList, buf.Bytes())
 	}
 
 	return watchList, nil
