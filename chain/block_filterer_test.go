@@ -573,6 +573,28 @@ func TestOutOfOrderDependentTransaction(t *testing.T) {
 	assertRelevantTxnsContains(t, blockFilterer, lastTx)
 }
 
+func Test_sortRelevantTxs(t *testing.T) {
+	one := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	two := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{Hash: one.TxHash(), Index: 0}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	three := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{Hash: two.TxHash(), Index: 0}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	four := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{Hash: three.TxHash(), Index: 0}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	five := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{Hash: four.TxHash(), Index: 0}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	six := &wire.MsgTx{TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{Hash: five.TxHash(), Index: 0}}}, TxOut: []*wire.TxOut{{Value: 0}}}
+	correctOrder := []*wire.MsgTx{one, two, three, four, five, six}
+
+	bf := chain.BlockFilterer{
+		RelevantTxns: []*wire.MsgTx{six, four, five, one, three, five, two},
+	}
+
+	bf.FilterBlock(&wire.MsgBlock{})
+
+	for i, tx := range bf.RelevantTxns {
+		if correctOrder[i] != tx {
+			t.Errorf("Tx %d out of order", i)
+		}
+	}
+}
+
 // assertNumRelevantTxns checks that the set of relevant txns found in a block
 // filterer is of a specific size.
 func assertNumRelevantTxns(t *testing.T, bf *chain.BlockFilterer, size int) {
