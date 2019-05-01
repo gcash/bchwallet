@@ -130,6 +130,8 @@ func (bf *BlockFilterer) FilterBlock(block *wire.MsgBlock) bool {
 		}
 		bf.checkFilterTx(tx, inputs)
 	}
+
+	bf.sortRelevantTxs()
 	return len(bf.RelevantTxns) > 0
 }
 
@@ -230,4 +232,64 @@ func (bf *BlockFilterer) foundInternal(scopedIndex waddrmgr.ScopedIndex) {
 		bf.FoundInternal[scopedIndex.Scope] = make(map[uint32]struct{})
 	}
 	bf.FoundInternal[scopedIndex.Scope][scopedIndex.Index] = struct{}{}
+}
+
+// sortRelevantTxs sorts the RelevantTxns slice into topological order.
+// That is, the child transactions come after parents. The wallet requires
+// transactions be processed in topological order.
+func (bf *BlockFilterer) sortRelevantTxs() {
+	bf.RelevantTxns = removeDups(bf.RelevantTxns)
+
+	sorted := make([]*wire.MsgTx, 0, len(bf.RelevantTxns))
+	txids := make(map[chainhash.Hash]struct{})
+	outpoints := make(map[wire.OutPoint]struct{})
+
+	for _, tx := range bf.RelevantTxns {
+		for i := range tx.TxOut {
+			op := wire.OutPoint{
+				Hash:  tx.TxHash(),
+				Index: uint32(i),
+			}
+			outpoints[op] = struct{}{}
+		}
+	}
+
+	for len(sorted) < len(bf.RelevantTxns) {
+		for _, tx := range bf.RelevantTxns {
+			if _, ok := txids[tx.TxHash()]; ok {
+				continue
+			}
+			foundParent := false
+			for _, in := range tx.TxIn {
+				if _, ok := outpoints[in.PreviousOutPoint]; ok {
+					foundParent = true
+					break
+				}
+			}
+			if !foundParent {
+				sorted = append(sorted, tx)
+				for i := range tx.TxOut {
+					op := wire.OutPoint{
+						Hash:  tx.TxHash(),
+						Index: uint32(i),
+					}
+					delete(outpoints, op)
+				}
+				txids[tx.TxHash()] = struct{}{}
+			}
+		}
+	}
+	bf.RelevantTxns = sorted
+}
+
+func removeDups(txs []*wire.MsgTx) []*wire.MsgTx {
+	keys := make(map[*wire.MsgTx]bool)
+	var ret []*wire.MsgTx
+	for _, tx := range txs {
+		if _, ok := keys[tx]; !ok {
+			keys[tx] = true
+			ret = append(ret, tx)
+		}
+	}
+	return ret
 }
