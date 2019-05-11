@@ -17,16 +17,13 @@ require (
 	github.com/gcash/bchutil v0.0.0-20190417142952-050b747bffa0
 	github.com/gcash/neutrino v0.0.0-20190516024247-957e436a48c0
 	github.com/golang/protobuf v1.3.1
-	github.com/gorilla/websocket v1.4.0 // indirect
 	github.com/hpcloud/tail v1.0.0 // indirect
-	github.com/improbable-eng/grpc-web v0.11.0 // indirect
 	github.com/jarcoal/httpmock v1.0.4
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jrick/logrotate v1.0.0
 	github.com/kkdai/bstream v0.0.0-20181106074824-b3251f7901ec // indirect
 	github.com/lightninglabs/gozmq v0.0.0-20180324010646-462a8a753885
 	github.com/miekg/dns v1.1.9
-	github.com/rs/cors v1.6.0 // indirect
 	github.com/tyler-smith/go-bip39 v1.0.0
 	github.com/zquestz/grab v0.0.0-20190224022517-abcee96e61b1 // indirect
 	golang.org/x/crypto v0.0.0-20190513172903-22d7a77e9e5f
