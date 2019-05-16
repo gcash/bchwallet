@@ -1,8 +1,8 @@
 package waddrmgr
 
 import (
+	"errors"
 	"fmt"
-	"github.com/go-errors/errors"
 	"sync"
 
 	"github.com/gcash/bchd/bchec"
