@@ -7,7 +7,6 @@ package wallet
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -122,12 +121,12 @@ func (w *Wallet) handleChainNotifications() {
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.connectBlock(tx, wtxmgr.BlockMeta(n))
 				})
-				notificationName = "blockconnected"
+				notificationName = "block connected"
 			case chain.BlockDisconnected:
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.disconnectBlock(tx, wtxmgr.BlockMeta(n))
 				})
-				notificationName = "blockdisconnected"
+				notificationName = "block disconnected"
 			case chain.RelevantTx:
 				w.syncInterruptChan <- struct{}{}
 				w.syncLock.Lock()
@@ -135,7 +134,7 @@ func (w *Wallet) handleChainNotifications() {
 					return w.addRelevantTx(tx, n.TxRecord, n.Block)
 				})
 				w.syncLock.Unlock()
-				notificationName = "recvtx/redeemingtx"
+				notificationName = "relevant transaction"
 			case chain.FilteredBlockConnected:
 				// Atomically update for the whole block.
 				if len(n.RelevantTxs) > 0 {
@@ -152,13 +151,13 @@ func (w *Wallet) handleChainNotifications() {
 						return nil
 					})
 				}
-				notificationName = "filteredblockconnected"
+				notificationName = "filtered block connected"
 
 			// The following require some database maintenance, but also
 			// need to be reported to the wallet's rescan goroutine.
 			case *chain.RescanProgress:
 				err = catchUpHashes(w, chainClient, n.Height)
-				notificationName = "rescanprogress"
+				notificationName = "rescan progress"
 				select {
 				case w.rescanNotifications <- n:
 				case <-w.quitChan():
@@ -166,7 +165,7 @@ func (w *Wallet) handleChainNotifications() {
 				}
 			case *chain.RescanFinished:
 				err = catchUpHashes(w, chainClient, n.Height)
-				notificationName = "rescanprogress"
+				notificationName = "rescan finished"
 				w.SetChainSynced(true)
 				select {
 				case w.rescanNotifications <- n:
@@ -175,17 +174,24 @@ func (w *Wallet) handleChainNotifications() {
 				}
 			}
 			if err != nil {
-				// On out-of-sync blockconnected notifications, only
-				// send a debug message.
-				errStr := "Failed to process consensus server " +
-					"notification (name: `%s`, detail: `%v`)"
-				if notificationName == "blockconnected" &&
-					strings.Contains(err.Error(),
-						"couldn't get hash from database") {
-					log.Debugf(errStr, notificationName, err)
-				} else {
-					log.Errorf(errStr, notificationName, err)
+				// If we received a block connected notification
+				// while rescanning, then we can ignore logging
+				// the error as we'll properly catch up once we
+				// process the RescanFinished notification.
+				if notificationName == "block connected" &&
+					waddrmgr.IsError(err, waddrmgr.ErrBlockNotFound) &&
+					!w.ChainSynced() {
+
+					log.Debugf("Received block connected "+
+						"notification for height %v "+
+						"while rescanning",
+						n.(chain.BlockConnected).Height)
+					continue
 				}
+
+				log.Errorf("Unable to process chain backend "+
+					"%v notification: %v", notificationName,
+					err)
 			}
 		case <-w.quit:
 			return
