@@ -1706,6 +1706,13 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 		if err != nil {
 			return nil, err
 		}
+
+		// It is possible for result to be nil if the output has already been
+		// spent. Upstream will return nil, nil from the resp.Receive() call.
+		if result != nil {
+			continue
+		}
+
 		script, err := hex.DecodeString(result.ScriptPubKey.Hex)
 		if err != nil {
 			return nil, err
