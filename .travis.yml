@@ -1,21 +1,16 @@
 language: go
 go:
-  - "1.10.1"
-  - "1.11.1"
-  - "tip"
+  - "1.12.7"
 
 sudo: false
 
+env:
+  - GO111MODULE=on
+
 before_install:
-  - >-
-    curl -L -s https://github.com/golang/dep/releases/download/v0.5.0/dep-linux-amd64
-    -o $GOPATH/bin/dep
-  - chmod +x $GOPATH/bin/dep
-  - go get gopkg.in/alecthomas/gometalinter.v2
-  - gometalinter.v2 --install
+  - go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 
 install:
-  - dep ensure
   - go install . ./cmd/...
 
 script:
@@ -23,7 +18,7 @@ script:
   - ./goclean.sh
 
 after_script:
-  - if [ "$TRAVIS_GO_VERSION" = "1.11.1" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/inconshreveable/mousetrap; fi
-  - if [ "$TRAVIS_GO_VERSION" = "1.11.1" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/mitchellh/gox; fi
-  - if [ "$TRAVIS_GO_VERSION" = "1.11.1" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/tcnksm/ghr; fi
-  - if [ "$TRAVIS_GO_VERSION" = "1.11.1" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then make compile; ghr --username gcash --token $GITHUB_TOKEN --replace $TRAVIS_TAG pkg/; fi
+  - if [ "$TRAVIS_GO_VERSION" = "1.12.7" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/inconshreveable/mousetrap; fi
+  - if [ "$TRAVIS_GO_VERSION" = "1.12.7" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/mitchellh/gox; fi
+  - if [ "$TRAVIS_GO_VERSION" = "1.12.7" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then go get github.com/tcnksm/ghr; fi
+  - if [ "$TRAVIS_GO_VERSION" = "1.12.7" ] && [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$TRAVIS_TAG" != "" ]; then make compile; ghr --username gcash --token $GITHUB_TOKEN --replace $TRAVIS_TAG pkg/; fi
