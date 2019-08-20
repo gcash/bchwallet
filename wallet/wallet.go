@@ -10,11 +10,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"golang.org/x/net/proxy"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gcash/bchd/bchec"
@@ -2169,9 +2170,6 @@ func (w *Wallet) ListAddressTransactions(pkHashes map[string]struct{}) ([]btcjso
 
 					jsonResults := listTransactions(tx, detail,
 						w.Manager, syncBlock.Height, w.chainParams)
-					if err != nil {
-						return false, err
-					}
 					txList = append(txList, jsonResults...)
 					continue loopDetails
 				}
@@ -2951,7 +2949,7 @@ func (w *Wallet) SortedActivePaymentAddresses() ([]string, error) {
 		return nil, err
 	}
 
-	sort.Sort(sort.StringSlice(addrStrs))
+	sort.Strings(addrStrs)
 	return addrStrs, nil
 }
 

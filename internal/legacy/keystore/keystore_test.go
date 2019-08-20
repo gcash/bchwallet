@@ -703,7 +703,7 @@ func TestImportPrivateKey(t *testing.T) {
 	}
 
 	// import priv key
-	wif, err := bchutil.NewWIF((*bchec.PrivateKey)(pk), tstNetParams, false)
+	wif, err := bchutil.NewWIF(pk, tstNetParams, false)
 	if err != nil {
 		t.Fatal(err)
 	}

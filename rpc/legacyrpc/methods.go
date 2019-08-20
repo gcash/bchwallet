@@ -1709,7 +1709,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 
 		// It is possible for result to be nil if the output has already been
 		// spent. Upstream will return nil, nil from the resp.Receive() call.
-		if result != nil {
+		if result == nil {
 			return nil, errors.New("output spent")
 		}
 

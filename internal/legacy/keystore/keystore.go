@@ -234,9 +234,6 @@ func chainedPubKey(pubkey, chaincode []byte) ([]byte, error) {
 		return nil, err
 	}
 	newX, newY := bchec.S256().ScalarMult(oldPk.X, oldPk.Y, xorbytes)
-	if err != nil {
-		return nil, err
-	}
 	newPk := &bchec.PublicKey{
 		Curve: bchec.S256(),
 		X:     newX,

@@ -232,7 +232,7 @@ func (p *Pool) saveSeriesToDisk(ns walletdb.ReadWriteBucket, seriesID uint32, da
 func CanonicalKeyOrder(keys []string) []string {
 	orderedKeys := make([]string, len(keys))
 	copy(orderedKeys, keys)
-	sort.Sort(sort.StringSlice(orderedKeys))
+	sort.Strings(orderedKeys)
 	return orderedKeys
 }
 
