@@ -53,12 +53,12 @@ func TestGetEligibleInputs(t *testing.T) {
 
 	startAddr := TstNewWithdrawalAddress(t, dbtx, pool, 1, 0, 0)
 	lastSeriesID := uint32(2)
-	currentBlock := int32(TstInputsBlock + eligibleInputMinConfirmations + 1)
+	currentBlock := TstInputsBlock + eligibleInputMinConfirmations + 1
 	var eligibles []Credit
 	txmgrNs := dbtx.ReadBucket(txmgrNamespaceKey)
 	TstRunWithManagerUnlocked(t, pool.Manager(), addrmgrNs, func() {
 		eligibles, err = pool.getEligibleInputs(ns, addrmgrNs,
-			store, txmgrNs, *startAddr, lastSeriesID, dustThreshold, int32(currentBlock),
+			store, txmgrNs, *startAddr, lastSeriesID, dustThreshold, currentBlock,
 			eligibleInputMinConfirmations)
 	})
 	if err != nil {

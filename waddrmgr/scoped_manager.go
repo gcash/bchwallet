@@ -1413,10 +1413,8 @@ func (s *ScopedKeyManager) RenameAccount(ns walletdb.ReadWriteBucket,
 
 	// Update in-memory account info with new name if cached and the db
 	// write was successful.
-	if err == nil {
-		if acctInfo, ok := s.acctInfo[account]; ok {
-			acctInfo.acctName = name
-		}
+	if acctInfo, ok := s.acctInfo[account]; ok {
+		acctInfo.acctName = name
 	}
 
 	return err

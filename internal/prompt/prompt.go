@@ -312,7 +312,7 @@ func Seed(reader *bufio.Reader) ([]byte, bool, error) {
 			return nil, false, err
 		}
 		seed := bip39.NewSeed(strings.TrimSpace(mnemonic), "")
-		if err != nil || len(seed) < hdkeychain.MinSeedBytes ||
+		if len(seed) < hdkeychain.MinSeedBytes ||
 			len(seed) > hdkeychain.MaxSeedBytes {
 
 			fmt.Printf("Invalid seed specified.  Must be a "+

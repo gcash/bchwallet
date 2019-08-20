@@ -46,7 +46,7 @@ func TestStartWithdrawal(t *testing.T) {
 	startAddr := vp.TstNewWithdrawalAddress(t, dbtx, pool, def.SeriesID, 0, 0)
 	lastSeriesID := def.SeriesID
 	dustThreshold := bchutil.Amount(1e4)
-	currentBlock := int32(vp.TstInputsBlock + vp.TstEligibleInputMinConfirmations + 1)
+	currentBlock := vp.TstInputsBlock + vp.TstEligibleInputMinConfirmations + 1
 	var status *vp.WithdrawalStatus
 	vp.TstRunWithManagerUnlocked(t, mgr, addrmgrNs, func() {
 		status, err = pool.StartWithdrawal(ns, addrmgrNs, 0, requests, *startAddr, lastSeriesID, *changeStart,
