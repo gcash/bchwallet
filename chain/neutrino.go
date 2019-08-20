@@ -334,7 +334,7 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 	s.clientMtx.Lock()
 
 	s.CS.NotifyMempoolReceived(addrs)
-	
+
 	if !s.started {
 		s.clientMtx.Unlock()
 		return fmt.Errorf("can't do a rescan when the chain client " +
