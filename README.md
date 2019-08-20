@@ -74,18 +74,10 @@ https://github.com/gcash/bchwallet/releases
 
 Building or updating from source requires the following build dependencies:
 
-- **Go 1.10.1 and greater**
+- **Go 1.11.1 and greater**
 
   Installation instructions can be found here: http://golang.org/doc/install.
   It is recommended to add `$GOPATH/bin` to your `PATH` at this point.
-
-
-- **Dep**
-
-  Dep is used to manage project dependencies.
-  To install:
-
-  `$ curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh`
 
 **Getting the source**:
 
