@@ -36,6 +36,16 @@ github.com/gcash/bchutil v0.0.0-20190820203440-293bde359bbb/go.mod h1:nUIrcbbtEQ
 github.com/gcash/bchwallet v0.8.1/go.mod h1:dY8/NgSEv2poJeKVi9F9RfGyp50TjJWCjdJpbPjU2c0=
 github.com/gcash/neutrino v0.0.0-20190821045613-a359f4ab68d7 h1:0TEFjxh/uhak+no3lmTrOUZvAXjyFgQUZCCJvTbBNHw=
 github.com/gcash/neutrino v0.0.0-20190821045613-a359f4ab68d7/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
+github.com/gcash/neutrino v0.0.0-20190821064051-baee5f8251ff h1:ichPqtSo64UG7CxM6xWMX/v0zkY2e7ke/PbTgzIzq+o=
+github.com/gcash/neutrino v0.0.0-20190821064051-baee5f8251ff/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
+github.com/gcash/neutrino v0.0.0-20190821064618-9c9712b627d2 h1:5oZIeJOgntJzN86oG/Qt8YAeR8V+rYhrZOIOnMUzaUI=
+github.com/gcash/neutrino v0.0.0-20190821064618-9c9712b627d2/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
+github.com/gcash/neutrino v0.0.0-20190821064752-3351dc6e5042 h1:yHZrPuyvHQvboJwfP0U0wT0xg7J1Y35amNzy8m2/TkA=
+github.com/gcash/neutrino v0.0.0-20190821064752-3351dc6e5042/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
+github.com/gcash/neutrino v0.0.0-20190821065453-4238e1a4ecd9 h1:BSJNBMwAIdkW0o5w75UnPdtdwQU3DZwIfTRn2Wub0AA=
+github.com/gcash/neutrino v0.0.0-20190821065453-4238e1a4ecd9/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
+github.com/gcash/neutrino v0.0.0-20190821132839-d5b466ee4e8d h1:25iCFkNGBtODU35RERATnPbEMPJekSIhZJUsWx1k2b0=
+github.com/gcash/neutrino v0.0.0-20190821132839-d5b466ee4e8d/go.mod h1:NVc/9GZvhgBKFCW1PX7H93okLkYTATgONjWR54jmpF4=
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b h1:VKtxabqXZkF25pY9ekfRL6a582T4P37/31XEstQ5p58=
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b/go.mod h1:SBH7ygxi8pfUlaOkMMuAQtPIUF8ecWP5IEl/CR7VP2Q=
 github.com/golang/mock v1.1.1/go.mod h1:oTYuIxOrZwtPieC+H1uAHpcLFnEyAGVDL/k47Jfbm0A=
