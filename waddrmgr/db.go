@@ -23,13 +23,6 @@ const (
 	MaxReorgDepth = 10000
 )
 
-const (
-	// MaxReorgDepth represents the maximum number of block hashes we'll
-	// keep within the wallet at any given point in order to recover from
-	// long reorgs.
-	MaxReorgDepth = 10000
-)
-
 var (
 	// LatestMgrVersion is the most recent manager version.
 	LatestMgrVersion = getLatestVersion()
