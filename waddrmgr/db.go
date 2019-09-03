@@ -16,6 +16,13 @@ import (
 	"github.com/gcash/bchwallet/walletdb"
 )
 
+const (
+	// MaxReorgDepth represents the maximum number of block hashes we'll
+	// keep within the wallet at any given point in order to recover from
+	// long reorgs.
+	MaxReorgDepth = 10000
+)
+
 var (
 	// LatestMgrVersion is the most recent manager version.
 	LatestMgrVersion = getLatestVersion()
@@ -1828,40 +1835,45 @@ func fetchSyncedTo(ns walletdb.ReadBucket) (*BlockStamp, error) {
 
 // PutSyncedTo stores the provided synced to blockstamp to the database.
 func PutSyncedTo(ns walletdb.ReadWriteBucket, bs *BlockStamp) error {
-	bucket := ns.NestedReadWriteBucket(syncBucketName)
 	errStr := fmt.Sprintf("failed to store sync information %v", bs.Hash)
 
 	// If the block height is greater than zero, check that the previous
-	// block height exists. This prevents reorg issues in the future.
-	// We use BigEndian so that keys/values are added to the bucket in
-	// order, making writes more efficient for some database backends.
+	// block height exists.	This prevents reorg issues in the future. We use
+	// BigEndian so that keys/values are added to the bucket in order,
+	// making writes more efficient for some database backends.
 	if bs.Height > 0 {
-		if _, err := fetchBlockHash(ns, bs.Height-1); err != nil {
-			return managerError(ErrDatabase, errStr, err)
+		// We'll only check the previous block height exists if we've
+		// determined our birthday block. This is needed as we'll no
+		// longer store _all_ block hashes of the chain, so we only
+		// expect the previous block to exist once our initial sync has
+		// completed, which is dictated by our birthday block being set.
+		if _, err := FetchBirthdayBlock(ns); err == nil {
+			_, err := fetchBlockHash(ns, bs.Height-1)
+			if err != nil {
+				return managerError(ErrBlockNotFound, errStr, err)
+			}
 		}
 	}
 
 	// Store the block hash by block height.
-	height := make([]byte, 4)
-	binary.BigEndian.PutUint32(height, uint32(bs.Height))
-	err := bucket.Put(height, bs.Hash[0:32])
-	if err != nil {
+	if err := addBlockHash(ns, bs.Height, bs.Hash); err != nil {
 		return managerError(ErrDatabase, errStr, err)
 	}
 
-	// The serialized synced to format is:
-	//   <blockheight><blockhash><timestamp>
-	//
-	// 4 bytes block height + 32 bytes hash length + 4 byte timestamp length
-	buf := make([]byte, 40)
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(bs.Height))
-	copy(buf[4:36], bs.Hash[0:32])
-	binary.LittleEndian.PutUint32(buf[36:], uint32(bs.Timestamp.Unix()))
+	// Remove the stale height if any, as we should only store MaxReorgDepth
+	// block hashes at any given point.
+	staleHeight := staleHeight(bs.Height)
+	if staleHeight > 0 {
+		if err := deleteBlockHash(ns, staleHeight); err != nil {
+			return managerError(ErrDatabase, errStr, err)
+		}
+	}
 
-	err = bucket.Put(syncedToName, buf)
-	if err != nil {
+	// Finally, we can update the syncedTo value.
+	if err := updateSyncedTo(ns, bs); err != nil {
 		return managerError(ErrDatabase, errStr, err)
 	}
+
 	return nil
 }
 
@@ -1887,6 +1899,62 @@ func fetchBlockHash(ns walletdb.ReadBucket, height int32) (*chainhash.Hash, erro
 		return nil, managerError(ErrDatabase, errStr, err)
 	}
 	return &hash, nil
+}
+
+// addBlockHash adds a block hash entry to the index within the syncBucket.
+func addBlockHash(ns walletdb.ReadWriteBucket, height int32, hash chainhash.Hash) error {
+	var rawHeight [4]byte
+	binary.BigEndian.PutUint32(rawHeight[:], uint32(height))
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	if err := bucket.Put(rawHeight[:], hash[:]); err != nil {
+		errStr := fmt.Sprintf("failed to add hash %v", hash)
+		return managerError(ErrDatabase, errStr, err)
+	}
+	return nil
+}
+
+// deleteBlockHash deletes the block hash entry within the syncBucket for the
+// given height.
+func deleteBlockHash(ns walletdb.ReadWriteBucket, height int32) error {
+	var rawHeight [4]byte
+	binary.BigEndian.PutUint32(rawHeight[:], uint32(height))
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	if err := bucket.Delete(rawHeight[:]); err != nil {
+		errStr := fmt.Sprintf("failed to delete hash for height %v",
+			height)
+		return managerError(ErrDatabase, errStr, err)
+	}
+	return nil
+}
+
+// updateSyncedTo updates the value behind the syncedToName key to the given
+// block.
+func updateSyncedTo(ns walletdb.ReadWriteBucket, bs *BlockStamp) error {
+	// The serialized synced to format is:
+	//   <blockheight><blockhash><timestamp>
+	//
+	// 4 bytes block height + 32 bytes hash length + 4 byte timestamp length
+	var serializedStamp [40]byte
+	binary.LittleEndian.PutUint32(serializedStamp[0:4], uint32(bs.Height))
+	copy(serializedStamp[4:36], bs.Hash[0:32])
+	binary.LittleEndian.PutUint32(
+		serializedStamp[36:], uint32(bs.Timestamp.Unix()),
+	)
+
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	if err := bucket.Put(syncedToName, serializedStamp[:]); err != nil {
+		errStr := "failed to update synced to value"
+		return managerError(ErrDatabase, errStr, err)
+	}
+
+	return nil
+}
+
+// staleHeight returns the stale height for the given height. The stale height
+// indicates the height we should remove in order to maintain a maximum of
+// MaxReorgDepth block hashes.
+func staleHeight(height int32) int32 {
+	return height - MaxReorgDepth
 }
 
 // FetchStartBlock loads the start block stamp for the manager from the
@@ -1988,13 +2056,27 @@ func FetchBirthdayBlock(ns walletdb.ReadBucket) (BlockStamp, error) {
 	return block, nil
 }
 
-// putBirthdayBlock stores the provided birthday block to the database.
+// DeleteBirthdayBlock removes the birthday block from the database.
+//
+// NOTE: This does not alter the birthday block verification state.
+func DeleteBirthdayBlock(ns walletdb.ReadWriteBucket) error {
+	bucket := ns.NestedReadWriteBucket(syncBucketName)
+	if err := bucket.Delete(birthdayBlockName); err != nil {
+		str := "failed to remove birthday block"
+		return managerError(ErrDatabase, str, err)
+	}
+	return nil
+}
+
+// PutBirthdayBlock stores the provided birthday block to the database.
 //
 // The block is serialized as follows:
 //   [0:4]   block height
 //   [4:36]  block hash
 //   [36:44] block timestamp
-func putBirthdayBlock(ns walletdb.ReadWriteBucket, block BlockStamp) error {
+//
+// NOTE: This does not alter the birthday block verification state.
+func PutBirthdayBlock(ns walletdb.ReadWriteBucket, block BlockStamp) error {
 	var birthdayBlock [44]byte
 	binary.BigEndian.PutUint32(birthdayBlock[:4], uint32(block.Height))
 	copy(birthdayBlock[4:36], block.Hash[:])
