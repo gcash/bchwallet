@@ -103,6 +103,7 @@ message NetworkResponse {
 	uint32 active_network = 1;
 	string best_block = 2;
 	int32 best_height = 3;
+	int32 synced_to = 4;
 }
 
 message AccountNumberRequest {
