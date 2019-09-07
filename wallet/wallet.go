@@ -54,7 +54,7 @@ const (
 	// recoveryBatchSize is the default number of blocks that will be
 	// scanned successively by the recovery manager, in the event that the
 	// wallet is started in recovery mode.
-	recoveryBatchSize = 2000
+	recoveryBatchSize = 10
 )
 
 var (
@@ -735,7 +735,7 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		// Also note that if there is a recovery interrupt we will need
 		// to restart the recovery from the next block.
 		recoveryBatch := recoveryMgr.BlockBatch()
-		var syncedToHeight int32
+		var syncedToBlock *waddrmgr.BlockStamp
 		if len(recoveryBatch) == recoveryBatchSize || height == bestHeight {
 			err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 				ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
@@ -747,13 +747,15 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 				if err != nil {
 					return err
 				}
-				syncedToHeight = syncedTo
 				for _, block := range blocks {
 					if block.Height <= syncedTo {
 						err := w.Manager.SetSyncedTo(ns, block)
 						if err != nil {
 							return err
 						}
+					}
+					if block.Height == syncedTo {
+						syncedToBlock = block
 					}
 				}
 				return nil
@@ -765,13 +767,19 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 			if len(recoveryBatch) > 0 {
 				log.Infof("Recovered addresses from blocks "+
 					"%d-%d", recoveryBatch[0].Height,
-					syncedToHeight)
+					syncedToBlock.Height)
+
+				w.rescanNotifications <- &chain.RecoveryProgress{
+					Hash:   &syncedToBlock.Hash,
+					Height: syncedToBlock.Height,
+					Time:   syncedToBlock.Timestamp,
+				}
 			}
 
 			// If the recovery terminated early then reset the height
 			// back to where we synced to so we can restart from there.
-			if blocks[len(blocks)-1].Height != syncedToHeight {
-				height = syncedToHeight
+			if blocks[len(blocks)-1].Height != syncedToBlock.Height {
+				height = syncedToBlock.Height
 			}
 
 			blocks = blocks[:0]
@@ -885,15 +893,6 @@ expandHorizons:
 	// Otherwise, retrieve the block info for the block that detected a
 	// non-zero number of address matches.
 	block := batch[filterResp.BatchIndex]
-
-	// Report on recovery every 10 blocks.
-	if block.Height%10 == 0 {
-		w.rescanNotifications <- &chain.RecoveryProgress{
-			Hash:   &block.Hash,
-			Height: block.Height,
-			Time:   block.Time,
-		}
-	}
 
 	// Log any non-trivial findings of addresses or outpoints.
 	logFilterBlocksResp(block, filterResp)
