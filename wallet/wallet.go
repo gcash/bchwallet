@@ -127,8 +127,9 @@ type Wallet struct {
 	quit    chan struct{}
 	quitMu  sync.Mutex
 
-	syncInterruptChan chan struct{}
-	syncLock          sync.Mutex
+	recoveryInterruptChan chan struct{}
+	filterInterruptChans  []chan struct{}
+	recoveryLock          sync.Mutex
 
 	proxyDialer proxy.Dialer
 }
@@ -154,6 +155,25 @@ func (w *Wallet) Start() {
 	w.wg.Add(2)
 	go w.txCreator()
 	go w.walletLocker()
+	go w.recoveryInterruptHandler()
+}
+
+// recoveryInterruptHandler handles the recovery interrupt and closes
+// any outstanding channels to interrupt the recovery.
+func (w *Wallet) recoveryInterruptHandler() {
+	for {
+		select {
+		case <-w.quit:
+			return
+		case <-w.recoveryInterruptChan:
+			w.recoveryLock.Lock()
+			for _, c := range w.filterInterruptChans {
+				close(c)
+			}
+			w.filterInterruptChans = []chan struct{}{}
+			w.recoveryLock.Unlock()
+		}
+	}
 }
 
 // SynchronizeRPC associates the wallet with the consensus RPC client,
@@ -708,20 +728,32 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		// possible for us to reach our best height without exceeding
 		// the recovery batch size, so we can proceed to commit our
 		// state to disk.
+		//
+		// Also note that if there is a recovery interrupt we will need
+		// to restart the recovery from the next block.
 		recoveryBatch := recoveryMgr.BlockBatch()
+		var syncedToHeight int32
 		if len(recoveryBatch) == recoveryBatchSize || height == bestHeight {
 			err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 				ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-				for _, block := range blocks {
-					err := w.Manager.SetSyncedTo(ns, block)
-					if err != nil {
-						return err
-					}
-				}
-				return w.recoverDefaultScopes(
+
+				syncedTo, err := w.recoverDefaultScopes(
 					chainClient, tx, ns, recoveryBatch,
 					recoveryMgr.State(),
 				)
+				if err != nil {
+					return err
+				}
+				syncedToHeight = syncedTo
+				for _, block := range blocks {
+					if block.Height <= syncedTo {
+						err := w.Manager.SetSyncedTo(ns, block)
+						if err != nil {
+							return err
+						}
+					}
+				}
+				return nil
 			})
 			if err != nil {
 				return err
@@ -730,11 +762,15 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 			if len(recoveryBatch) > 0 {
 				log.Infof("Recovered addresses from blocks "+
 					"%d-%d", recoveryBatch[0].Height,
-					recoveryBatch[len(recoveryBatch)-1].Height)
+					syncedToHeight)
 			}
 
-			// Clear the batch of all processed blocks to reuse the
-			// same memory for future batches.
+			// If the recovery terminated early then reset the height
+			// back to where we synced to so we can restart from there.
+			if blocks[len(blocks)-1].Height != syncedToHeight {
+				height = syncedToHeight
+			}
+
 			blocks = blocks[:0]
 			recoveryMgr.ResetBlockBatch()
 		}
@@ -769,11 +805,11 @@ func (w *Wallet) recoverDefaultScopes(
 	tx walletdb.ReadWriteTx,
 	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
-	recoveryState *RecoveryState) error {
+	recoveryState *RecoveryState) (int32, error) {
 
 	scopedMgrs, err := w.defaultScopeManagers()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	return w.recoverScopedAddresses(
@@ -797,11 +833,11 @@ func (w *Wallet) recoverScopedAddresses(
 	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
 	recoveryState *RecoveryState,
-	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager) error {
+	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager) (int32, error) {
 
 	// If there are no blocks in the batch, we are done.
 	if len(batch) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	log.Infof("Scanning %d blocks for recoverable addresses", len(batch))
@@ -813,7 +849,7 @@ expandHorizons:
 		scopeState := recoveryState.StateForScope(scope)
 		err := expandScopeHorizons(ns, scopedMgr, scopeState)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -822,12 +858,17 @@ expandHorizons:
 	// of blocks we intend to scan, in addition to the scope-index -> addr
 	// map for all internal and external branches.
 	filterReq := newFilterBlocksRequest(batch, scopedMgrs, recoveryState)
+	w.addRecoveryInterruptChan(filterReq.Interrupt)
 
 	// Initiate the filter blocks request using our chain backend. If an
 	// error occurs, we are unable to proceed with the recovery.
 	filterResp, err := chainClient.FilterBlocks(filterReq)
-	if err != nil {
-		return err
+	w.removeRecoveryInterruptChan(filterReq.Interrupt)
+
+	if err == chain.ErrFilterReqInterrupt {
+		return int32(filterResp.BatchIndex), nil
+	} else if err != nil {
+		return 0, err
 	}
 
 	// If the filter response is empty, this signals that the rest of the
@@ -835,7 +876,7 @@ expandHorizons:
 	// result, no further modifications to our recovery state are required
 	// and we can proceed to the next batch.
 	if filterResp == nil {
-		return nil
+		return batch[len(batch)-1].Height, nil
 	}
 
 	// Otherwise, retrieve the block info for the block that detected a
@@ -852,7 +893,7 @@ expandHorizons:
 	// using the scoped key manager.
 	err = extendFoundAddresses(ns, filterResp, scopedMgrs, recoveryState)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Update the global set of watched outpoints with any that were found
@@ -869,12 +910,12 @@ expandHorizons:
 			txn, filterResp.BlockMeta.Time,
 		)
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		err = w.addRelevantTx(tx, txRecord, &filterResp.BlockMeta)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -888,7 +929,27 @@ expandHorizons:
 		goto expandHorizons
 	}
 
-	return nil
+	return block.Height, nil
+}
+
+// addRecoveryInterruptChan stores a chan in memory that will be closed
+// if the interrupt chan is called.
+func (w *Wallet) addRecoveryInterruptChan(c chan struct{}) {
+	w.recoveryLock.Lock()
+	w.filterInterruptChans = append(w.filterInterruptChans, c)
+	w.recoveryLock.Unlock()
+}
+
+// removeRecoveryInterruptChan removes an interrupt chan from memory.
+func (w *Wallet) removeRecoveryInterruptChan(c chan struct{}) {
+	w.recoveryLock.Lock()
+	for i, ch := range w.filterInterruptChans {
+		if ch == c {
+			w.filterInterruptChans = append(w.filterInterruptChans[:i], w.filterInterruptChans[i+1:]...)
+			break
+		}
+	}
+	w.recoveryLock.Unlock()
 }
 
 // expandScopeHorizons ensures that the ScopeRecoveryState has an adequately
@@ -993,6 +1054,7 @@ func newFilterBlocksRequest(batch []wtxmgr.BlockMeta,
 		ExternalAddrs:    make(map[waddrmgr.ScopedIndex]bchutil.Address),
 		InternalAddrs:    make(map[waddrmgr.ScopedIndex]bchutil.Address),
 		WatchedOutPoints: recoveryState.WatchedOutPoints(),
+		Interrupt:        make(chan struct{}),
 	}
 
 	// Populate the external and internal addresses by merging the addresses
@@ -3336,9 +3398,7 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	if err != nil {
 		return nil, err
 	}
-	w.syncInterruptChan <- struct{}{}
-	w.syncLock.Lock()
-	defer w.syncLock.Unlock()
+	w.recoveryInterruptChan <- struct{}{}
 	err = walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 		return w.addRelevantTx(dbTx, txRec, nil)
 	})
@@ -3610,27 +3670,27 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 	log.Infof("Opened wallet") // TODO: log balance? last sync height?
 
 	w := &Wallet{
-		publicPassphrase:    pubPass,
-		db:                  db,
-		Manager:             addrMgr,
-		TxStore:             txMgr,
-		lockedOutpoints:     map[wire.OutPoint]struct{}{},
-		recoveryWindow:      recoveryWindow,
-		rescanAddJob:        make(chan *RescanJob),
-		rescanBatch:         make(chan *rescanBatch),
-		rescanNotifications: make(chan interface{}),
-		rescanProgress:      make(chan *RescanProgressMsg),
-		rescanFinished:      make(chan *RescanFinishedMsg),
-		createTxRequests:    make(chan createTxRequest),
-		unlockRequests:      make(chan unlockRequest),
-		lockRequests:        make(chan struct{}),
-		holdUnlockRequests:  make(chan chan heldUnlock),
-		lockState:           make(chan bool),
-		changePassphrase:    make(chan changePassphraseRequest),
-		changePassphrases:   make(chan changePassphrasesRequest),
-		chainParams:         params,
-		quit:                make(chan struct{}),
-		syncInterruptChan:   make(chan struct{}, 10000),
+		publicPassphrase:      pubPass,
+		db:                    db,
+		Manager:               addrMgr,
+		TxStore:               txMgr,
+		lockedOutpoints:       map[wire.OutPoint]struct{}{},
+		recoveryWindow:        recoveryWindow,
+		rescanAddJob:          make(chan *RescanJob),
+		rescanBatch:           make(chan *rescanBatch),
+		rescanNotifications:   make(chan interface{}),
+		rescanProgress:        make(chan *RescanProgressMsg),
+		rescanFinished:        make(chan *RescanFinishedMsg),
+		createTxRequests:      make(chan createTxRequest),
+		unlockRequests:        make(chan unlockRequest),
+		lockRequests:          make(chan struct{}),
+		holdUnlockRequests:    make(chan chan heldUnlock),
+		lockState:             make(chan bool),
+		changePassphrase:      make(chan changePassphraseRequest),
+		changePassphrases:     make(chan changePassphrasesRequest),
+		chainParams:           params,
+		quit:                  make(chan struct{}),
+		recoveryInterruptChan: make(chan struct{}),
 	}
 
 	w.NtfnServer = newNotificationServer(w)

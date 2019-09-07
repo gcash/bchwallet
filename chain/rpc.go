@@ -219,6 +219,13 @@ func (c *RPCClient) FilterBlocks(
 	// the filter returns a positive match, the full block is then requested
 	// and scanned for addresses using the block filterer.
 	for i, blk := range req.Blocks {
+		select {
+		case <-req.Interrupt:
+			return &FilterBlocksResponse{
+				BatchIndex: uint32(i - 1),
+			}, ErrFilterReqInterrupt
+		default:
+		}
 		rawFilter, err := c.GetCFilter(&blk.Hash, wire.GCSFilterRegular)
 		if err != nil {
 			return nil, err

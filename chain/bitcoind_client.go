@@ -923,6 +923,13 @@ func (c *BitcoindClient) FilterBlocks(
 	// Each block will scanned using the reverse addresses indexes generated
 	// above, breaking out early if any addresses are found.
 	for i, block := range req.Blocks {
+		select {
+		case <-req.Interrupt:
+			return &FilterBlocksResponse{
+				BatchIndex: uint32(i - 1),
+			}, ErrFilterReqInterrupt
+		default:
+		}
 		// TODO(conner): add prefetching, since we already know we'll be
 		// fetching *every* block
 		rawBlock, err := c.GetBlock(&block.Hash)

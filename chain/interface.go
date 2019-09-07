@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"errors"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -24,6 +25,10 @@ func BackEnds() []string {
 		"neutrino",
 	}
 }
+
+// ErrFilterReqInterrupt represents an error that is returned when the
+// FilterBlocks method is interrupted.
+var ErrFilterReqInterrupt = errors.New("filter blocks interrupt")
 
 // Interface allows more than one backing blockchain source, such as a
 // bchd RPC chain server, or an SPV library, as long as we write a driver for
@@ -77,6 +82,7 @@ type (
 		ExternalAddrs    map[waddrmgr.ScopedIndex]bchutil.Address
 		InternalAddrs    map[waddrmgr.ScopedIndex]bchutil.Address
 		WatchedOutPoints map[wire.OutPoint]bchutil.Address
+		Interrupt        chan struct{}
 	}
 
 	// FilterBlocksResponse reports the set of all internal and external
