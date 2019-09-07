@@ -102,6 +102,9 @@ type Wallet struct {
 	rescanProgress      chan *RescanProgressMsg
 	rescanFinished      chan *RescanFinishedMsg
 
+	// Channel used for recovery messages
+	recoveryProgess chan *RecoveryProgessMsg
+
 	// Channel for transaction creation requests.
 	createTxRequests chan createTxRequest
 
@@ -882,6 +885,15 @@ expandHorizons:
 	// Otherwise, retrieve the block info for the block that detected a
 	// non-zero number of address matches.
 	block := batch[filterResp.BatchIndex]
+
+	// Report on recovery every 10 blocks.
+	if block.Height%10 == 0 {
+		w.rescanNotifications <- &chain.RecoveryProgress{
+			Hash:   &block.Hash,
+			Height: block.Height,
+			Time:   block.Time,
+		}
+	}
 
 	// Log any non-trivial findings of addresses or outpoints.
 	logFilterBlocksResp(block, filterResp)
@@ -3681,6 +3693,7 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 		rescanNotifications:   make(chan interface{}),
 		rescanProgress:        make(chan *RescanProgressMsg),
 		rescanFinished:        make(chan *RescanFinishedMsg),
+		recoveryProgess:       make(chan *RecoveryProgessMsg),
 		createTxRequests:      make(chan createTxRequest),
 		unlockRequests:        make(chan unlockRequest),
 		lockRequests:          make(chan struct{}),

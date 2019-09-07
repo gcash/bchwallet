@@ -28,6 +28,11 @@ type RescanFinishedMsg struct {
 	Notification *chain.RescanFinished
 }
 
+// RecoveryProgessMsg reports the current progress made by a recovery.
+type RecoveryProgessMsg struct {
+	Notification *chain.RecoveryProgress
+}
+
 // RescanJob is a job to be processed by the RescanManager.  The job includes
 // a set of wallet addresses, a starting height to begin the rescan, and
 // outpoints spendable by the addresses thought to be unspent.  After the
@@ -232,6 +237,14 @@ func (w *Wallet) rescanBatchHandler() {
 						return
 					}
 				}
+			case *chain.RecoveryProgress:
+				select {
+				case w.recoveryProgess <- &RecoveryProgessMsg{
+					Notification: n,
+				}:
+				case <-quit:
+					return
+				}
 
 			default:
 				// Unexpected message
@@ -270,6 +283,12 @@ out:
 
 			w.NtfnServer.notifyRescan(n.Hash, n.Height, true)
 			go w.resendUnminedTxs()
+
+		case msg := <-w.recoveryProgess:
+			n := msg.Notification
+			log.Infof("Recovery through block %v (height %d)",
+				n.Hash, n.Height)
+			w.NtfnServer.notifyRescan(n.Hash, n.Height, false)
 
 		case <-quit:
 			break out

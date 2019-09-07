@@ -127,4 +127,12 @@ type (
 		Height int32
 		Time   time.Time
 	}
+
+	// RecoveryProgress is a notification describing the current status
+	// of an in-progress recovery.
+	RecoveryProgress struct {
+		Hash   *chainhash.Hash
+		Height int32
+		Time   time.Time
+	}
 )
