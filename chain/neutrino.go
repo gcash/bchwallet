@@ -201,6 +201,13 @@ func (s *NeutrinoClient) FilterBlocks(
 	// the filter returns a positive match, the full block is then requested
 	// and scanned for addresses using the block filterer.
 	for i, blk := range req.Blocks {
+		select {
+		case <-req.Interrupt:
+			return &FilterBlocksResponse{
+				BatchIndex: uint32(i - 1),
+			}, ErrFilterReqInterrupt
+		default:
+		}
 		filter, err := s.pollCFilter(&blk.Hash)
 		if err != nil {
 			return nil, err
@@ -418,6 +425,7 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 			ChainService: s.CS,
 		},
 		neutrino.NotificationHandlers(rpcclient.NotificationHandlers{
+			OnClientConnected:        nil,
 			OnBlockConnected:         s.onBlockConnected,
 			OnFilteredBlockConnected: s.onFilteredBlockConnected,
 			OnBlockDisconnected:      s.onBlockDisconnected,
@@ -584,8 +592,8 @@ func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
 	// before the birthday. Otherwise, we can just update using
 	// RescanProgress notifications.
 	if time.Before(s.startTime) {
-		// Send a RescanProgress notification every 10K blocks.
-		if height%10000 == 0 {
+		// Send a RescanProgress notification every 1K blocks.
+		if height%1000 == 0 {
 			s.clientMtx.Lock()
 			shouldSend := s.isRescan && !s.finished
 			s.clientMtx.Unlock()

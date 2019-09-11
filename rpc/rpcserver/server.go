@@ -203,7 +203,12 @@ func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 		return nil, err
 	}
 
-	return &pb.NetworkResponse{ActiveNetwork: uint32(s.wallet.ChainParams().Net), BestBlock: bestHash.String(), BestHeight: bestHeight}, nil
+	return &pb.NetworkResponse{
+		ActiveNetwork: uint32(s.wallet.ChainParams().Net),
+		BestBlock:     bestHash.String(),
+		BestHeight:    bestHeight,
+		SyncedTo:      s.wallet.Manager.SyncedTo().Height,
+	}, nil
 }
 
 func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberRequest) (
