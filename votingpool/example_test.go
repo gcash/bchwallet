@@ -256,7 +256,7 @@ func createWalletDB() (walletdb.DB, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := walletdb.Create("bdb", filepath.Join(dir, "wallet.db"))
+	db, err := walletdb.Create("bdb", filepath.Join(dir, "wallet.db"), true)
 	if err != nil {
 		return nil, nil, err
 	}

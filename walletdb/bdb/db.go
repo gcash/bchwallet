@@ -339,11 +339,18 @@ func fileExists(name string) bool {
 
 // openDB opens the database at the provided path.  walletdb.ErrDbDoesNotExist
 // is returned if the database doesn't exist and the create flag is not set.
-func openDB(dbPath string, create bool) (walletdb.DB, error) {
+func openDB(dbPath string, noFreelistSync bool, create bool) (walletdb.DB, error) {
 	if !create && !fileExists(dbPath) {
 		return nil, walletdb.ErrDbDoesNotExist
 	}
 
-	boltDB, err := bbolt.Open(dbPath, 0600, nil)
+	// Specify bbolt freelist options to reduce heap pressure in case the
+	// freelist grows to be very large.
+	options := &bbolt.Options{
+		NoFreelistSync: noFreelistSync,
+		FreelistType:   bbolt.FreelistMapType,
+	}
+
+	boltDB, err := bbolt.Open(dbPath, 0600, options)
 	return (*db)(boltDB), convertErr(err)
 }
