@@ -151,6 +151,9 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	opts := x509.VerifyOptions{
 		Roots: roots,
 	}
+	if c.skipExpirationChecks {
+		opts.CurrentTime = certs[0].NotAfter.Add(-time.Minute)
+	}
 	if _, err := certs[0].Verify(opts); err != nil {
 		return nil, err
 	}
