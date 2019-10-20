@@ -9,8 +9,8 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/gcash/bchd v0.14.8-0.20190821045443-25c2c6011866
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
-	github.com/gcash/bchutil v0.0.0-20190820203440-293bde359bbb
-	github.com/gcash/neutrino v0.0.0-20190903231446-c553a51e39da
+	github.com/gcash/bchutil v0.0.0-20191012211144-98e73ec336ba
+	github.com/gcash/neutrino v0.0.0-20191020024352-2cd26ee76bff
 	github.com/golang/protobuf v1.3.2
 	github.com/jarcoal/httpmock v1.0.4
 	github.com/jessevdk/go-flags v1.4.0
