@@ -1522,6 +1522,82 @@ func TestInsertMempoolTxAlreadyConfirmed(t *testing.T) {
 	checkStore()
 }
 
+// TestInsertMempoolTxAfterSpentOutput ensures that transactions that were
+// both confirmed and spent cannot be added as unconfirmed.
+func TestInsertMempoolTxAfterSpentOutput(t *testing.T) {
+	t.Parallel()
+
+	store, db, teardown, err := testStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teardown()
+
+	// First we add a confirmed transaction to the wallet.
+	b100 := BlockMeta{
+		Block: Block{Height: 100},
+		Time:  time.Now(),
+	}
+	cb := newCoinBase(1e8)
+	cbRec, err := NewTxRecordFromMsgTx(cb, b100.Time)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitDBTx(t, store, db, func(ns walletdb.ReadWriteBucket) {
+		if err := store.InsertTx(ns, cbRec, &b100); err != nil {
+			t.Fatal(err)
+		}
+		err := store.AddCredit(ns, cbRec, &b100, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// Then create a transaction that spends the previous tx output.
+	b101 := BlockMeta{
+		Block: Block{Height: 101},
+		Time:  time.Now(),
+	}
+	amt := int64(1e7)
+	spend := spendOutput(&cbRec.Hash, 0, amt)
+	spendRec, err := NewTxRecordFromMsgTx(spend, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	commitDBTx(t, store, db, func(ns walletdb.ReadWriteBucket) {
+		// We add the spending tx to the wallet as confirmed.
+		err := store.InsertTx(ns, spendRec, &b101)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = store.AddCredit(ns, spendRec, &b101, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// We now adding the original transaction as mempool to simulate
+		// a real case where trying to broadcast a tx after it has been
+		// confirmed and spent.
+		if err := store.InsertTx(ns, cbRec, nil); err != nil {
+			t.Fatal(err)
+		}
+		err = store.AddCredit(ns, cbRec, nil, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// now we check that there no unminedCredit exists for the original tx.
+	commitDBTx(t, store, db, func(ns walletdb.ReadWriteBucket) {
+		k := canonicalOutPoint(&cbRec.Hash, 0)
+		if existsRawUnminedCredit(ns, k) != nil {
+			t.Fatalf("expected output to not exist " +
+				"in unmined credit bucket")
+		}
+	})
+}
+
 // TestOutputsAfterRemoveDoubleSpend ensures that when we remove a transaction
 // that double spends an existing output within the wallet, it doesn't remove
 // any other spending transactions of the same output.
