@@ -709,7 +709,7 @@ func getNewAddress(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	}
 
 	// Return the new payment address string.
-	return addr.EncodeAddress(), nil
+	return w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress(), nil
 }
 
 // getRawChangeAddress handles a getrawchangeaddress request by creating
