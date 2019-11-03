@@ -349,7 +349,7 @@ func addMultiSigAddress(icmd interface{}, w *wallet.Wallet) (interface{}, error)
 		return nil, err
 	}
 
-	return p2shAddr.EncodeAddress(), nil
+	return w.ChainParams().CashAddressPrefix + ":" + p2shAddr.EncodeAddress(), nil
 }
 
 // createMultiSig handles an createmultisig request by returning a
@@ -576,7 +576,7 @@ func getAccountAddress(icmd interface{}, w *wallet.Wallet) (interface{}, error) 
 		return nil, err
 	}
 
-	return addr.EncodeAddress(), err
+	return w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress(), err
 }
 
 // getUnconfirmedBalance handles a getunconfirmedbalance extension request
@@ -734,7 +734,7 @@ func getRawChangeAddress(icmd interface{}, w *wallet.Wallet) (interface{}, error
 	}
 
 	// Return the new payment address string.
-	return addr.EncodeAddress(), nil
+	return w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress(), nil
 }
 
 // getReceivedByAccount handles a getreceivedbyaccount request by returning
@@ -892,7 +892,7 @@ func getTransaction(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 			details.MsgTx.TxOut[cred.Index].PkScript, w.ChainParams())
 		if err == nil && len(addrs) == 1 {
 			addr := addrs[0]
-			address = addr.EncodeAddress()
+			address = w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress()
 			account, err := w.AccountOfAddress(addr)
 			if err == nil {
 				name, err := w.AccountName(waddrmgr.KeyScopeBIP0044, account)
@@ -1152,7 +1152,7 @@ func listReceivedByAddress(icmd interface{}, w *wallet.Wallet) (interface{}, err
 					continue
 				}
 				for _, addr := range addrs {
-					addrStr := addr.EncodeAddress()
+					addrStr := w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress()
 					addrData, ok := allAddrData[addrStr]
 					if ok {
 						addrData.amount += cred.Amount
@@ -1694,7 +1694,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 			if err != nil {
 				return nil, DeserializationError{err}
 			}
-			keys[addr.EncodeAddress()] = wif
+			keys[w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress()] = wif
 		}
 	}
 
@@ -1772,7 +1772,7 @@ func validateAddress(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	// by checking the type of "addr", however, the reference
 	// implementation only puts that information if the script is
 	// "ismine", and we follow that behaviour.
-	result.Address = addr.EncodeAddress()
+	result.Address = w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress()
 	result.IsValid = true
 
 	ainfo, err := w.AddressInfo(addr)
