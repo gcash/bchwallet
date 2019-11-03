@@ -1694,7 +1694,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 			if err != nil {
 				return nil, DeserializationError{err}
 			}
-			keys[w.ChainParams().CashAddressPrefix + ":" + addr.EncodeAddress()] = wif
+			keys[w.ChainParams().CashAddressPrefix+":"+addr.EncodeAddress()] = wif
 		}
 	}
 
