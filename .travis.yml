@@ -8,7 +8,7 @@ env:
   - GO111MODULE=on
 
 before_install:
-  - go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
+  - go get github.com/golangci/golangci-lint/cmd/golangci-lint
 
 install:
   - go install . ./cmd/...
