@@ -106,7 +106,7 @@ func mainInt() int {
 	}
 	defer db.Close()
 
-	fmt.Println("Dropping btcwallet transaction history")
+	fmt.Println("Dropping bchwallet transaction history")
 
 	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
 		err := tx.DeleteTopLevelBucket(wtxmgrNamespace)
