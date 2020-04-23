@@ -1114,26 +1114,9 @@ func testMarkUsed(tc *testContext) bool {
 // testChangePassphrase ensures changes both the public and private passphrases
 // works as intended.
 func testChangePassphrase(tc *testContext) bool {
-	// Force an error when changing the passphrase due to failure to
-	// generate a new secret key by replacing the generation function one
-	// that intentionally errors.
-	testName := "ChangePassphrase (public) with invalid new secret key"
-
-	SetSecretKeyGen(failingSecretKeyGen)
-	err := walletdb.Update(tc.db, func(tx walletdb.ReadWriteTx) error {
-		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-		return tc.rootManager.ChangePassphrase(
-			ns, pubPassphrase, pubPassphrase2, false, fastScrypt,
-		)
-	})
-	if !checkManagerError(tc.t, testName, err, ErrCrypto) {
-		return false
-	}
-
 	// Attempt to change public passphrase with invalid old passphrase.
-	testName = "ChangePassphrase (public) with invalid old passphrase"
-	SetSecretKeyGen(defaultNewSecretKey)
-	err = walletdb.Update(tc.db, func(tx walletdb.ReadWriteTx) error {
+	testName := "ChangePassphrase (public) with invalid old passphrase"
+	err := walletdb.Update(tc.db, func(tx walletdb.ReadWriteTx) error {
 		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 		return tc.rootManager.ChangePassphrase(
 			ns, []byte("bogus"), pubPassphrase2, false, fastScrypt,
