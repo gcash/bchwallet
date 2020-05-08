@@ -174,7 +174,7 @@ func (c *BitcoindConn) blockEventHandler() {
 		}
 
 		// Poll an event from the ZMQ socket.
-		msgBytes, err := c.zmqBlockConn.Receive()
+		msgBytes, err := c.zmqBlockConn.Receive(nil)
 		if err != nil {
 			// EOF should only be returned if the connection was
 			// explicitly closed, so we can exit at this point.
@@ -255,7 +255,7 @@ func (c *BitcoindConn) txEventHandler() {
 		}
 
 		// Poll an event from the ZMQ socket.
-		msgBytes, err := c.zmqTxConn.Receive()
+		msgBytes, err := c.zmqTxConn.Receive(nil)
 		if err != nil {
 			// EOF should only be returned if the connection was
 			// explicitly closed, so we can exit at this point.
