@@ -3270,10 +3270,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 
 		// Automatically look up inputValues if not specified.
-		lookupInputValues := false
-		if len(inputValues) == 0 {
-			lookupInputValues = true
-		}
+		lookupInputValues := len(inputValues) == 0
 
 		if !lookupInputValues && len(inputValues) != len(tx.TxIn) {
 			return errors.New("input amount not found for all inputs")
