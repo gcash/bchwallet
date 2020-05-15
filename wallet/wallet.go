@@ -3308,7 +3308,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 						txIn.PreviousOutPoint)
 				}
 
-				// PrevScripts was already was passed in, prefer passed in data.
+				// Only set the prevOutScript if it wasn't passed in explicitly.
 				if !ok {
 					prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
 				}
