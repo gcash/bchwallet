@@ -3308,8 +3308,15 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 						txIn.PreviousOutPoint)
 				}
 
-				prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
-				amount = txDetails.MsgTx.TxOut[prevIndex].Value
+				// PrevScripts was already was passed in, prefer passed in data.
+				if !ok {
+					prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
+				}
+
+				// Only update the amount if we are looking up InputValues.
+				if lookupInputValues {
+					amount = txDetails.MsgTx.TxOut[prevIndex].Value
+				}
 			}
 
 			// Set up our callbacks that we pass to txscript so it can
