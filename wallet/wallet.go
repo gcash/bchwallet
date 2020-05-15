@@ -3288,14 +3288,8 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 				amount = inputValues[i]
 			}
 
-			lookupPrevTxData := false
-
 			prevOutScript, ok := additionalPrevScripts[txIn.PreviousOutPoint]
 			if !ok || lookupInputValues {
-				lookupPrevTxData = true
-			}
-
-			if lookupPrevTxData {
 				prevHash := &txIn.PreviousOutPoint.Hash
 				prevIndex := txIn.PreviousOutPoint.Index
 				txDetails, err := w.TxStore.TxDetails(txmgrNs, prevHash)
