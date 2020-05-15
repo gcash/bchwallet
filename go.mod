@@ -12,6 +12,7 @@ require (
 	github.com/gcash/bchutil v0.0.0-20200506001747-c2894cd54b33
 	github.com/gcash/neutrino v0.0.0-20191124010656-41069056cca9
 	github.com/golang/protobuf v1.4.2
+	github.com/golangci/golangci-lint v1.27.0 // indirect
 	github.com/jarcoal/httpmock v1.0.4
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jrick/logrotate v1.0.0

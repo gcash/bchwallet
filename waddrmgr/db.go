@@ -368,7 +368,7 @@ func putScopeAddrTypes(ns walletdb.ReadWriteBucket, scope *KeyScope,
 
 	scopeSchemaBucket := ns.NestedReadWriteBucket(scopeSchemaBucketName)
 	if scopeSchemaBucket == nil {
-		str := fmt.Sprintf("unable to find scope schema bucket")
+		str := "unable to find scope schema bucket"
 		return managerError(ErrScopeNotFound, str, nil)
 	}
 

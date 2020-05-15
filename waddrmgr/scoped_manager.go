@@ -1288,7 +1288,7 @@ func (s *ScopedKeyManager) newAccount(ns walletdb.ReadWriteBucket,
 	// Check that account with the same name does not exist
 	_, err := s.lookupAccount(ns, name)
 	if err == nil {
-		str := fmt.Sprintf("account with the same name already exists")
+		str := "account with the same name already exists"
 		return managerError(ErrDuplicateAccount, str, err)
 	}
 
@@ -1302,13 +1302,13 @@ func (s *ScopedKeyManager) newAccount(ns walletdb.ReadWriteBucket,
 	// Decrypt the cointype key.
 	serializedKeyPriv, err := s.rootManager.cryptoKeyPriv.Decrypt(coinTypePrivEnc)
 	if err != nil {
-		str := fmt.Sprintf("failed to decrypt cointype serialized private key")
+		str := "failed to decrypt cointype serialized private key"
 		return managerError(ErrLocked, str, err)
 	}
 	coinTypeKeyPriv, err := hdkeychain.NewKeyFromString(string(serializedKeyPriv))
 	zero.Bytes(serializedKeyPriv)
 	if err != nil {
-		str := fmt.Sprintf("failed to create cointype extended private key")
+		str := "failed to create cointype extended private key"
 		return managerError(ErrKeyChain, str, err)
 	}
 
@@ -1372,7 +1372,7 @@ func (s *ScopedKeyManager) RenameAccount(ns walletdb.ReadWriteBucket,
 	// Check that account with the new name does not exist
 	_, err := s.lookupAccount(ns, name)
 	if err == nil {
-		str := fmt.Sprintf("account with the same name already exists")
+		str := "account with the same name already exists"
 		return managerError(ErrDuplicateAccount, str, err)
 	}
 
