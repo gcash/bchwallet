@@ -347,7 +347,7 @@ func fetchScopeAddrSchema(ns walletdb.ReadBucket,
 
 	schemaBucket := ns.NestedReadBucket(scopeSchemaBucketName)
 	if schemaBucket == nil {
-		str := fmt.Sprintf("unable to find scope schema bucket")
+		str := "unable to find scope schema bucket"
 		return nil, managerError(ErrScopeNotFound, str, nil)
 	}
 
