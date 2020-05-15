@@ -3269,6 +3269,10 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 		addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 
+		if len(inputValues) != len(tx.TxIn) {
+			return errors.New("input amount not found for all inputs")
+		}
+
 		for i, txIn := range tx.TxIn {
 			prevOutScript, ok := additionalPrevScripts[txIn.PreviousOutPoint]
 			if !ok {
