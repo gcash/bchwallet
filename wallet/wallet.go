@@ -3269,21 +3269,45 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 		addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 
+		// Automatically look up inputValues if not specified.
+		lookupInputValues := len(inputValues) == 0
+
+		if !lookupInputValues && len(inputValues) != len(tx.TxIn) {
+			return errors.New("input amount not found for all inputs")
+		}
+
 		for i, txIn := range tx.TxIn {
+			var amount int64
+
+			// If we aren't looking them up, then we have an inputValue
+			// for each input.
+			if !lookupInputValues {
+				amount = inputValues[i]
+			}
+
 			prevOutScript, ok := additionalPrevScripts[txIn.PreviousOutPoint]
-			if !ok {
+			if !ok || lookupInputValues {
 				prevHash := &txIn.PreviousOutPoint.Hash
 				prevIndex := txIn.PreviousOutPoint.Index
 				txDetails, err := w.TxStore.TxDetails(txmgrNs, prevHash)
 				if err != nil {
 					return fmt.Errorf("cannot query previous transaction "+
-						"details for %v: %v", txIn.PreviousOutPoint, err)
+						"details: %v", err)
 				}
 				if txDetails == nil {
 					return fmt.Errorf("%v not found",
 						txIn.PreviousOutPoint)
 				}
-				prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
+
+				// Only set the prevOutScript if it wasn't passed in explicitly.
+				if !ok {
+					prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
+				}
+
+				// Only update the amount if we are looking up InputValues.
+				if lookupInputValues {
+					amount = txDetails.MsgTx.TxOut[prevIndex].Value
+				}
 			}
 
 			// Set up our callbacks that we pass to txscript so it can
@@ -3347,7 +3371,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 				txscript.SigHashSingle || i < len(tx.TxOut) {
 
 				script, err := txscript.SignTxOutput(w.ChainParams(),
-					tx, i, inputValues[i], prevOutScript, hashType,
+					tx, i, amount, prevOutScript, hashType,
 					getKey, getScript, txIn.SignatureScript)
 				// Failure to sign isn't an error, it just means that
 				// the tx isn't complete.
@@ -3364,7 +3388,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			// Either it was already signed or we just signed it.
 			// Find out if it is completely satisfied or still needs more.
 			vm, err := txscript.NewEngine(prevOutScript, tx, i,
-				txscript.StandardVerifyFlags, nil, nil, inputValues[i])
+				txscript.StandardVerifyFlags, nil, nil, amount)
 			if err == nil {
 				err = vm.Execute()
 			}

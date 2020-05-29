@@ -279,8 +279,7 @@ func (p *Pool) putSeries(ns walletdb.ReadWriteBucket, version, seriesID, reqSigs
 	}
 
 	if reqSigs > uint32(len(inRawPubKeys)) {
-		str := fmt.Sprintf(
-			"the number of required signatures cannot be more than the number of keys")
+		str := "the number of required signatures cannot be more than the number of keys"
 		return newError(ErrTooManyReqSignatures, str, nil)
 	}
 
@@ -684,8 +683,7 @@ func (p *Pool) EmpowerSeries(ns walletdb.ReadWriteBucket, seriesID uint32, rawPr
 	}
 
 	if !found {
-		str := fmt.Sprintf(
-			"private Key does not have a corresponding public key in this series")
+		str := "private Key does not have a corresponding public key in this series"
 		return newError(ErrKeysPrivatePublicMismatch, str, nil)
 	}
 

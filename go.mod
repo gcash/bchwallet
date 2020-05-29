@@ -11,14 +11,17 @@ require (
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
 	github.com/gcash/bchutil v0.0.0-20200506001747-c2894cd54b33
 	github.com/gcash/neutrino v0.0.0-20191124010656-41069056cca9
-	github.com/golang/protobuf v1.4.1
+	github.com/golang/protobuf v1.4.2
+	github.com/golangci/golangci-lint v1.27.0 // indirect
 	github.com/jarcoal/httpmock v1.0.4
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jrick/logrotate v1.0.0
 	github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf
 	github.com/miekg/dns v1.1.29
 	github.com/tyler-smith/go-bip39 v1.0.2
-	golang.org/x/crypto v0.0.0-20200429183012-4b2356b1ed79
-	golang.org/x/net v0.0.0-20200506145744-7e3656a0809f
+	golang.org/x/crypto v0.0.0-20200510223506-06a226fb4e37
+	golang.org/x/net v0.0.0-20200513185701-a91f0712d120
+	golang.org/x/sys v0.0.0-20200513112337-417ce2331b5c // indirect
+	google.golang.org/genproto v0.0.0-20200514193133-8feb7f20f2a2 // indirect
 	google.golang.org/grpc v1.29.1
 )
