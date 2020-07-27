@@ -53,7 +53,7 @@ const (
 	// recoveryBatchSize is the default number of blocks that will be
 	// scanned successively by the recovery manager, in the event that the
 	// wallet is started in recovery mode.
-	recoveryBatchSize = 10
+	recoveryBatchSize = 1000
 )
 
 var (
