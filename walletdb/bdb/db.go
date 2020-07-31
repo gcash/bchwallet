@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/boltdb/bolt"
 	"github.com/gcash/bchwallet/walletdb"
+	"go.etcd.io/bbolt"
 )
 
 // convertErr converts some bolt errors to the equivalent walletdb error.
@@ -227,7 +227,7 @@ func (b *bucket) ReadWriteCursor() walletdb.ReadWriteCursor {
 // This function is part of the walletdb.ReadWriteBucket interface implementation.
 func (b *bucket) Tx() walletdb.ReadWriteTx {
 	return &transaction{
-		(*bolt.Bucket)(b).Tx(),
+		(*bbolt.Bucket)(b).Tx(),
 	}
 }
 
