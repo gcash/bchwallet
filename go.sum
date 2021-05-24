@@ -130,8 +130,13 @@ github.com/gcash/bchutil v0.0.0-20191012211144-98e73ec336ba/go.mod h1:nUIrcbbtEQ
 github.com/gcash/bchutil v0.0.0-20200506001747-c2894cd54b33/go.mod h1:wB++2ZcHUvGLN1OgO9swBmJK1vmyshJLW9SNS+apXwc=
 github.com/gcash/bchutil v0.0.0-20210113190856-6ea28dff4000 h1:vVi7Ym3I9T4ZKhQy0/XLKzS3xAqX4K+/cSAmnvMR+HM=
 github.com/gcash/bchutil v0.0.0-20210113190856-6ea28dff4000/go.mod h1:H2USFGwtiu6CNMxiVQPqZkDzsoVSt9BLNqTfBBqGXRo=
+github.com/gcash/bchwallet v0.8.3-0.20210524032547-09a7e9ef6126/go.mod h1:w+CpcX7VBjAiLMq+pkubcbEU6IqJWg/VNu3skgm6RGc=
 github.com/gcash/neutrino v0.0.0-20210524024247-f7bf0435d155 h1:fATZOS1dErqyUvfnWzbrtCT1lWEA9tAW6GyqtGcuUSw=
 github.com/gcash/neutrino v0.0.0-20210524024247-f7bf0435d155/go.mod h1:91zIrel7tOt35+0hAN8Rrr7O07LZrR9b98Nk4AcC/Lg=
+github.com/gcash/neutrino v0.0.0-20210524042544-59e2dce150e7 h1:KtUidyaOzw6KysI2dk2Hj9e84gq6lveozURvn/kc240=
+github.com/gcash/neutrino v0.0.0-20210524042544-59e2dce150e7/go.mod h1:ud/wsgR459Qy+HmEAoQZF9XPTYaOYep5df8ynowCnLs=
+github.com/gcash/neutrino v0.0.0-20210524083541-2900eef48821 h1:ZVJTdWJdEg3hi1SooU4vpN7Kx90JpsLsU7ZPq1tdpy0=
+github.com/gcash/neutrino v0.0.0-20210524083541-2900eef48821/go.mod h1:ud/wsgR459Qy+HmEAoQZF9XPTYaOYep5df8ynowCnLs=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/go-gl/glfw v0.0.0-20190409004039-e6da0acd62b1/go.mod h1:vR7hzQXu2zJy9AVAgeJqvqgH9Q5CA+iKCZ2gyEVpxRU=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20191125211704-12ad95a8df72/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
