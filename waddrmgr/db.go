@@ -1109,11 +1109,7 @@ func putAccountInfo(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	}
 
 	// Update account name index.
-	if err := putAccountNameIndex(ns, scope, account, name); err != nil {
-		return err
-	}
-
-	return nil
+	return putAccountNameIndex(ns, scope, account, name)
 }
 
 // putLastAccount stores the provided metadata - last account - to the
