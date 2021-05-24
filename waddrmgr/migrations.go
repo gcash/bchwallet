@@ -264,10 +264,7 @@ func migrateRecursively(src, dst walletdb.ReadWriteBucket,
 		return err
 	}
 	// Finally, we'll delete the bucket itself.
-	if err := src.DeleteNestedBucket(bucketKey); err != nil {
-		return err
-	}
-	return nil
+	return src.DeleteNestedBucket(bucketKey)
 }
 
 // populateBirthdayBlock is a migration that attempts to populate the birthday

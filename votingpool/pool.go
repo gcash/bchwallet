@@ -687,11 +687,7 @@ func (p *Pool) EmpowerSeries(ns walletdb.ReadWriteBucket, seriesID uint32, rawPr
 		return newError(ErrKeysPrivatePublicMismatch, str, nil)
 	}
 
-	if err = p.saveSeriesToDisk(ns, seriesID, series); err != nil {
-		return err
-	}
-
-	return nil
+	return p.saveSeriesToDisk(ns, seriesID, series)
 }
 
 // EnsureUsedAddr ensures we have entries in our used addresses DB for the given
