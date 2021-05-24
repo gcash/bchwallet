@@ -332,7 +332,7 @@ func TstCreatePool(t *testing.T) (tearDownFunc func(), db walletdb.DB, pool *Poo
 	if err != nil {
 		t.Fatalf("Failed to create db dir: %v", err)
 	}
-	db, err = walletdb.Create("bdb", filepath.Join(dir, "wallet.db"))
+	db, err = walletdb.Create("bdb", filepath.Join(dir, "wallet.db"), true)
 	if err != nil {
 		t.Fatalf("Failed to create wallet DB: %v", err)
 	}

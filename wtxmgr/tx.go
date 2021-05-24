@@ -279,6 +279,13 @@ func (s *Store) updateMinedBalance(ns walletdb.ReadWriteBucket, rec *TxRecord,
 //
 // NOTE: This should only be used once the transaction has been mined.
 func (s *Store) deleteUnminedTx(ns walletdb.ReadWriteBucket, rec *TxRecord) error {
+	for _, input := range rec.MsgTx.TxIn {
+		prevOut := input.PreviousOutPoint
+		k := canonicalOutPoint(&prevOut.Hash, prevOut.Index)
+		if err := deleteRawUnminedInput(ns, k, rec.Hash); err != nil {
+			return err
+		}
+	}
 	for i := range rec.MsgTx.TxOut {
 		k := canonicalOutPoint(&rec.Hash, uint32(i))
 		if err := deleteRawUnminedCredit(ns, k); err != nil {
@@ -404,7 +411,9 @@ func (s *Store) addCredit(ns walletdb.ReadWriteBucket, rec *TxRecord, block *Blo
 		if existsRawUnminedCredit(ns, k) != nil {
 			return false, nil
 		}
-		if existsRawUnspent(ns, k) != nil {
+		if _, tv := latestTxRecord(ns, &rec.Hash); tv != nil {
+			log.Tracef("Ignoring credit for existing confirmed transaction %v",
+				rec.Hash.String())
 			return false, nil
 		}
 		v := valueUnminedCredit(bchutil.Amount(rec.MsgTx.TxOut[index].Value), change)
