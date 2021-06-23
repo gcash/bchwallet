@@ -433,7 +433,7 @@ func (m *Manager) NewScopedKeyManager(ns walletdb.ReadWriteBucket, scope KeyScop
 	// need to fully decrypt it.
 	serializedMasterRootPriv, err := m.cryptoKeyPriv.Decrypt(masterRootPrivEnc)
 	if err != nil {
-		str := fmt.Sprintf("failed to decrypt master root serialized private key")
+		str := "failed to decrypt master root serialized private key"
 		return nil, managerError(ErrLocked, str, err)
 	}
 
@@ -444,7 +444,7 @@ func (m *Manager) NewScopedKeyManager(ns walletdb.ReadWriteBucket, scope KeyScop
 	)
 	zero.Bytes(serializedMasterRootPriv)
 	if err != nil {
-		str := fmt.Sprintf("failed to create master extended private key")
+		str := "failed to create master extended private key"
 		return nil, managerError(ErrKeyChain, str, err)
 	}
 

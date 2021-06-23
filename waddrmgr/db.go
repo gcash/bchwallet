@@ -347,7 +347,7 @@ func fetchScopeAddrSchema(ns walletdb.ReadBucket,
 
 	schemaBucket := ns.NestedReadBucket(scopeSchemaBucketName)
 	if schemaBucket == nil {
-		str := fmt.Sprintf("unable to find scope schema bucket")
+		str := "unable to find scope schema bucket"
 		return nil, managerError(ErrScopeNotFound, str, nil)
 	}
 
@@ -368,7 +368,7 @@ func putScopeAddrTypes(ns walletdb.ReadWriteBucket, scope *KeyScope,
 
 	scopeSchemaBucket := ns.NestedReadWriteBucket(scopeSchemaBucketName)
 	if scopeSchemaBucket == nil {
-		str := fmt.Sprintf("unable to find scope schema bucket")
+		str := "unable to find scope schema bucket"
 		return managerError(ErrScopeNotFound, str, nil)
 	}
 
@@ -1109,11 +1109,7 @@ func putAccountInfo(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	}
 
 	// Update account name index.
-	if err := putAccountNameIndex(ns, scope, account, name); err != nil {
-		return err
-	}
-
-	return nil
+	return putAccountNameIndex(ns, scope, account, name)
 }
 
 // putLastAccount stores the provided metadata - last account - to the

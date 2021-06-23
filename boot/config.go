@@ -441,6 +441,12 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 		return nil, nil, err
 	}
 
+	// Ensure the data directory for the network exists.
+	if err := checkCreateDir(netDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, nil, err
+	}
+
 	if cfg.CreateTemp {
 		tempWalletExists := false
 
@@ -449,12 +455,6 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 				"wallet instead.")
 			fmt.Fprintln(os.Stdout, str)
 			tempWalletExists = true
-		}
-
-		// Ensure the data directory for the network exists.
-		if err := checkCreateDir(netDir); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return nil, nil, err
 		}
 
 		if !tempWalletExists {
@@ -470,12 +470,6 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 		if dbFileExists {
 			err := fmt.Errorf("The wallet database file `%v` "+
 				"already exists.", dbPath)
-			fmt.Fprintln(os.Stderr, err)
-			return nil, nil, err
-		}
-
-		// Ensure the data directory for the network exists.
-		if err := checkCreateDir(netDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return nil, nil, err
 		}

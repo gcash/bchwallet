@@ -1,12 +1,13 @@
 package boot
 
 import (
-	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
@@ -55,7 +56,7 @@ func WalletMain(optionalConfigPath *string) error {
 	}
 
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
-	loader := wallet.NewLoader(activeNet.Params, dbDir, 250)
+	loader := wallet.NewLoader(activeNet.Params, dbDir, true, 250)
 
 	// Create and start HTTP server to serve wallet client connections.
 	// This will be updated with the wallet and chain server RPC client
@@ -168,7 +169,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			)
 			netDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 			spvdb, err = walletdb.Create("bdb",
-				filepath.Join(netDir, "neutrino.db"))
+				filepath.Join(netDir, "neutrino.db"), true)
 			defer spvdb.Close()
 			if err != nil {
 				log.Errorf("Unable to create Neutrino DB: %s", err)

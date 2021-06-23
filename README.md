@@ -74,7 +74,7 @@ https://github.com/gcash/bchwallet/releases
 
 Building or updating from source requires the following build dependencies:
 
-- **Go 1.11.1 and greater**
+- **Go 1.16.4 and greater**
 
   Installation instructions can be found here: http://golang.org/doc/install.
   It is recommended to add `$GOPATH/bin` to your `PATH` at this point.
