@@ -340,9 +340,10 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 // spent, must be passed in the prevScripts slice.
 func validateMsgTx(tx *wire.MsgTx, prevScripts [][]byte, inputValues []bchutil.Amount) error {
 	hashCache := txscript.NewTxSigHashes(tx)
+	utxoCache := txscript.NewUtxoCache()
 	for i, prevScript := range prevScripts {
 		vm, err := txscript.NewEngine(prevScript, tx, i,
-			txscript.StandardVerifyFlags, nil, hashCache, int64(inputValues[i]))
+			txscript.StandardVerifyFlags, nil, hashCache, utxoCache, int64(inputValues[i]))
 		if err != nil {
 			return fmt.Errorf("cannot create script engine: %s", err)
 		}
