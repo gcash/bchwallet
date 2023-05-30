@@ -35,6 +35,29 @@ var (
 	ErrExists = errors.New("wallet already exists")
 )
 
+// loaderConfig contains the configuration options for the loader.
+type loaderConfig struct {
+	walletSyncRetryInterval time.Duration
+}
+
+// defaultLoaderConfig returns the default configuration options for the loader.
+func defaultLoaderConfig() *loaderConfig {
+	return &loaderConfig{
+		walletSyncRetryInterval: defaultSyncRetryInterval,
+	}
+}
+
+// LoaderOption is a configuration option for the loader.
+type LoaderOption func(*loaderConfig)
+
+// WithWalletSyncRetryInterval specifies the interval at which the wallet
+// should retry syncing to the chain if it encounters an error.
+func WithWalletSyncRetryInterval(interval time.Duration) LoaderOption {
+	return func(c *loaderConfig) {
+		c.walletSyncRetryInterval = interval
+	}
+}
+
 // Loader implements the creating of new and opening of existing wallets, while
 // providing a callback system for other subsystems to handle the loading of a
 // wallet.  This is primarily intended for use by the RPC servers, to enable
@@ -43,6 +66,7 @@ var (
 //
 // Loader is safe for concurrent access.
 type Loader struct {
+	cfg            *loaderConfig
 	callbacks      []func(*Wallet)
 	chainParams    *chaincfg.Params
 	dbDirPath      string
@@ -57,7 +81,12 @@ type Loader struct {
 // recovery window is non-zero, the wallet will attempt to recovery addresses
 // starting from the last SyncedTo height.
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
-	noFreelistSync bool, recoveryWindow uint32) *Loader {
+	noFreelistSync bool, recoveryWindow uint32, opts ...LoaderOption) *Loader {
+
+	cfg := defaultLoaderConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
 
 	// KeyScopeBIP0044 is a global var. If we are loading the wallet make
 	// sure we set the bip44 coin type to whatever is specified in the params.
@@ -70,6 +99,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 		},
 	}
 	return &Loader{
+		cfg:            cfg,
 		chainParams:    chainParams,
 		dbDirPath:      dbDirPath,
 		noFreelistSync: noFreelistSync,
@@ -145,7 +175,7 @@ func (l *Loader) CreateNewWallet(pubPassphrase, privPassphrase, seed []byte,
 	}
 
 	// Open the newly-created wallet.
-	w, err := Open(db, pubPassphrase, nil, l.chainParams, l.recoveryWindow)
+	w, err := OpenWithRetry(db, pubPassphrase, nil, l.chainParams, l.recoveryWindow, l.cfg.walletSyncRetryInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +228,7 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte, canConsolePrompt bool)
 			ObtainPrivatePass: noConsole,
 		}
 	}
-	w, err := Open(db, pubPassphrase, cbs, l.chainParams, l.recoveryWindow)
+	w, err := OpenWithRetry(db, pubPassphrase, cbs, l.chainParams, l.recoveryWindow, l.cfg.walletSyncRetryInterval)
 	if err != nil {
 		// If opening the wallet fails (e.g. because of wrong
 		// passphrase), we must close the backing database to
