@@ -8,10 +8,10 @@ package wallet
 import (
 	"errors"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // MakeMultiSigScript creates a multi-signature script that can be redeemed with

@@ -9,7 +9,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"io/ioutil"
 	"net"
 	"os"
@@ -18,10 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/metadata"
+
+	"github.com/dcrlabs/bchwallet/rpc/legacyrpc"
+	"github.com/dcrlabs/bchwallet/rpc/rpcserver"
+	"github.com/dcrlabs/bchwallet/wallet"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/rpc/legacyrpc"
-	"github.com/gcash/bchwallet/rpc/rpcserver"
-	"github.com/gcash/bchwallet/wallet"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"

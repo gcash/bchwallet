@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/btcsuite/golangcrypto/ssh/terminal"
+	"github.com/dcrlabs/bchwallet/internal/legacy/keystore"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/internal/legacy/keystore"
 	"github.com/tyler-smith/go-bip39"
 )
 

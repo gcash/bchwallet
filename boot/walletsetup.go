@@ -11,19 +11,19 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/internal/legacy/keystore"
+	"github.com/dcrlabs/bchwallet/internal/prompt"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/wallet"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/internal/legacy/keystore"
-	"github.com/gcash/bchwallet/internal/prompt"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/wallet"
-	"github.com/gcash/bchwallet/walletdb"
 
 	// Normally a blank import is only used in the main package but since
 	// we need to use the boot package from both main and mobile we will
 	// use it here.
-	_ "github.com/gcash/bchwallet/walletdb/bdb"
+	_ "github.com/dcrlabs/bchwallet/walletdb/bdb"
 )
 
 // networkDir returns the directory name of a network directory to hold wallet

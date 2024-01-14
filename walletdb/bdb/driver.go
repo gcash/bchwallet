@@ -7,7 +7,7 @@ package bdb
 import (
 	"fmt"
 
-	"github.com/gcash/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/walletdb"
 )
 
 const (

@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/dcrlabs/bchwallet/internal/zero"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/internal/zero"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 const (

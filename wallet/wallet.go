@@ -26,15 +26,15 @@ import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 
+	"github.com/dcrlabs/bchwallet/chain"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/wallet/txauthor"
+	"github.com/dcrlabs/bchwallet/wallet/txrules"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/walletdb/migration"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/chain"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/wallet/txauthor"
-	"github.com/gcash/bchwallet/wallet/txrules"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/walletdb/migration"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 const (
@@ -841,13 +841,13 @@ func (w *Wallet) recoverDefaultScopes(
 // recoverAccountAddresses scans a range of blocks in attempts to recover any
 // previously used addresses for a particular account derivation path. At a high
 // level, the algorithm works as follows:
-//  1) Ensure internal and external branch horizons are fully expanded.
-//  2) Filter the entire range of blocks, stopping if a non-zero number of
-//       address are contained in a particular block.
-//  3) Record all internal and external addresses found in the block.
-//  4) Record any outpoints found in the block that should be watched for spends
-//  5) Trim the range of blocks up to and including the one reporting the addrs.
-//  6) Repeat from (1) if there are still more blocks in the range.
+//  1. Ensure internal and external branch horizons are fully expanded.
+//  2. Filter the entire range of blocks, stopping if a non-zero number of
+//     address are contained in a particular block.
+//  3. Record all internal and external addresses found in the block.
+//  4. Record any outpoints found in the block that should be watched for spends
+//  5. Trim the range of blocks up to and including the one reporting the addrs.
+//  6. Repeat from (1) if there are still more blocks in the range.
 func (w *Wallet) recoverScopedAddresses(
 	chainClient chain.Interface,
 	tx walletdb.ReadWriteTx,

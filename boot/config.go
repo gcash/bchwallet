@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/internal/cfgutil"
+	"github.com/dcrlabs/bchwallet/internal/legacy/keystore"
+	"github.com/dcrlabs/bchwallet/netparams"
+	"github.com/dcrlabs/bchwallet/wallet"
+	neutrino "github.com/dcrlabs/neutrino-bch"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/internal/cfgutil"
-	"github.com/gcash/bchwallet/internal/legacy/keystore"
-	"github.com/gcash/bchwallet/netparams"
-	"github.com/gcash/bchwallet/wallet"
-	"github.com/gcash/neutrino"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -248,10 +248,10 @@ func parseAndSetDebugLevels(debugLevel string) error {
 // line options.
 //
 // The configuration proceeds as follows:
-//      1) Start with a default config with sane settings
-//      2) Pre-parse the command line to check for an alternative config file
-//      3) Load configuration file overwriting defaults with any specified options
-//      4) Parse CLI options and overwrite/add any specified options
+//  1. Start with a default config with sane settings
+//  2. Pre-parse the command line to check for an alternative config file
+//  3. Load configuration file overwriting defaults with any specified options
+//  4. Parse CLI options and overwrite/add any specified options
 //
 // The above results in bchwallet functioning properly without any config
 // settings while still allowing the user to override settings with config files

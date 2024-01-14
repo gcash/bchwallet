@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dcrlabs/bchwallet/internal/zero"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/internal/zero"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // DerivationPath represents a derivation path from a particular key manager's

@@ -10,11 +10,11 @@ import (
 	"encoding/gob"
 	"fmt"
 
+	"github.com/dcrlabs/bchwallet/snacl"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/snacl"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // These constants define the serialized length for a given encrypted extended

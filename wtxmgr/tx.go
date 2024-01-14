@@ -9,12 +9,12 @@ import (
 	"bytes"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/blockchain"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // Block contains the minimum amount of data to uniquely identify any block on

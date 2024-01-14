@@ -6,9 +6,9 @@
 package wallet
 
 import (
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // OutputSelectionPolicy describes the rules for selecting an output from the
