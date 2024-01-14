@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // applyMigration is a helper function that allows us to assert the state of the

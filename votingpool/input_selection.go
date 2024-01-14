@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 const eligibleInputMinConfirmations = 100

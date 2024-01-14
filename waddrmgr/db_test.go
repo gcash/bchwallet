@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg/chainhash"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // TestStoreMaxReorgDepth ensures that we can only store up to MaxReorgDepth

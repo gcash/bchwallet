@@ -6,9 +6,9 @@
 package wtxmgr
 
 import (
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // insertMemPoolTx inserts the unmined transaction record.  It also marks

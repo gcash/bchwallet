@@ -10,14 +10,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dcrlabs/bchwallet/chain"
+	"github.com/dcrlabs/bchwallet/rpc/legacyrpc"
+	"github.com/dcrlabs/bchwallet/rpc/rpcserver"
+	"github.com/dcrlabs/bchwallet/wallet"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
+	neutrino "github.com/dcrlabs/neutrino-bch"
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchlog"
-	"github.com/gcash/bchwallet/chain"
-	"github.com/gcash/bchwallet/rpc/legacyrpc"
-	"github.com/gcash/bchwallet/rpc/rpcserver"
-	"github.com/gcash/bchwallet/wallet"
-	"github.com/gcash/bchwallet/wtxmgr"
-	"github.com/gcash/neutrino"
 	"github.com/jrick/logrotate/rotator"
 )
 

@@ -5,10 +5,10 @@
 package wallet
 
 import (
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb/migration"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchlog"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb/migration"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // log is a logger that is initialized with no output filters.  This

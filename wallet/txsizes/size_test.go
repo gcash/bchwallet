@@ -3,8 +3,8 @@ package txsizes_test
 import (
 	"testing"
 
+	. "github.com/dcrlabs/bchwallet/wallet/txsizes"
 	"github.com/gcash/bchd/wire"
-	. "github.com/gcash/bchwallet/wallet/txsizes"
 )
 
 const (

@@ -7,10 +7,10 @@ package wtxmgr
 import (
 	"fmt"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 var (

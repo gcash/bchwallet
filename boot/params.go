@@ -4,6 +4,6 @@
 
 package boot
 
-import "github.com/gcash/bchwallet/netparams"
+import "github.com/dcrlabs/bchwallet/netparams"
 
 var activeNet = &netparams.MainNetParams

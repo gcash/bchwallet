@@ -8,13 +8,13 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // TODO: It would be good to send errors during notification creation to the rpc

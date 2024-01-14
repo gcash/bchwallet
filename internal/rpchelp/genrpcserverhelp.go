@@ -2,7 +2,8 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-//+build generate
+//go:build generate
+// +build generate
 
 package main
 
@@ -12,8 +13,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dcrlabs/bchwallet/internal/rpchelp"
 	"github.com/gcash/bchd/btcjson"
-	"github.com/gcash/bchwallet/internal/rpchelp"
 )
 
 var outputFile = func() *os.File {

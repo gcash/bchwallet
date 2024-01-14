@@ -24,14 +24,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/votingpool"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	_ "github.com/dcrlabs/bchwallet/walletdb/bdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/votingpool"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
-	_ "github.com/gcash/bchwallet/walletdb/bdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 var (

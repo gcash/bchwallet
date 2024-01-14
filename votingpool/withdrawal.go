@@ -14,12 +14,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // Maximum tx size (in bytes). This should be the same as bitcoind's

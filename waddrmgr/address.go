@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dcrlabs/bchwallet/internal/zero"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/internal/zero"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // AddressType represents the various address types waddrmgr is currently able

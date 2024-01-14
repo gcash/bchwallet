@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	_ "github.com/dcrlabs/bchwallet/walletdb/bdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchwallet/waddrmgr"
-	_ "github.com/gcash/bchwallet/walletdb/bdb"
 )
 
 const (

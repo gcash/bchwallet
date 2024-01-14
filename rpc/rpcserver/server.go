@@ -8,42 +8,43 @@
 // Full documentation of the API implemented by this package is maintained in a
 // language-agnostic document:
 //
-//   https://github.com/gcash/bchwallet/blob/master/rpc/documentation/api.md
+//	https://github.com/dcrlabs/bchwallet/blob/master/rpc/documentation/api.md
 //
 // Any API changes must be performed according to the steps listed here:
 //
-//   https://github.com/gcash/bchwallet/blob/master/rpc/documentation/serverchanges.md
+//	https://github.com/dcrlabs/bchwallet/blob/master/rpc/documentation/serverchanges.md
 package rpcserver
 
 import (
 	"bytes"
 	"errors"
-	"github.com/gcash/bchwallet/pymtproto"
-	"github.com/gcash/bchwallet/wallet/txsizes"
-	"github.com/tyler-smith/go-bip39"
-	"google.golang.org/grpc/status"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/dcrlabs/bchwallet/pymtproto"
+	"github.com/dcrlabs/bchwallet/wallet/txsizes"
+	"github.com/tyler-smith/go-bip39"
+	"google.golang.org/grpc/status"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/dcrlabs/bchwallet/chain"
+	"github.com/dcrlabs/bchwallet/internal/cfgutil"
+	"github.com/dcrlabs/bchwallet/internal/zero"
+	"github.com/dcrlabs/bchwallet/netparams"
+	pb "github.com/dcrlabs/bchwallet/rpc/walletrpc"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/wallet"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/chain"
-	"github.com/gcash/bchwallet/internal/cfgutil"
-	"github.com/gcash/bchwallet/internal/zero"
-	"github.com/gcash/bchwallet/netparams"
-	pb "github.com/gcash/bchwallet/rpc/walletrpc"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/wallet"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // Public API version constants
@@ -682,12 +683,12 @@ func (s *walletServer) SignTransaction(ctx context.Context, req *pb.SignTransact
 }
 
 // BUGS:
-// - The transaction is not inspected to be relevant before publishing using
-//   sendrawtransaction, so connection errors to bchd could result in the tx
-//   never being added to the wallet database.
-// - Once the above bug is fixed, wallet will require a way to purge invalid
-//   transactions from the database when they are rejected by the network, other
-//   than double spending them.
+//   - The transaction is not inspected to be relevant before publishing using
+//     sendrawtransaction, so connection errors to bchd could result in the tx
+//     never being added to the wallet database.
+//   - Once the above bug is fixed, wallet will require a way to purge invalid
+//     transactions from the database when they are rejected by the network, other
+//     than double spending them.
 func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTransactionRequest) (
 	*pb.PublishTransactionResponse, error) {
 

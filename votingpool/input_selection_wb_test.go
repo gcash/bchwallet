@@ -10,11 +10,11 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 var (

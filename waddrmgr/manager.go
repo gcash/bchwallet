@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/internal/zero"
+	"github.com/dcrlabs/bchwallet/snacl"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/internal/zero"
-	"github.com/gcash/bchwallet/snacl"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 const (
@@ -1341,7 +1341,8 @@ func deriveCoinTypeKey(masterNode *hdkeychain.ExtendedKey,
 // hierarchy described by BIP0044 given the master node.
 //
 // In particular this is the hierarchical deterministic extended key path:
-//   m/purpose'/<coin type>'/<account>'
+//
+//	m/purpose'/<coin type>'/<account>'
 func deriveAccountKey(coinTypeKey *hdkeychain.ExtendedKey,
 	account uint32) (*hdkeychain.ExtendedKey, error) {
 
@@ -1362,7 +1363,8 @@ func deriveAccountKey(coinTypeKey *hdkeychain.ExtendedKey,
 // already derived accordingly.
 //
 // In particular this is the hierarchical deterministic extended key path:
-//   m/purpose'/<coin type>'/<account>'/<branch>
+//
+//	m/purpose'/<coin type>'/<account>'/<branch>
 //
 // The branch is 0 for external addresses and 1 for internal addresses.
 func checkBranchKeys(acctKey *hdkeychain.ExtendedKey) error {

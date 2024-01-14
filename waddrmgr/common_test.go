@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/walletdb"
+	_ "github.com/dcrlabs/bchwallet/walletdb/bdb"
 	"github.com/gcash/bchd/chaincfg"
-	"github.com/gcash/bchwallet/walletdb"
-	_ "github.com/gcash/bchwallet/walletdb/bdb"
 )
 
 var (

@@ -4,11 +4,11 @@ import (
 	"errors"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // isCurrentDelta is the delta duration we'll use from the present time to

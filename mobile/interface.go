@@ -1,9 +1,10 @@
 package mobile
 
 import (
-	"github.com/gcash/bchwallet/boot"
 	"os"
 	"time"
+
+	"github.com/dcrlabs/bchwallet/boot"
 )
 
 // StartWallet is the function exposed to the mobile device to start the bchwallet.

@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // createTx is a helper method to create random transactions that spend

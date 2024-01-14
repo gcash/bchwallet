@@ -7,7 +7,7 @@ package txsizes
 import (
 	"github.com/gcash/bchd/wire"
 
-	h "github.com/gcash/bchwallet/internal/helpers"
+	h "github.com/dcrlabs/bchwallet/internal/helpers"
 )
 
 // Worst case script and input/output size estimates.

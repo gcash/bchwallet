@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	_ "github.com/dcrlabs/bchwallet/walletdb/bdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
-	_ "github.com/gcash/bchwallet/walletdb/bdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // TestTxToOutput checks that no new address is added to he database if we

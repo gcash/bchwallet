@@ -10,14 +10,14 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 // TestOutputSplittingNotEnoughInputs checks that an output will get split if we

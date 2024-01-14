@@ -12,16 +12,16 @@ import (
 
 	"golang.org/x/crypto/ssh/terminal"
 
+	"github.com/dcrlabs/bchwallet/internal/cfgutil"
+	"github.com/dcrlabs/bchwallet/netparams"
+	"github.com/dcrlabs/bchwallet/wallet/txauthor"
+	"github.com/dcrlabs/bchwallet/wallet/txrules"
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/internal/cfgutil"
-	"github.com/gcash/bchwallet/netparams"
-	"github.com/gcash/bchwallet/wallet/txauthor"
-	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/jessevdk/go-flags"
 )
 
