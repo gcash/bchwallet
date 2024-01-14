@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/gcash/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/walletdb"
 )
 
 var (

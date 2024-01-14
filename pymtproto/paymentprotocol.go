@@ -5,18 +5,19 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/gcash/bchd/chaincfg"
-	"github.com/gcash/bchd/txscript"
-	"github.com/gcash/bchd/wire"
-	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/pymtproto/payments"
-	"github.com/golang/protobuf/proto"
-	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/dcrlabs/bchwallet/pymtproto/payments"
+	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/txscript"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
+	"github.com/golang/protobuf/proto"
+	"golang.org/x/net/proxy"
 )
 
 // PaymentRequest is returned by the DownloadBip0070PaymentRequest method. It

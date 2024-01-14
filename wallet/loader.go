@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcrlabs/bchwallet/internal/prompt"
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
-	"github.com/gcash/bchwallet/internal/prompt"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 const (

@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/dcrlabs/bchwallet/snacl"
+	"github.com/dcrlabs/bchwallet/walletdb"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchutil"
-	"github.com/gcash/bchwallet/snacl"
-	"github.com/gcash/bchwallet/walletdb"
 )
 
 // failingCryptoKey is an implementation of the EncryptorDecryptor interface

@@ -9,6 +9,9 @@ import (
 
 	"github.com/gcash/bchd/btcjson"
 
+	"github.com/dcrlabs/bchwallet/waddrmgr"
+	"github.com/dcrlabs/bchwallet/wtxmgr"
+	neutrino "github.com/dcrlabs/neutrino-bch"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/rpcclient"
@@ -17,9 +20,6 @@ import (
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/gcs"
 	"github.com/gcash/bchutil/gcs/builder"
-	"github.com/gcash/bchwallet/waddrmgr"
-	"github.com/gcash/bchwallet/wtxmgr"
-	"github.com/gcash/neutrino"
 )
 
 // NeutrinoClient is an implementation of the bchwalet chain.Interface interface.

@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/gcash/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/walletdb"
 )
 
 // errSubTestFail is used to signal that a sub test returned false.

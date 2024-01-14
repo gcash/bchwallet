@@ -1,8 +1,8 @@
 package wtxmgr
 
 import (
-	"github.com/gcash/bchwallet/walletdb"
-	"github.com/gcash/bchwallet/walletdb/migration"
+	"github.com/dcrlabs/bchwallet/walletdb"
+	"github.com/dcrlabs/bchwallet/walletdb/migration"
 )
 
 // versions is a list of the different database versions. The last entry should
