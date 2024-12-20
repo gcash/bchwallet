@@ -1,31 +1,29 @@
-walletdb
-========
+# walletdb
 
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)]
-(https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 
 Package walletdb provides a namespaced database interface for bchwallet.
 
 A wallet essentially consists of a multitude of stored data such as private
 and public keys, key derivation bits, pay-to-script-hash scripts, and various
-metadata.  One of the issues with many wallets is they are tightly integrated.
+metadata. One of the issues with many wallets is they are tightly integrated.
 Designing a wallet with loosely coupled components that provide specific
 functionality is ideal, however it presents a challenge in regards to data
 storage since each component needs to store its own data without knowing the
 internals of other components or breaking atomicity.
 
 This package solves this issue by providing a namespaced database interface that
-is intended to be used by the main wallet daemon.  This allows the potential for
-any backend database type with a suitable driver.  Each component, which will
+is intended to be used by the main wallet daemon. This allows the potential for
+any backend database type with a suitable driver. Each component, which will
 typically be a package, can then implement various functionality such as address
 management, voting pools, and colored coin metadata in their own namespace
 without having to worry about conflicts with other packages even though they are
 sharing the same database that is managed by the wallet.
 
-A suite of tests is provided to ensure proper functionality.  See
-`test_coverage.txt` for the gocov coverage report.  Alternatively, if you are
+A suite of tests is provided to ensure proper functionality. See
+`test_coverage.txt` for the gocov coverage report. Alternatively, if you are
 running a POSIX OS, you can run the `cov_report.sh` script for a real-time
-report.  Package walletdb is licensed under the copyfree ISC license.
+report. Package walletdb is licensed under the copyfree ISC license.
 
 This interfaces provided by this package were heavily inspired by the excellent
 boltdb project at https://github.com/boltdb/bolt by Ben B. Johnson.
@@ -62,12 +60,11 @@ $ go get github.com/gcash/bchwallet/walletdb
 
 ## Examples
 
-* [Basic Usage Example]
-  (http://godoc.org/github.com/gcash/bchwallet/walletdb#example-package--BasicUsage)  
+- [Basic Usage Example]
+  (http://godoc.org/github.com/gcash/bchwallet/walletdb#example-package--BasicUsage)
   Demonstrates creating a new database, getting a namespace from it, and using a
   managed read-write transaction against the namespace to store and retrieve
   data.
-
 
 ## License
 

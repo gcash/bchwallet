@@ -1,6 +1,6 @@
 bchwallet
 =========
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)](https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gcash/bchwallet)](https://goreportcard.com/report/github.com/gcash/bchwallet)
 [![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
 [![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/gcash/bchwallet)
@@ -185,7 +185,7 @@ Chris Pacia (ctpacia@gmail.com) - GPG Fingerprint: 0150 2502 DD3A 928D CE52 8CB9
 
 or
 
-Josh Ellithorpe (quest@mac.com) - GPG Fingerprint: B6DE 3514 E07E 30BB 5F40  8D74 E49B 7E00 0022 8DDD 
+Josh Ellithorpe (quest@mac.com) - GPG Fingerprint: B6DE 3514 E07E 30BB 5F40  8D74 E49B 7E00 0022 8DDD
 
 ## License
 

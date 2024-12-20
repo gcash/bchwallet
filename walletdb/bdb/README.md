@@ -1,11 +1,9 @@
-bdb
-===
+# bdb
 
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)]
-(https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 
 Package bdb implements an driver for walletdb that uses boltdb for the backing
-datastore.  Package bdb is licensed under the copyfree ISC license.
+datastore. Package bdb is licensed under the copyfree ISC license.
 
 ## Usage
 
