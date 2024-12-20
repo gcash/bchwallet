@@ -85,7 +85,7 @@ func createMsgTx(pkScript []byte, amts []int64) *wire.MsgTx {
 	}
 
 	for _, amt := range amts {
-		msgtx.AddTxOut(wire.NewTxOut(amt, pkScript))
+		msgtx.AddTxOut(wire.NewTxOut(amt, pkScript, wire.TokenData{}))
 	}
 	return msgtx
 }

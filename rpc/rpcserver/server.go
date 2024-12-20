@@ -8,23 +8,24 @@
 // Full documentation of the API implemented by this package is maintained in a
 // language-agnostic document:
 //
-//   https://github.com/gcash/bchwallet/blob/master/rpc/documentation/api.md
+//	https://github.com/gcash/bchwallet/blob/master/rpc/documentation/api.md
 //
 // Any API changes must be performed according to the steps listed here:
 //
-//   https://github.com/gcash/bchwallet/blob/master/rpc/documentation/serverchanges.md
+//	https://github.com/gcash/bchwallet/blob/master/rpc/documentation/serverchanges.md
 package rpcserver
 
 import (
 	"bytes"
 	"errors"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/gcash/bchwallet/pymtproto"
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
 	"google.golang.org/grpc/status"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -454,7 +455,7 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 		if err != nil {
 			return nil, err
 		}
-		outputs = append(outputs, wire.NewTxOut(out.Amount, script))
+		outputs = append(outputs, wire.NewTxOut(out.Amount, script, wire.TokenData{}))
 	}
 
 	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, fee)
@@ -516,7 +517,7 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 	}
 
 	// Set the value to zero as a placeholder while we calculate the estimate size
-	out := wire.NewTxOut(0, script)
+	out := wire.NewTxOut(0, script, wire.TokenData{})
 	outputs := []*wire.TxOut{out}
 
 	txSize := txsizes.EstimateSerializeSize(len(inputs), outputs, false)
@@ -682,12 +683,12 @@ func (s *walletServer) SignTransaction(ctx context.Context, req *pb.SignTransact
 }
 
 // BUGS:
-// - The transaction is not inspected to be relevant before publishing using
-//   sendrawtransaction, so connection errors to bchd could result in the tx
-//   never being added to the wallet database.
-// - Once the above bug is fixed, wallet will require a way to purge invalid
-//   transactions from the database when they are rejected by the network, other
-//   than double spending them.
+//   - The transaction is not inspected to be relevant before publishing using
+//     sendrawtransaction, so connection errors to bchd could result in the tx
+//     never being added to the wallet database.
+//   - Once the above bug is fixed, wallet will require a way to purge invalid
+//     transactions from the database when they are rejected by the network, other
+//     than double spending them.
 func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTransactionRequest) (
 	*pb.PublishTransactionResponse, error) {
 

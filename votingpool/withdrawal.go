@@ -371,7 +371,7 @@ func (tx *withdrawalTx) hasChange() bool {
 func (tx *withdrawalTx) toMsgTx() *wire.MsgTx {
 	msgtx := wire.NewMsgTx(wire.TxVersion)
 	for _, o := range tx.outputs {
-		msgtx.AddTxOut(wire.NewTxOut(int64(o.amount), o.pkScript()))
+		msgtx.AddTxOut(wire.NewTxOut(int64(o.amount), o.pkScript(), wire.TokenData{}))
 	}
 
 	if tx.hasChange() {
@@ -425,7 +425,7 @@ func (tx *withdrawalTx) addChange(pkScript []byte) bool {
 	log.Debugf("addChange: input total %v, output total %v, fee %v", tx.inputTotal(),
 		tx.outputTotal(), tx.fee)
 	if change > 0 {
-		tx.changeOutput = wire.NewTxOut(int64(change), pkScript)
+		tx.changeOutput = wire.NewTxOut(int64(change), pkScript, wire.TokenData{})
 		log.Debugf("Added change output with amount %v", change)
 	}
 	return tx.hasChange()
@@ -1011,7 +1011,7 @@ func signMultiSigUTXO(mgr *waddrmgr.Manager, addrmgrNs walletdb.ReadBucket, tx *
 // given index, returning an error if it fails.
 func validateSigScript(msgtx *wire.MsgTx, idx int, pkScript []byte, inputAmount int64) error {
 	vm, err := txscript.NewEngine(pkScript, msgtx, idx,
-		txscript.StandardVerifyFlags, nil, nil, inputAmount)
+		txscript.StandardVerifyFlags, nil, nil, nil, inputAmount)
 	if err != nil {
 		return newError(ErrTxSigning, "cannot create script engine", err)
 	}

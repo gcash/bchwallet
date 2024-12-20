@@ -63,7 +63,7 @@ func TestTxToOutputsDryRun(t *testing.T) {
 	}
 
 	// Add an output paying to the wallet's address to the database.
-	txOut := wire.NewTxOut(100000, p2shAddr)
+	txOut := wire.NewTxOut(100000, p2shAddr, wire.TokenData{})
 	incomingTx := &wire.MsgTx{
 		TxIn: []*wire.TxIn{
 			{},

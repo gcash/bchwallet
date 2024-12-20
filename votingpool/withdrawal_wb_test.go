@@ -701,7 +701,7 @@ func TestWithdrawalTxToMsgTxNoInputsOrOutputsWithChange(t *testing.T) {
 	defer dbtx.Commit()
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{}, []int64{})
-	tx.changeOutput = wire.NewTxOut(int64(1), []byte{})
+	tx.changeOutput = wire.NewTxOut(int64(1), []byte{}, wire.TokenData{})
 
 	msgtx := tx.toMsgTx()
 
@@ -720,7 +720,7 @@ func TestWithdrawalTxToMsgTxWithInputButNoOutputsWithChange(t *testing.T) {
 	defer dbtx.Commit()
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{1}, []int64{})
-	tx.changeOutput = wire.NewTxOut(int64(1), []byte{})
+	tx.changeOutput = wire.NewTxOut(int64(1), []byte{}, wire.TokenData{})
 
 	msgtx := tx.toMsgTx()
 
@@ -739,7 +739,7 @@ func TestWithdrawalTxToMsgTxWithInputOutputsAndChange(t *testing.T) {
 	defer dbtx.Commit()
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{1, 2, 3}, []int64{4, 5, 6})
-	tx.changeOutput = wire.NewTxOut(int64(7), []byte{})
+	tx.changeOutput = wire.NewTxOut(int64(7), []byte{}, wire.TokenData{})
 
 	msgtx := tx.toMsgTx()
 
@@ -775,7 +775,7 @@ func TestWithdrawalTxOutputTotal(t *testing.T) {
 	defer dbtx.Commit()
 
 	tx := createWithdrawalTx(t, dbtx, pool, []int64{}, []int64{4})
-	tx.changeOutput = wire.NewTxOut(int64(1), []byte{})
+	tx.changeOutput = wire.NewTxOut(int64(1), []byte{}, wire.TokenData{})
 
 	if tx.outputTotal() != bchutil.Amount(4) {
 		t.Fatalf("Wrong total output; got %v, want %v", tx.outputTotal(), bchutil.Amount(4))
@@ -1351,7 +1351,7 @@ func TestStoreTransactionsWithChangeOutput(t *testing.T) {
 	txmgrNs := dbtx.ReadWriteBucket(txmgrNamespaceKey)
 
 	wtx := createWithdrawalTxWithStoreCredits(t, dbtx, store, pool, []int64{5e6}, []int64{1e6, 1e6})
-	wtx.changeOutput = wire.NewTxOut(int64(3e6), []byte{})
+	wtx.changeOutput = wire.NewTxOut(int64(3e6), []byte{}, wire.TokenData{})
 	msgtx := wtx.toMsgTx()
 	tx := &changeAwareTx{MsgTx: msgtx, changeIdx: int32(len(msgtx.TxOut) - 1)}
 

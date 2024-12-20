@@ -19,7 +19,7 @@ func p2pkhOutputs(amounts ...bchutil.Amount) []*wire.TxOut {
 	v := make([]*wire.TxOut, 0, len(amounts))
 	for _, a := range amounts {
 		outScript := make([]byte, txsizes.P2PKHOutputSize)
-		v = append(v, wire.NewTxOut(int64(a), outScript))
+		v = append(v, wire.NewTxOut(int64(a), outScript, wire.TokenData{}))
 	}
 	return v
 }
