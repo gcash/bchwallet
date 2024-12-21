@@ -6,7 +6,7 @@ require (
 	github.com/btcsuite/golangcrypto v0.0.0-20150304025918-53f62d9b43e8
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/davecgh/go-spew v1.1.1
-	github.com/gcash/bchd v0.20.0-rc1
+	github.com/gcash/bchd v0.20.0-rc2
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
 	github.com/gcash/bchutil v0.0.0-20241220024231-3d67040d3361
 	github.com/gcash/bchwallet/walletdb v0.0.0-20241220234253-0350bbbbc8e3
@@ -371,7 +371,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.2.2 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.25.1 // indirect
 	github.com/hashicorp/consul/api v1.3.0 // indirect
 	github.com/hashicorp/consul/sdk v0.3.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -663,7 +663,7 @@ require (
 	google.golang.org/api v0.169.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20241209162323-e6fa225c2576 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20241219192143-6b3ec007d9bb // indirect
 	google.golang.org/genproto/googleapis/bytestream v0.0.0-20240304161311-37d4d3c04a78 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241219192143-6b3ec007d9bb // indirect
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.3.0 // indirect
