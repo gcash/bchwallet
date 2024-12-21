@@ -9,8 +9,8 @@ require (
 	github.com/gcash/bchd v0.20.0-rc1
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
 	github.com/gcash/bchutil v0.0.0-20241220024231-3d67040d3361
-	github.com/gcash/bchwallet/walletdb v0.0.0-20220509175733-0c2270788e43
-	github.com/gcash/neutrino v0.0.0-20210524114821-3b1878290cf9
+	github.com/gcash/bchwallet/walletdb v0.0.0-20241220234253-0350bbbbc8e3
+	github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5
 	github.com/golang/protobuf v1.5.4
 	github.com/jarcoal/httpmock v1.0.8
 	github.com/jessevdk/go-flags v1.6.1

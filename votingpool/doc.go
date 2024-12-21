@@ -5,7 +5,7 @@
 /*
 Package votingpool provides voting pool functionality for bchwallet.
 
-Overview
+# Overview
 
 The purpose of the voting pool package is to make it possible to store
 bitcoins using m-of-n multisig transactions. A pool can have multiple
@@ -20,25 +20,25 @@ be found at http://opentransactions.org/wiki/index.php?title=Category:Voting_Poo
 
 This package depends on the waddrmgr and walletdb packages.
 
-Creating a voting pool
+# Creating a voting pool
 
 A voting pool is created via the Create function. This function
 accepts a database namespace which will be used to store all
 information related to that pool under a bucket whose key is the
 pool's ID.
 
-Loading an existing pool
+# Loading an existing pool
 
 An existing voting pool is loaded via the Load function, which accepts
 the database name used when creating the pool as well as the poolID.
 
-Creating a series
+# Creating a series
 
 A series can be created via the CreateSeries method, which accepts a
 version number, a series identifier, a number of required signatures
 (m in m-of-n multisig), and a set of public keys.
 
-Deposit Addresses
+# Deposit Addresses
 
 A deposit address can be created via the DepositScriptAddress
 method, which returns a series-specific P2SH address from the multi-sig
@@ -47,19 +47,19 @@ sorted according to the given branch. The procedure to construct multi-sig
 deposit addresses is described in detail at
 http://opentransactions.org/wiki/index.php/Deposit_Address_(voting_pools)
 
-Replacing a series
+# Replacing a series
 
 A series can be replaced via the ReplaceSeries method. It accepts
 the same parameters as the CreateSeries method.
 
-Empowering a series
+# Empowering a series
 
 For security reasons, most private keys will be maintained offline and
 only brought online when they're needed. In order to bring a key online,
 one must use the EmpowerSeries method, which takes just the series ID
 and a raw private key matching one of the series' public keys.
 
-Starting withdrawals
+# Starting withdrawals
 
 When withdrawing coins from the pool, we employ a deterministic process
 in order to minimise the cost of coordinating transaction signing. For
@@ -82,6 +82,5 @@ that fulfill the output requests. It returns a WithdrawalStatus containing
 the state of every requested output, the raw signatures for the constructed
 transactions, the network fees included in those transactions and the input
 range to use in the next withdrawal.
-
 */
 package votingpool

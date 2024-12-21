@@ -315,6 +315,7 @@ func (c *BitcoindClient) shouldNotifyBlocks() bool {
 // is used to reset the current filters.
 //
 // The current filters supported are of the following types:
+//
 //	[]bchutil.Address
 //	[]wire.OutPoint
 //	[]*wire.OutPoint
