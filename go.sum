@@ -26,6 +26,8 @@ github.com/gcash/bchwallet/walletdb v0.0.0-20241220234253-0350bbbbc8e3 h1:07taLU
 github.com/gcash/bchwallet/walletdb v0.0.0-20241220234253-0350bbbbc8e3/go.mod h1:KNPI56t8uMlItrGyu3tS4NCd3jGfA6KjdUg4bsk+QJg=
 github.com/gcash/bchwallet/walletdb v0.0.0-20250104020658-3c5bb4048b68 h1:6ZHSUhblIOGF6bs/8FOANaZQ8fdSfkTRzJ1h11O7Ouc=
 github.com/gcash/bchwallet/walletdb v0.0.0-20250104020658-3c5bb4048b68/go.mod h1:KNPI56t8uMlItrGyu3tS4NCd3jGfA6KjdUg4bsk+QJg=
+github.com/gcash/bchwallet/walletdb v0.0.0-20250104020820-db0d019f6991 h1:Bs95QEd0hwbBKJTn+pApNF2CDdUi71NO1DkYBJiFDDs=
+github.com/gcash/bchwallet/walletdb v0.0.0-20250104020820-db0d019f6991/go.mod h1:KNPI56t8uMlItrGyu3tS4NCd3jGfA6KjdUg4bsk+QJg=
 github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5 h1:tyuaq7lnu/KP5NpsNv9qI4opaRnxOXi4K2vnIWNhn98=
 github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5/go.mod h1:T9na18kE3DjeeKpiG4ffnsGiHzAoCzCoFt83s9tGJ5E=
 github.com/gcash/neutrino v0.0.0-20241221073843-4250844e21af h1:hzq7EgN81z7o6LkOOoPfYWIwytW8qGhR7ZwfbBKU+OM=
