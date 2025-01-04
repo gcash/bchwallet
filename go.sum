@@ -32,6 +32,8 @@ github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5 h1:tyuaq7lnu/KP5Nps
 github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5/go.mod h1:T9na18kE3DjeeKpiG4ffnsGiHzAoCzCoFt83s9tGJ5E=
 github.com/gcash/neutrino v0.0.0-20241221073843-4250844e21af h1:hzq7EgN81z7o6LkOOoPfYWIwytW8qGhR7ZwfbBKU+OM=
 github.com/gcash/neutrino v0.0.0-20241221073843-4250844e21af/go.mod h1:L38S8U6KwDsnzfcifxmPZ0LdLFds9q93uBApAe3GQsw=
+github.com/gcash/neutrino v0.0.0-20250104021222-12db43a426b6 h1:fmvyk9yp/+0Jxt96USrBK0Gw32cGPj6CwEkMVTdKj4Y=
+github.com/gcash/neutrino v0.0.0-20250104021222-12db43a426b6/go.mod h1:hswpBT67BdKxSlo9F7RqvjOfT7K49rDk3SD2HxSK/yI=
 github.com/go-logr/logr v1.4.2 h1:6pFjapn8bFcIbiKo3XT4j/BhANplGihG6tvd+8rYgrY=
 github.com/go-logr/logr v1.4.2/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
