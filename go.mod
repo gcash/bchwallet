@@ -9,8 +9,8 @@ require (
 	github.com/gcash/bchd v0.20.0-rc2
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
 	github.com/gcash/bchutil v0.0.0-20241220024231-3d67040d3361
-	github.com/gcash/bchwallet/walletdb v0.0.0-20241220234253-0350bbbbc8e3
-	github.com/gcash/neutrino v0.0.0-20241221000643-3237163c15d5
+	github.com/gcash/bchwallet/walletdb v0.0.0-20250104020658-3c5bb4048b68
+	github.com/gcash/neutrino v0.0.0-20241221073843-4250844e21af
 	github.com/golang/protobuf v1.5.4
 	github.com/jarcoal/httpmock v1.0.8
 	github.com/jessevdk/go-flags v1.6.1
@@ -36,7 +36,7 @@ require (
 	golang.org/x/term v0.27.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/tools v0.28.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20241219192143-6b3ec007d9bb // indirect
-	google.golang.org/protobuf v1.36.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250102185135-69823020774d // indirect
+	google.golang.org/protobuf v1.36.1 // indirect
 	lukechampine.com/uint128 v1.3.0 // indirect
 )
