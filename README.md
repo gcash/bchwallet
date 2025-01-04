@@ -82,7 +82,7 @@ Building or updating from source requires the following build dependencies:
 **Getting the source**:
 
 ```
-go get github.com/gcash/bchwallet
+go install github.com/gcash/bchwallet@latest
 ```
 
 **Building/Installing**:
