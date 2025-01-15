@@ -127,6 +127,8 @@ github.com/gcash/neutrino v0.0.0-20250104025624-ad353a22afdd h1:1QhDKUUMiGFUnxkQ
 github.com/gcash/neutrino v0.0.0-20250104025624-ad353a22afdd/go.mod h1:hswpBT67BdKxSlo9F7RqvjOfT7K49rDk3SD2HxSK/yI=
 github.com/gcash/neutrino v0.0.0-20250115071805-4cc8a854e45d h1:6dTR1gjkG/JcPtLt5PHBtaMrb+oU9iAlRbna1fwm+Vw=
 github.com/gcash/neutrino v0.0.0-20250115071805-4cc8a854e45d/go.mod h1:hswpBT67BdKxSlo9F7RqvjOfT7K49rDk3SD2HxSK/yI=
+github.com/gcash/neutrino v0.0.0-20250115072347-ba61cc889225 h1:/x6guk5i2xMOMgRNDZYL+Qv2gAu0MG7u6zBhBneFviU=
+github.com/gcash/neutrino v0.0.0-20250115072347-ba61cc889225/go.mod h1:8G6Uqo/EQtCaXUChjarnp5LaD2vWUj7rokX/AqdQC/M=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/gin-contrib/sse v0.1.0/go.mod h1:RHrZQHXnP2xjPF+u1gW/2HnVO7nvIa9PG3Gm+fLHvGI=
 github.com/gin-gonic/gin v1.6.3/go.mod h1:75u5sXoLsGZoRN5Sgbi1eraJ4GU3++wFwWzhwvtwp4M=
@@ -574,6 +576,7 @@ golang.org/x/tools v0.0.0-20200103221440-774c71fcf114/go.mod h1:TB2adYChydJhpapK
 golang.org/x/tools v0.0.0-20200207183749-b753a1ba74fa/go.mod h1:TB2adYChydJhpapKDTa4BR/hXlZSLoq2Wpct/0txZ28=
 golang.org/x/tools v0.28.0 h1:WuB6qZ4RPCQo5aP3WdKZS7i595EdWqWR8vqJTlwTVK8=
 golang.org/x/tools v0.28.0/go.mod h1:dcIOrVd3mfQKTgrDVQHqCPMWy6lnhfhtX3hLXYVLfRw=
+golang.org/x/tools v0.29.0/go.mod h1:KMQVMRsVxU6nHCFXrBPhDB8XncLNLM0lIy/F14RP588=
 golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
