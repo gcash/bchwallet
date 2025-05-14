@@ -138,6 +138,8 @@ github.com/gcash/neutrino v0.0.0-20250115072347-ba61cc889225 h1:/x6guk5i2xMOMgRN
 github.com/gcash/neutrino v0.0.0-20250115072347-ba61cc889225/go.mod h1:8G6Uqo/EQtCaXUChjarnp5LaD2vWUj7rokX/AqdQC/M=
 github.com/gcash/neutrino v0.0.0-20250507004141-da582a03b90d h1:dz/gqOrp6dhZzZ0FEUKqBmICqjyVvw5cCFpkvd+DTOs=
 github.com/gcash/neutrino v0.0.0-20250507004141-da582a03b90d/go.mod h1:8G6Uqo/EQtCaXUChjarnp5LaD2vWUj7rokX/AqdQC/M=
+github.com/gcash/neutrino v0.0.0-20250514015105-313c5c417c87 h1:6b0dOSupp2rFcW+N9deCwswOiKINi2+ytWjMYCrcZBw=
+github.com/gcash/neutrino v0.0.0-20250514015105-313c5c417c87/go.mod h1:4qnUSGcf42mTz8rmCP3iXU9PPwK9/rnDVfoTw8xJR0I=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/gin-contrib/sse v0.1.0/go.mod h1:RHrZQHXnP2xjPF+u1gW/2HnVO7nvIa9PG3Gm+fLHvGI=
 github.com/gin-gonic/gin v1.6.3/go.mod h1:75u5sXoLsGZoRN5Sgbi1eraJ4GU3++wFwWzhwvtwp4M=
