@@ -136,8 +136,8 @@ func TestWalletCreationSerialization(t *testing.T) {
 		return
 	}
 
-	w1.Lock()
-	w2.Lock()
+	_ = w1.Lock()
+	_ = w2.Lock()
 
 	if err = w1.Unlock([]byte("banana")); err != nil {
 		t.Error("Decrypting original wallet failed: " + err.Error())
@@ -473,8 +473,14 @@ func TestWalletPubkeyChaining(t *testing.T) {
 	// Check that the serialized wallet correctly unmarked the 'needs private
 	// keys later' flag.
 	buf := new(bytes.Buffer)
-	w2.WriteTo(buf)
-	w2.ReadFrom(buf)
+	if _, err := w2.WriteTo(buf); err != nil {
+		t.Errorf("WriteTo failed: %v", err)
+		return
+	}
+	if _, err := w2.ReadFrom(buf); err != nil {
+		t.Errorf("ReadFrom failed: %v", err)
+		return
+	}
 	err = w2.Unlock([]byte("banana"))
 	if err != nil {
 		t.Errorf("Unlock after serialize/deserialize failed: %v", err)
@@ -1037,7 +1043,7 @@ func TestImportScript(t *testing.T) {
 		return
 	}
 
-	if sinfo.RequiredSigs() != sinfo.RequiredSigs() {
+	if sinfo.RequiredSigs() != sinfo2.RequiredSigs() {
 		t.Errorf("original and serailised scriptinfo requiredsigs "+
 			"don't match %d != %d", sinfo.RequiredSigs(),
 			sinfo2.RequiredSigs())

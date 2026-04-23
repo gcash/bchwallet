@@ -226,9 +226,7 @@ func (r OutputRequest) outBailmentIDHash() []byte {
 	hasher := sha256.New()
 	// hasher.Write() always returns nil as the error, so it's safe to ignore it here.
 	_, _ = hasher.Write([]byte(str))
-	id := hasher.Sum(nil)
-	r.cachedHash = id
-	return id
+	return hasher.Sum(nil)
 }
 
 func (o *WithdrawalOutput) String() string {

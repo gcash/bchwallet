@@ -19,7 +19,6 @@ package votingpool_test
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -65,7 +64,7 @@ func ExampleCreate() {
 		fmt.Println(err)
 		return
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 
 	// Create a new walletdb namespace for the address manager.
 	mgrNamespace, err := dbtx.CreateTopLevelBucket([]byte("waddrmgr"))
@@ -168,7 +167,7 @@ func Example_empowerSeries() {
 		if err != nil {
 			return err
 		}
-		defer mgr.Lock()
+		defer func() { _ = mgr.Lock() }()
 		privKey := "xprv9s21ZrQH143K2j9PK4CXkCu8sgxkpUxCF7p1KVwiV5tdnkeYzJXReUkxz5iB2FUzTXC1L15abCDG4RMxSYT5zhm67uvsnLYxuDhZfoFcB6a"
 		return pool.EmpowerSeries(ns, seriesID, privKey)
 	})
@@ -205,7 +204,7 @@ func Example_startWithdrawal() {
 		if err != nil {
 			return err
 		}
-		defer mgr.Lock()
+		defer func() { _ = mgr.Lock() }()
 
 		addr, _ := bchutil.DecodeAddress("1MirQ9bwyQcGVJPwKUgapu5ouK2E2Ey4gX", mgr.ChainParams())
 		pkScript, _ := txscript.PayToAddrScript(addr)
@@ -252,7 +251,7 @@ func Example_startWithdrawal() {
 }
 
 func createWalletDB() (walletdb.DB, func(), error) {
-	dir, err := ioutil.TempDir("", "votingpool_example")
+	dir, err := os.MkdirTemp("", "votingpool_example")
 	if err != nil {
 		return nil, nil, err
 	}

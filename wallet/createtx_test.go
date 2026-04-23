@@ -6,7 +6,6 @@ package wallet
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -27,7 +26,7 @@ import (
 // non-dry run call produces a similar transaction to the dry-run.
 func TestTxToOutputsDryRun(t *testing.T) {
 	// Set up a wallet.
-	dir, err := ioutil.TempDir("", "createtx_test")
+	dir, err := os.MkdirTemp("", "createtx_test")
 	if err != nil {
 		t.Fatalf("Failed to create db dir: %v", err)
 	}

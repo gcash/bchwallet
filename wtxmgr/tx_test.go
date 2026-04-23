@@ -7,7 +7,6 @@ package wtxmgr
 import (
 	"bytes"
 	"encoding/hex"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +46,7 @@ var (
 )
 
 func testDB() (walletdb.DB, func(), error) {
-	tmpDir, err := ioutil.TempDir("", "wtxmgr_test")
+	tmpDir, err := os.MkdirTemp("", "wtxmgr_test")
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -58,7 +57,7 @@ func testDB() (walletdb.DB, func(), error) {
 var namespaceKey = []byte("txstore")
 
 func testStore() (*Store, walletdb.DB, func(), error) {
-	tmpDir, err := ioutil.TempDir("", "wtxmgr_test")
+	tmpDir, err := os.MkdirTemp("", "wtxmgr_test")
 	if err != nil {
 		return nil, nil, func() {}, err
 	}
@@ -569,7 +568,7 @@ func TestFindingSpentCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns := dbtx.ReadWriteBucket(namespaceKey)
 
 	// Insert transaction and credit which will be spent.
@@ -676,7 +675,7 @@ func TestCoinbases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns := dbtx.ReadWriteBucket(namespaceKey)
 
 	b100 := BlockMeta{
@@ -1082,7 +1081,7 @@ func TestMoveMultipleToSameBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns := dbtx.ReadWriteBucket(namespaceKey)
 
 	b100 := BlockMeta{
@@ -1259,7 +1258,7 @@ func TestInsertUnserializedTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns := dbtx.ReadWriteBucket(namespaceKey)
 
 	tx := newCoinBase(50e8)
@@ -1349,7 +1348,7 @@ func TestRemoveUnminedTx(t *testing.T) {
 
 	// Determine the maturity height for the coinbase output created.
 	coinbaseMaturity := int32(chaincfg.TestNet3Params.CoinbaseMaturity)
-	maturityHeight := b100.Block.Height + coinbaseMaturity
+	maturityHeight := b100.Height + coinbaseMaturity
 
 	// checkBalance is a helper function that compares the balance of the
 	// store with the expected value. The includeUnconfirmed boolean can be
@@ -1723,7 +1722,7 @@ func commitDBTx(t *testing.T, store *Store, db walletdb.DB,
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbTx.Commit()
+	defer func() { _ = dbTx.Commit() }()
 
 	ns := dbTx.ReadWriteBucket(namespaceKey)
 

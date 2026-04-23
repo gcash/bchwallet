@@ -21,7 +21,7 @@ func TestStartWithdrawal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 	txmgrNs := vp.TstTxStoreRWNamespace(dbtx)
 

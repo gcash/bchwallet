@@ -46,6 +46,8 @@ func (c *failingCryptoKey) Decrypt(in []byte) ([]byte, error) {
 // It only differs from the one available in wire in that it panics on an
 // error since it will only (and must only) be called with hard-coded, and
 // therefore known good, hashes.
+//
+//lint:ignore U1000 retained for use by future tests.
 func newHash(hexStr string) *chainhash.Hash {
 	hash, err := chainhash.NewHashFromStr(hexStr)
 	if err != nil {
@@ -56,6 +58,8 @@ func newHash(hexStr string) *chainhash.Hash {
 
 // failingSecretKeyGen is a SecretKeyGenerator that always returns
 // snacl.ErrDecryptFailed.
+//
+//lint:ignore U1000 retained for use by future tests.
 func failingSecretKeyGen(passphrase *[]byte,
 	config *ScryptOptions) (*snacl.SecretKey, error) {
 	return nil, errors.New("failingSecretKeyGen intentionally failed to decrypt")
@@ -93,10 +97,11 @@ const (
 type expectedAddr struct {
 	address        string
 	addressHash    []byte
-	internal       bool
-	compressed     bool
-	used           bool
-	imported       bool
+	internal   bool
+	compressed bool
+	//lint:ignore U1000 retained for future expected-address checks.
+	used     bool
+	imported bool
 	pubKey         []byte
 	privKey        []byte
 	privKeyWIF     string
@@ -1386,6 +1391,10 @@ func testLookupAccount(tc *testContext) bool {
 		lastAccount, err = tc.manager.LastAccount(ns)
 		return err
 	})
+	if err != nil {
+		tc.t.Errorf("LastAccount: unexpected error: %v", err)
+		return false
+	}
 	expectedLastAccount := uint32(1)
 	if !tc.create {
 		// Existing wallet manager will have 3 accounts

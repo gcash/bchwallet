@@ -32,6 +32,8 @@ import (
 
 // confirmed checks whether a transaction at height txHeight has met minconf
 // confirmations for a blockchain at height curHeight.
+//
+//lint:ignore U1000 retained for symmetry with confirms helper.
 func confirmed(minconf, txHeight, curHeight int32) bool {
 	return confirms(txHeight, curHeight) >= minconf
 }
@@ -397,6 +399,8 @@ func dumpPrivKey(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 // dumpWallet handles a dumpwallet request by returning  all private
 // keys in a wallet, or an appropiate error if the wallet is locked.
 // TODO: finish this to match bitcoind by writing the dump to a file.
+//
+//lint:ignore U1000 retained pending bitcoind-compatible dumpwallet support.
 func dumpWallet(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	keys, err := w.DumpPrivKeys()
 	if waddrmgr.IsError(err, waddrmgr.ErrLocked) {
@@ -1121,6 +1125,8 @@ func listReceivedByAddress(icmd interface{}, w *wallet.Wallet) (interface{}, err
 		// Hashes of transactions which include an output paying to the address
 		tx []string
 		// Account which the address belongs to
+		//
+		//lint:ignore U1000 retained for future per-account aggregation.
 		account string
 	}
 
@@ -1564,8 +1570,12 @@ func signMessage(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	}
 
 	var buf bytes.Buffer
-	wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
-	wire.WriteVarString(&buf, 0, cmd.Message)
+	if err := wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n"); err != nil {
+		return nil, err
+	}
+	if err := wire.WriteVarString(&buf, 0, cmd.Message); err != nil {
+		return nil, err
+	}
 	messageHash := chainhash.DoubleHashB(buf.Bytes())
 	sigbytes, err := bchec.SignCompact(bchec.S256(), privKey,
 		messageHash, true)
@@ -1606,7 +1616,7 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 	case "SINGLE|ANYONECANPAY":
 		hashType = txscript.SigHashSingle | txscript.SigHashAnyOneCanPay
 	default:
-		e := errors.New("Invalid sighash parameter")
+		e := errors.New("invalid sighash parameter")
 		return nil, InvalidParameterError{e}
 	}
 
@@ -1862,8 +1872,12 @@ func verifyMessage(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	// Validate the signature - this just shows that it was valid at all.
 	// we will compare it with the key next.
 	var buf bytes.Buffer
-	wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
-	wire.WriteVarString(&buf, 0, cmd.Message)
+	if err := wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n"); err != nil {
+		return nil, err
+	}
+	if err := wire.WriteVarString(&buf, 0, cmd.Message); err != nil {
+		return nil, err
+	}
 	expectedMessageHash := chainhash.DoubleHashB(buf.Bytes())
 	pk, wasCompressed, err := bchec.RecoverCompact(bchec.S256(), sig,
 		expectedMessageHash)

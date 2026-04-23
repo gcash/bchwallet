@@ -143,6 +143,9 @@ func TestMigrationDropTransactionHistory(t *testing.T) {
 		confirmedSpendRec, err := NewTxRecordFromMsgTx(
 			confirmedSpend, timeNow(),
 		)
+		if err != nil {
+			return err
+		}
 		if err := s.InsertTx(ns, confirmedSpendRec, b); err != nil {
 			return err
 		}

@@ -131,7 +131,7 @@ func (c *RPCClient) Stop() {
 	case <-c.quit:
 	default:
 		close(c.quit)
-		c.Client.Shutdown()
+		c.Shutdown()
 
 		if !c.started {
 			close(c.dequeueNotification)
@@ -166,7 +166,7 @@ func (c *RPCClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Address,
 		flatOutpoints = append(flatOutpoints, &ops)
 	}
 
-	return c.Client.Rescan(startHash, addrs, flatOutpoints)
+	return c.Client.Rescan(startHash, addrs, flatOutpoints) //nolint:staticcheck // Rescan intentionally retained; RescanBlocks has different semantics.
 }
 
 // WaitForShutdown blocks until both the client has finished disconnecting

@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"sync"
@@ -61,7 +60,8 @@ type Server struct {
 	httpServer    http.Server
 	wallet        *wallet.Wallet
 	walletLoader  *wallet.Loader
-	chainClient   chain.Interface
+	chainClient chain.Interface
+	//lint:ignore U1000 retained for future custom handler dispatch.
 	handlerLookup func(string) (requestHandler, bool)
 	handlerMu     sync.Mutex
 
@@ -326,7 +326,7 @@ func throttled(threshold int64, h http.Handler) http.Handler {
 
 		if current-1 >= threshold {
 			log.Warnf("Reached threshold of %d concurrent active clients", threshold)
-			http.Error(w, "429 Too Many Requests", 429)
+			http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
 
@@ -337,6 +337,8 @@ func throttled(threshold int64, h http.Handler) http.Handler {
 // sanitizeRequest returns a sanitized string for the request which may be
 // safely logged.  It is intended to strip private keys, passphrases, and any
 // other secrets from request parameters before they may be saved to a log file.
+//
+//lint:ignore U1000 retained for future debug-logging of incoming requests.
 func sanitizeRequest(r *btcjson.Request) string {
 	// These are considered unsafe to log, so sanitize parameters.
 	switch r.Method {
@@ -563,7 +565,7 @@ const maxRequestSize = 1024 * 1024 * 4
 // postClientRPC processes and replies to a JSON-RPC client request.
 func (s *Server) postClientRPC(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, maxRequestSize)
-	rpcRequest, err := ioutil.ReadAll(body)
+	rpcRequest, err := io.ReadAll(body)
 	if err != nil {
 		// TODO: what if the underlying reader errored?
 		http.Error(w, "413 Request Too Large.",

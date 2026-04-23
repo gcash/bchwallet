@@ -277,6 +277,8 @@ func uint32ToBytes(number uint32) []byte {
 
 // uint64ToBytes converts a 64 bit unsigned integer into a 8-byte slice in
 // little-endian order: 1 -> [1 0 0 0 0 0 0 0].
+//
+//lint:ignore U1000 retained for future schema fields.
 func uint64ToBytes(number uint64) []byte {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, number)
@@ -313,6 +315,8 @@ func scopeToBytes(scope *KeyScope) [scopeKeySize]byte {
 
 // scopeFromBytes decodes a serializes manager scope into its concrete manager
 // scope struct.
+//
+//lint:ignore U1000 retained for future schema migrations.
 func scopeFromBytes(scopeBytes []byte) KeyScope {
 	return KeyScope{
 		Purpose: binary.LittleEndian.Uint32(scopeBytes[:]),
@@ -363,6 +367,8 @@ func fetchScopeAddrSchema(ns walletdb.ReadBucket,
 
 // putScopeAddrSchema attempts to store the passed addr scehma for the given
 // manager scope.
+//
+//lint:ignore U1000 retained for future scope-schema mutation paths.
 func putScopeAddrTypes(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	schema *ScopeAddrSchema) error {
 

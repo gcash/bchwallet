@@ -30,7 +30,7 @@ func TestGetEligibleInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	series := []TstSeriesDef{
@@ -45,10 +45,8 @@ func TestGetEligibleInputs(t *testing.T) {
 	// Create two eligible inputs locked to each of the PKScripts above.
 	expNoEligibleInputs := 2 * len(scripts)
 	eligibleAmounts := []int64{int64(dustThreshold + 1), int64(dustThreshold + 1)}
-	var inputs []wtxmgr.Credit
 	for i := 0; i < len(scripts); i++ {
-		created := TstCreateCreditsOnStore(t, dbtx, store, scripts[i], eligibleAmounts)
-		inputs = append(inputs, created...)
+		TstCreateCreditsOnStore(t, dbtx, store, scripts[i], eligibleAmounts)
 	}
 
 	startAddr := TstNewWithdrawalAddress(t, dbtx, pool, 1, 0, 0)
@@ -88,7 +86,7 @@ func TestNextAddrWithVaryingHighestIndices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	series := []TstSeriesDef{
@@ -147,7 +145,7 @@ func TestNextAddr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	series := []TstSeriesDef{
@@ -228,13 +226,13 @@ func TestEligibleInputsAreEligible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 
 	var chainHeight int32 = 1000
 	_, credits := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold)})
 	c := credits[0]
 	// Make sure Credit is old enough to pass the minConf check.
-	c.BlockMeta.Height = int32(eligibleInputMinConfirmations)
+	c.Height = int32(eligibleInputMinConfirmations)
 
 	if !pool.isCreditEligible(c, eligibleInputMinConfirmations, chainHeight, dustThreshold) {
 		t.Errorf("Input is not eligible and it should be.")
@@ -249,13 +247,13 @@ func TestNonEligibleInputsAreNotEligible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 
 	var chainHeight int32 = 1000
 	_, credits := tstCreateCreditsOnNewSeries(t, dbtx, pool, []int64{int64(dustThreshold - 1)})
 	c := credits[0]
 	// Make sure Credit is old enough to pass the minConf check.
-	c.BlockMeta.Height = int32(eligibleInputMinConfirmations)
+	c.Height = int32(eligibleInputMinConfirmations)
 
 	// Check that Credit below dustThreshold is rejected.
 	if pool.isCreditEligible(c, eligibleInputMinConfirmations, chainHeight, dustThreshold) {
@@ -268,7 +266,7 @@ func TestNonEligibleInputsAreNotEligible(t *testing.T) {
 	// The calculation of if it has been confirmed does this: chainheigt - bh +
 	// 1 >= target, which is quite weird, but the reason why I need to put 902
 	// is *that* makes 1000 - 902 +1 = 99 >= 100 false
-	c.BlockMeta.Height = int32(902)
+	c.Height = int32(902)
 	if pool.isCreditEligible(c, eligibleInputMinConfirmations, chainHeight, dustThreshold) {
 		t.Errorf("Input is eligible and it should not be.")
 	}
@@ -282,7 +280,7 @@ func TestCreditSortingByAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 
 	series := []TstSeriesDef{
 		{ReqSigs: 2, PubKeys: TstPubKeys[1:4], SeriesID: 1},
@@ -364,8 +362,8 @@ func checkUniqueness(t *testing.T, credits byAddress) {
 			series:      c.addr.SeriesID(),
 			branch:      c.addr.Branch(),
 			index:       c.addr.Index(),
-			hash:        c.OutPoint.Hash,
-			outputIndex: c.OutPoint.Index,
+			hash:        c.Hash,
+			outputIndex: c.Index,
 		}
 		if _, exists := uniqMap[u]; exists {
 			t.Fatalf("Duplicate found: %v", u)

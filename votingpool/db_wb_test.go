@@ -81,7 +81,7 @@ func TestWithdrawalSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	roundID := uint32(0)

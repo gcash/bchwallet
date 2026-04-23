@@ -20,7 +20,6 @@ package votingpool
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -188,6 +187,8 @@ func TstCreateMasterKey(t *testing.T, seed []byte) *hdkeychain.ExtendedKey {
 }
 
 // createMasterKeys creates count master ExtendedKeys with unique seeds.
+//
+//lint:ignore U1000 retained for use by future tests.
 func createMasterKeys(t *testing.T, count int) []*hdkeychain.ExtendedKey {
 	keys := make([]*hdkeychain.ExtendedKey, count)
 	for i := range keys {
@@ -328,7 +329,7 @@ func TstCreatePool(t *testing.T) (tearDownFunc func(), db walletdb.DB, pool *Poo
 	t.Parallel()
 
 	// Create a new wallet DB and addr manager.
-	dir, err := ioutil.TempDir("", "pool_test")
+	dir, err := os.MkdirTemp("", "pool_test")
 	if err != nil {
 		t.Fatalf("Failed to create db dir: %v", err)
 	}

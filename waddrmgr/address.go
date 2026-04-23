@@ -112,11 +112,12 @@ type ManagedScriptAddress interface {
 // the private key associated with the public key.
 type managedAddress struct {
 	manager          *ScopedKeyManager
-	derivationPath   DerivationPath
-	address          bchutil.Address
-	imported         bool
-	internal         bool
-	compressed       bool
+	derivationPath DerivationPath
+	address        bchutil.Address
+	imported       bool
+	internal       bool
+	compressed     bool
+	//lint:ignore U1000 retained for future cached address-used tracking.
 	used             bool
 	addrType         AddressType
 	pubKey           *bchec.PublicKey
@@ -354,6 +355,9 @@ func newManagedAddressWithoutPrivKey(m *ScopedKeyManager,
 		} else {
 			address, err = bchutil.NewAddressPubKey(pubKey.SerializeUncompressed(), m.rootManager.chainParams)
 		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &managedAddress{
@@ -452,9 +456,10 @@ type scriptAddress struct {
 	account         uint32
 	address         *bchutil.AddressScriptHash
 	scriptEncrypted []byte
-	scriptCT        []byte
-	scriptMutex     sync.Mutex
-	used            bool
+	scriptCT    []byte
+	scriptMutex sync.Mutex
+	//lint:ignore U1000 retained for future cached script-used tracking.
+	used bool
 }
 
 // Enforce scriptAddress satisfies the ManagedScriptAddress interface.

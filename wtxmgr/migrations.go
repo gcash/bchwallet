@@ -64,7 +64,7 @@ func (m *MigrationManager) CurrentVersion(ns walletdb.ReadBucket) (uint32, error
 	if ns == nil {
 		ns = m.ns
 	}
-	return fetchVersion(m.ns)
+	return fetchVersion(ns)
 }
 
 // SetVersion sets the version of the service's database.
@@ -76,7 +76,7 @@ func (m *MigrationManager) SetVersion(ns walletdb.ReadWriteBucket,
 	if ns == nil {
 		ns = m.ns
 	}
-	return putVersion(m.ns, version)
+	return putVersion(ns, version)
 }
 
 // Versions returns all of the available database versions of the service.

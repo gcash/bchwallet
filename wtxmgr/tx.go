@@ -58,6 +58,8 @@ type indexedIncidence struct {
 
 // debit records the debits a transaction record makes from previous wallet
 // transaction credits.
+//
+//lint:ignore U1000 retained for future debit-record consumers.
 type debit struct {
 	txHash chainhash.Hash
 	index  uint32

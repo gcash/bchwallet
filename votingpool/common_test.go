@@ -44,7 +44,7 @@ func TstRunWithManagerUnlocked(t *testing.T, mgr *waddrmgr.Manager, addrmgrNs wa
 	if err := mgr.Unlock(addrmgrNs, privPassphrase); err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Lock()
+	defer func() { _ = mgr.Lock() }()
 	callback()
 }
 

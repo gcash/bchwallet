@@ -48,6 +48,7 @@ const (
 	// data in the waddrmgr namespace.  Transactions are not yet encrypted.
 	InsecurePubPassphrase = "public"
 
+	//lint:ignore U1000 retained for future watching-only wallet database support.
 	walletDbWatchingOnlyName = "wowallet.db"
 
 	// recoveryBatchSize is the default number of blocks that will be
@@ -116,9 +117,13 @@ type Wallet struct {
 	changePassphrases  chan changePassphrasesRequest
 
 	// Information for reorganization handling.
+	//
+	//lint:ignore U1000 retained for future reorganization tracking.
 	reorganizingLock sync.Mutex
+	//lint:ignore U1000 retained for future reorganization tracking.
 	reorganizeToHash chainhash.Hash
-	reorganizing     bool
+	//lint:ignore U1000 retained for future reorganization tracking.
+	reorganizing bool
 
 	NtfnServer *NotificationServer
 
@@ -1542,6 +1547,8 @@ func (w *Wallet) ChangePassphrases(publicOld, publicNew, privateOld,
 // accountUsed returns whether there are any recorded transactions spending to
 // a given account. It returns true if atleast one address in the account was
 // used and false if no address in the account was used.
+//
+//lint:ignore U1000 retained for future account-used queries.
 func (w *Wallet) accountUsed(addrmgrNs walletdb.ReadWriteBucket, account uint32) (bool, error) {
 	var used bool
 	err := w.Manager.ForEachAccountAddress(addrmgrNs, account,
@@ -1855,6 +1862,7 @@ func (w *Wallet) RenameAccount(scope waddrmgr.KeyScope, account uint32, newName 
 	return err
 }
 
+//lint:ignore U1000 retained for future seed-restore account limits.
 const maxEmptyAccounts = 100
 
 // NextAccount creates the next account and returns its account number.  The
@@ -2547,8 +2555,8 @@ func (s creditSlice) Len() int {
 func (s creditSlice) Less(i, j int) bool {
 	switch {
 	// If both credits are from the same tx, sort by output index.
-	case s[i].OutPoint.Hash == s[j].OutPoint.Hash:
-		return s[i].OutPoint.Index < s[j].OutPoint.Index
+	case s[i].Hash == s[j].Hash:
+		return s[i].Index < s[j].Index
 
 	// If both transactions are unmined, sort by their received date.
 	case s[i].Height == -1 && s[j].Height == -1:
@@ -2684,8 +2692,8 @@ func (w *Wallet) ListUnspent(minconf, maxconf int32,
 			}
 
 			result := &btcjson.ListUnspentResult{
-				TxID:          output.OutPoint.Hash.String(),
-				Vout:          output.OutPoint.Index,
+				TxID:          output.Hash.String(),
+				Vout:          output.Index,
 				Account:       acctName,
 				ScriptPubKey:  hex.EncodeToString(output.PkScript),
 				Amount:        output.Amount.ToBCH(),
@@ -2858,7 +2866,7 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *bchutil.WIF,
 	} else {
 		err := w.chainClient.NotifyReceived([]bchutil.Address{addr})
 		if err != nil {
-			return "", fmt.Errorf("Failed to subscribe for address ntfns for "+
+			return "", fmt.Errorf("failed to subscribe for address ntfns for "+
 				"address %s: %s", addr.EncodeAddress(), err)
 		}
 	}

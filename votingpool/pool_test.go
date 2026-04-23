@@ -26,7 +26,7 @@ func TestLoadPoolAndDepositScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	// setup
@@ -60,7 +60,7 @@ func TestLoadPoolAndCreateSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	poolID := "test"
@@ -89,7 +89,7 @@ func TestLoadPoolAndReplaceSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	// setup
@@ -115,7 +115,7 @@ func TestLoadPoolAndEmpowerSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 
 	// setup
@@ -142,7 +142,7 @@ func TestDepositScriptAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	tests := []struct {
@@ -203,7 +203,7 @@ func TestDepositScriptAddressForHardenedPubKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	if err := pool.CreateSeries(ns, 1, 1, 2, vp.TstPubKeys[0:3]); err != nil {
@@ -225,7 +225,7 @@ func TestLoadPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	pool2, err := vp.Load(ns, pool.Manager(), pool.ID)
@@ -245,7 +245,7 @@ func TestCreatePool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	pool2, err := vp.Create(ns, pool.Manager(), []byte{0x02})
@@ -265,7 +265,7 @@ func TestCreatePoolWhenAlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	_, err = vp.Create(ns, pool.Manager(), pool.ID)
@@ -281,7 +281,7 @@ func TestCreateSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	tests := []struct {
@@ -339,7 +339,7 @@ func TestPoolCreateSeriesInvalidID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	err = pool.CreateSeries(ns, vp.CurrentVersion, 0, 1, vp.TstPubKeys[0:3])
@@ -355,7 +355,7 @@ func TestPoolCreateSeriesWhenAlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	pubKeys := vp.TstPubKeys[0:3]
@@ -376,7 +376,7 @@ func TestPoolCreateSeriesIDNotSequential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	pubKeys := vp.TstPubKeys[0:4]
@@ -397,7 +397,7 @@ func TestPutSeriesErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	tests := []struct {
@@ -449,7 +449,7 @@ func TestCannotReplaceEmpoweredSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 
 	seriesID := uint32(1)
@@ -478,7 +478,7 @@ func TestReplaceNonExistingSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	pubKeys := vp.TstPubKeys[0:3]
@@ -551,7 +551,7 @@ func TestReplaceExistingSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	for _, data := range replaceSeriesTestData {
@@ -609,7 +609,7 @@ func TestEmpowerSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 
 	seriesID := uint32(1)
@@ -632,7 +632,7 @@ func TestEmpowerSeriesErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	seriesID := uint32(1)
@@ -686,7 +686,7 @@ func TestPoolSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	expectedPubKeys := vp.CanonicalKeyOrder(vp.TstPubKeys[0:3])
@@ -793,7 +793,7 @@ func TestLoadAllSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 
 	for _, test := range testLoadAllSeriesTests {
@@ -1001,7 +1001,7 @@ func TestEmpowerSeriesNeuterFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, _ := vp.TstRWNamespaces(dbtx)
 
 	seriesID := uint32(1)
@@ -1051,7 +1051,7 @@ func TestPoolChangeAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 
 	pubKeys := vp.TstPubKeys[1:4]
 	vp.TstCreateSeries(t, dbtx, pool, []vp.TstSeriesDef{{ReqSigs: 2, PubKeys: pubKeys, SeriesID: 1}})
@@ -1075,7 +1075,7 @@ func TestPoolWithdrawalAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := vp.TstRWNamespaces(dbtx)
 
 	pubKeys := vp.TstPubKeys[1:4]

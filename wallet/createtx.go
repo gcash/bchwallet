@@ -118,7 +118,7 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 	if err != nil {
 		return nil, err
 	}
-	defer dbtx.Rollback()
+	defer func() { _ = dbtx.Rollback() }()
 
 	addrmgrNs := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
 

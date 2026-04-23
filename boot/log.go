@@ -26,8 +26,8 @@ import (
 type logWriter struct{}
 
 func (logWriter) Write(p []byte) (n int, err error) {
-	os.Stdout.Write(p)
-	logRotatorPipe.Write(p)
+	_, _ = os.Stdout.Write(p)
+	_, _ = logRotatorPipe.Write(p)
 	return len(p), nil
 }
 
@@ -101,7 +101,9 @@ func initLogRotator(logFile string) {
 	}
 
 	pr, pw := io.Pipe()
-	go r.Run(pr)
+	go func() {
+		_ = r.Run(pr)
+	}()
 
 	logRotator = r
 	logRotatorPipe = pw
@@ -135,6 +137,8 @@ func setLogLevels(logLevel string) {
 
 // pickNoun returns the singular or plural form of a noun depending
 // on the count n.
+//
+//lint:ignore U1000 retained for future log-formatting helpers.
 func pickNoun(n int, singular, plural string) string {
 	if n == 1 {
 		return singular

@@ -146,7 +146,7 @@ func createWallet(cfg *config) error {
 		// Import the addresses in the legacy keystore to the new wallet if
 		// any exist, locking each wallet again when finished.
 		loader.RunAfterLoad(func(w *wallet.Wallet) {
-			defer legacyKeyStore.Lock()
+			defer func() { _ = legacyKeyStore.Lock() }()
 
 			fmt.Println("Importing addresses from existing wallet...")
 

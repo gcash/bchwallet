@@ -25,7 +25,7 @@ import (
 
 // UseLogger sets the logger to use for the gRPC server.
 func UseLogger(l bchlog.Logger) {
-	grpclog.SetLogger(logger{l})
+	grpclog.SetLogger(logger{l}) //nolint:staticcheck // SetLogger retained; SetLoggerV2 has an incompatible interface.
 }
 
 // logger uses a bchlog.Logger to implement the grpclog.Logger interface.

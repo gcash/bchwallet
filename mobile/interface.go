@@ -16,7 +16,9 @@ import (
 // Once the wallet is started you will want to control it using the gRPC API. A `CreateWallet` RPC
 // is available which you will need to call first.
 func StartWallet(configPath string) {
-	go boot.WalletMain(&configPath)
+	go func() {
+		_ = boot.WalletMain(&configPath)
+	}()
 }
 
 // StopWallet will stop the wallet and perform a clean shutdown.

@@ -107,14 +107,14 @@ func (w *Wallet) handleChainNotifications() {
 					chainClient, birthdayStore,
 				)
 				if err != nil && !waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
-					panic(fmt.Errorf("Unable to sanity "+
+					panic(fmt.Errorf("unable to sanity "+
 						"check wallet birthday block: %v",
 						err))
 				}
 
 				err = w.syncWithChain(birthdayBlock)
 				if err != nil && !w.ShuttingDown() {
-					panic(fmt.Errorf("Unable to synchronize "+
+					panic(fmt.Errorf("unable to synchronize "+
 						"wallet to chain: %v", err))
 				}
 			case chain.BlockConnected:

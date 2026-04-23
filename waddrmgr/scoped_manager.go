@@ -1143,7 +1143,11 @@ func (s *ScopedKeyManager) FirstUnusedAddress(ns walletdb.ReadBucket,
 
 	var first *ManagedAddress
 	var breakEarlyErr = errors.New("this error is used to break early when the first unused is found")
-	s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
+	// Errors from ForEachAccountAddress are intentionally discarded here:
+	// the callback uses breakEarlyErr as a sentinel to short-circuit
+	// iteration, but ForEachAccountAddress wraps callback errors via
+	// maybeConvertDbError, making the sentinel unrecoverable.
+	_ = s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
 		if first == nil && !maddr.Used(ns) && maddr.Internal() == internal {
 			first = &maddr
 			return breakEarlyErr
@@ -1389,8 +1393,8 @@ func (s *ScopedKeyManager) RenameAccount(ns walletdb.ReadWriteBucket,
 	// Ensure the account type is a default account.
 	row, ok := rowInterface.(*dbDefaultAccountRow)
 	if !ok {
-		str := fmt.Sprintf("unsupported account type %T", row)
-		err = managerError(ErrDatabase, str, nil)
+		str := fmt.Sprintf("unsupported account type %T", rowInterface)
+		return managerError(ErrDatabase, str, nil)
 	}
 
 	// Remove the old name key from the account id index.

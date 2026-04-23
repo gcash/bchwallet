@@ -221,7 +221,7 @@ func (c *BitcoindClient) Notifications() <-chan interface{} {
 //
 // NOTE: This is part of the chain.Interface interface.
 func (c *BitcoindClient) NotifyReceived(addrs []bchutil.Address) error {
-	c.NotifyBlocks()
+	_ = c.NotifyBlocks()
 
 	select {
 	case c.rescanUpdate <- addrs:
@@ -235,7 +235,7 @@ func (c *BitcoindClient) NotifyReceived(addrs []bchutil.Address) error {
 // NotifySpent allows the chain backend to notify the caller whenever a
 // transaction spends any of the given outpoints.
 func (c *BitcoindClient) NotifySpent(outPoints []*wire.OutPoint) error {
-	c.NotifyBlocks()
+	_ = c.NotifyBlocks()
 
 	select {
 	case c.rescanUpdate <- outPoints:
@@ -249,7 +249,7 @@ func (c *BitcoindClient) NotifySpent(outPoints []*wire.OutPoint) error {
 // NotifyTx allows the chain backend to notify the caller whenever any of the
 // given transactions confirm within the chain.
 func (c *BitcoindClient) NotifyTx(txids []chainhash.Hash) error {
-	c.NotifyBlocks()
+	_ = c.NotifyBlocks()
 
 	select {
 	case c.rescanUpdate <- txids:
@@ -1150,7 +1150,7 @@ func (c *BitcoindClient) shouldFilterBlock(blockTimestamp time.Time) bool {
 		len(c.watchedOutPoints) == 0 && len(c.watchedTxs) == 0
 	c.watchMtx.RUnlock()
 
-	return !(blockTimestamp.Before(c.birthday) || hasEmptyFilter)
+	return !blockTimestamp.Before(c.birthday) && !hasEmptyFilter
 }
 
 // filterBlock filters a block for watched outpoints and addresses, and returns
