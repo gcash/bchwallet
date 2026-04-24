@@ -29,6 +29,8 @@ github.com/gcash/bchwallet/walletdb v0.0.0-20260423050729-00e545c821f0 h1:Urc2co
 github.com/gcash/bchwallet/walletdb v0.0.0-20260423050729-00e545c821f0/go.mod h1:HV3gxGmn6idyhN8UdENSK8zub37g5wqkqQjTIJWsLsg=
 github.com/gcash/neutrino v0.0.0-20260423062253-d6ded4686939 h1:gd0QARXcQFXMoU3fAjRnYX66FQzpQheTGwAT+/5UNXw=
 github.com/gcash/neutrino v0.0.0-20260423062253-d6ded4686939/go.mod h1:II5tedZoAa3B2HnrwpXVbbzREqVBGK68EBU6HJuiYyw=
+github.com/gcash/neutrino v0.0.0-20260424011226-8efe63b0e075 h1:kLzlBgafv6RVH7M17oAfHdOkfOOrI1CSNnf4CeCttQo=
+github.com/gcash/neutrino v0.0.0-20260424011226-8efe63b0e075/go.mod h1:vFs5QCvaRCI36yuNF6RCasFAT3NpWoZpICfAgowv2s8=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
