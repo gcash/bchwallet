@@ -522,6 +522,8 @@ func (s *NeutrinoClient) SetStartTime(startTime time.Time) {
 // channel.
 func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 	header *wire.BlockHeader, relevantTxs []*bchutil.Tx) {
+	log.Debugf("Filtered block connected height=%d hash=%v relevantTxs=%d",
+		height, header.BlockHash(), len(relevantTxs))
 	ntfn := FilteredBlockConnected{
 		Block: &wtxmgr.BlockMeta{
 			Block: wtxmgr.Block{
@@ -553,6 +555,15 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 
 	s.clientMtx.Lock()
 	s.lastFilteredBlockHeader = header
+	// Mirror the post-birthday branch of onBlockConnected: once we've
+	// crossed the rescan's start time, record that progress has been made.
+	// Without this, a rescan whose terminal blocks all match the filter
+	// (common when importprivkey rescans for a freshly imported address)
+	// never sets lastProgressSent and dispatchRescanFinished blocks
+	// forever on line 665.
+	if !header.Timestamp.Before(s.startTime) {
+		s.lastProgressSent = true
+	}
 	s.clientMtx.Unlock()
 
 	// Handle RescanFinished notification if required.
