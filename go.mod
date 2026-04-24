@@ -6,11 +6,11 @@ require (
 	github.com/btcsuite/golangcrypto v0.0.0-20150304025918-53f62d9b43e8
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/davecgh/go-spew v1.1.1
-	github.com/gcash/bchd v0.21.1
+	github.com/gcash/bchd v0.22.0
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
-	github.com/gcash/bchutil v0.0.0-20260423044137-a3c041e4cc77
-	github.com/gcash/bchwallet/walletdb v0.0.0-20250514015307-26079e95dc51
-	github.com/gcash/neutrino v0.0.0-20250514015105-313c5c417c87
+	github.com/gcash/bchutil v0.0.0-20260424004602-9ef0dd41449e
+	github.com/gcash/bchwallet/walletdb v0.0.0-20260423050729-00e545c821f0
+	github.com/gcash/neutrino v0.0.0-20260423062253-d6ded4686939
 	github.com/golang/protobuf v1.5.4
 	github.com/jarcoal/httpmock v1.0.8
 	github.com/jessevdk/go-flags v1.6.1
