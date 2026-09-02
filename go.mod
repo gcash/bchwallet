@@ -18,10 +18,10 @@ require (
 	github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf
 	github.com/miekg/dns v1.1.72
 	github.com/tyler-smith/go-bip39 v1.1.0
-	golang.org/x/crypto v0.50.0
-	golang.org/x/net v0.53.0
-	golang.org/x/term v0.42.0
-	google.golang.org/grpc v1.80.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/net v0.55.0
+	golang.org/x/term v0.43.0
+	google.golang.org/grpc v1.83.1
 )
 
 require (
@@ -33,10 +33,10 @@ require (
 	go.etcd.io/bbolt v1.4.3 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260420184626-e10c466a9529 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/uint128 v1.3.0 // indirect
 )
