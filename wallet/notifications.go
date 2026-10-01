@@ -506,6 +506,8 @@ func (s *NotificationServer) notifyUnspentOutput(account uint32, hash *chainhash
 // notifySpentOutput notifies registered clients that a previously-unspent
 // output is now spent, and includes the spender hash and input index in the
 // notification.
+//
+//lint:ignore U1000 retained for future spent-output notifications.
 func (s *NotificationServer) notifySpentOutput(account uint32, op *wire.OutPoint, spenderHash *chainhash.Hash, spenderIndex uint32) {
 	defer s.mu.Unlock()
 	s.mu.Lock()

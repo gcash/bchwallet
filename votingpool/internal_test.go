@@ -74,5 +74,5 @@ func (vp *Pool) TstDecryptExtendedKey(keyType waddrmgr.CryptoKeyType, encrypted 
 // TstGetMsgTx returns a copy of the withdrawal transaction with the given
 // ntxid.
 func (s *WithdrawalStatus) TstGetMsgTx(ntxid Ntxid) *wire.MsgTx {
-	return s.transactions[ntxid].MsgTx.Copy()
+	return s.transactions[ntxid].Copy()
 }

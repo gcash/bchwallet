@@ -21,7 +21,7 @@ func TestPoolEnsureUsedAddr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	var script []byte
@@ -83,7 +83,7 @@ func TestPoolGetUsedAddr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns, addrmgrNs := TstRWNamespaces(dbtx)
 
 	TstCreateSeries(t, dbtx, pool, []TstSeriesDef{{ReqSigs: 2, PubKeys: TstPubKeys[0:3], SeriesID: 1}})
@@ -131,7 +131,7 @@ func TestSerializationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	_, addrmgrNs := TstRWNamespaces(dbtx)
 
 	tests := []struct {
@@ -199,7 +199,7 @@ func TestSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	_, addrmgrNs := TstRWNamespaces(dbtx)
 
 	tests := []struct {
@@ -362,7 +362,7 @@ func TestValidateAndDecryptKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	_, addrmgrNs := TstRWNamespaces(dbtx)
 
 	rawPubKeys, err := encryptKeys(TstPubKeys[0:2], pool.Manager(), waddrmgr.CKTPublic)
@@ -419,7 +419,7 @@ func TestValidateAndDecryptKeysErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	_, addrmgrNs := TstRWNamespaces(dbtx)
 
 	encryptedPubKeys, err := encryptKeys(TstPubKeys[0:1], pool.Manager(), waddrmgr.CKTPublic)

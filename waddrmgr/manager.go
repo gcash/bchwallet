@@ -1341,7 +1341,8 @@ func deriveCoinTypeKey(masterNode *hdkeychain.ExtendedKey,
 // hierarchy described by BIP0044 given the master node.
 //
 // In particular this is the hierarchical deterministic extended key path:
-//   m/purpose'/<coin type>'/<account>'
+//
+//	m/purpose'/<coin type>'/<account>'
 func deriveAccountKey(coinTypeKey *hdkeychain.ExtendedKey,
 	account uint32) (*hdkeychain.ExtendedKey, error) {
 
@@ -1362,7 +1363,8 @@ func deriveAccountKey(coinTypeKey *hdkeychain.ExtendedKey,
 // already derived accordingly.
 //
 // In particular this is the hierarchical deterministic extended key path:
-//   m/purpose'/<coin type>'/<account>'/<branch>
+//
+//	m/purpose'/<coin type>'/<account>'/<branch>
 //
 // The branch is 0 for external addresses and 1 for internal addresses.
 func checkBranchKeys(acctKey *hdkeychain.ExtendedKey) error {

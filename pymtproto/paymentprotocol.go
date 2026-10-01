@@ -10,9 +10,9 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/pymtproto/payments"
-	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/proto" //nolint:staticcheck // generated payments.pb.go still uses the v1 protobuf API.
 	"golang.org/x/net/proxy"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -94,7 +94,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	}
 
 	// Unmarshal payment request
-	paymentRequestBytes, err := ioutil.ReadAll(resp.Body)
+	paymentRequestBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err 
 		return "", fmt.Errorf("http status not OK: %d", resp.StatusCode)
 	}
 
-	serializedPaymentAck, err := ioutil.ReadAll(resp.Body)
+	serializedPaymentAck, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}

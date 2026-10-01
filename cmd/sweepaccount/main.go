@@ -6,11 +6,10 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -212,7 +211,7 @@ func sweep() error {
 	}
 
 	// Open RPC client.
-	rpcCertificate, err := ioutil.ReadFile(opts.RPCCertificateFile)
+	rpcCertificate, err := os.ReadFile(opts.RPCCertificateFile)
 	if err != nil {
 		return errContext(err, "failed to read RPC certificate")
 	}
@@ -315,7 +314,7 @@ func sweep() error {
 			totalSwept, numPublished, transactionNoun)
 	}
 	if numErrors > 0 {
-		return fmt.Errorf("Failed to publish %d %s", numErrors, transactionNoun)
+		return fmt.Errorf("failed to publish %d %s", numErrors, transactionNoun)
 	}
 
 	return nil
@@ -324,7 +323,7 @@ func sweep() error {
 func promptSecret(what string) (string, error) {
 	fmt.Printf("%s: ", what)
 	fd := int(os.Stdin.Fd())
-	input, err := terminal.ReadPassword(fd)
+	input, err := term.ReadPassword(fd)
 	fmt.Println()
 	if err != nil {
 		return "", err

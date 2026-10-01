@@ -83,7 +83,7 @@ func (c byAddress) Less(i, j int) bool {
 	}
 
 	// The seriesID, index, and branch are equal, so compare hash.
-	txidComparison := bytes.Compare(c[i].OutPoint.Hash[:], c[j].OutPoint.Hash[:])
+	txidComparison := bytes.Compare(c[i].Hash[:], c[j].Hash[:])
 	if txidComparison < 0 {
 		return true
 	}
@@ -93,7 +93,7 @@ func (c byAddress) Less(i, j int) bool {
 
 	// The seriesID, index, branch, and hash are equal, so compare output
 	// index.
-	return c[i].OutPoint.Index < c[j].OutPoint.Index
+	return c[i].Index < c[j].Index
 }
 
 // getEligibleInputs returns eligible inputs with addresses between startAddress
@@ -242,7 +242,7 @@ func (p *Pool) isCreditEligible(c Credit, minConf int, chainHeight int32,
 	if c.Amount < dustThreshold {
 		return false
 	}
-	if confirms(c.BlockMeta.Block.Height, chainHeight) < int32(minConf) {
+	if confirms(c.Height, chainHeight) < int32(minConf) {
 		return false
 	}
 	if p.isCharterOutput(c) {

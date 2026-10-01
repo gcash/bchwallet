@@ -1,12 +1,13 @@
 package boot
 
 import (
-	"golang.org/x/net/proxy"
-	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
@@ -55,7 +56,7 @@ func WalletMain(optionalConfigPath *string) error {
 	}
 
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
-	loader := wallet.NewLoader(activeNet.Params, dbDir, 250)
+	loader := wallet.NewLoader(activeNet.Params, dbDir, true, 250)
 
 	// Create and start HTTP server to serve wallet client connections.
 	// This will be updated with the wallet and chain server RPC client
@@ -168,12 +169,12 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			)
 			netDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 			spvdb, err = walletdb.Create("bdb",
-				filepath.Join(netDir, "neutrino.db"))
-			defer spvdb.Close()
+				filepath.Join(netDir, "neutrino.db"), true)
 			if err != nil {
 				log.Errorf("Unable to create Neutrino DB: %s", err)
 				continue
 			}
+			defer spvdb.Close()
 			chainService, err = neutrino.NewChainService(
 				neutrino.Config{
 					DataDir:      netDir,
@@ -254,7 +255,7 @@ func readCAFile() []byte {
 	var certs []byte
 	if !cfg.DisableClientTLS {
 		var err error
-		certs, err = ioutil.ReadFile(cfg.CAFile.Value)
+		certs, err = os.ReadFile(cfg.CAFile.Value)
 		if err != nil {
 			log.Warnf("Cannot open CA file: %v", err)
 			// If there's an error reading the CA file, continue

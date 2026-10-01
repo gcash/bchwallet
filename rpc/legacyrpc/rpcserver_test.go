@@ -26,7 +26,8 @@ func TestThrottle(t *testing.T) {
 		go func() {
 			res, err := http.Get(srv.URL)
 			if err != nil {
-				t.Fatal(err)
+				t.Error(err)
+				return
 			}
 			codes <- res.StatusCode
 		}()

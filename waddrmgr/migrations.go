@@ -93,7 +93,7 @@ func (m *MigrationManager) SetVersion(ns walletdb.ReadWriteBucket,
 	if ns == nil {
 		ns = m.ns
 	}
-	return putManagerVersion(m.ns, version)
+	return putManagerVersion(ns, version)
 }
 
 // Versions returns all of the available database versions of the service.
@@ -264,10 +264,7 @@ func migrateRecursively(src, dst walletdb.ReadWriteBucket,
 		return err
 	}
 	// Finally, we'll delete the bucket itself.
-	if err := src.DeleteNestedBucket(bucketKey); err != nil {
-		return err
-	}
-	return nil
+	return src.DeleteNestedBucket(bucketKey)
 }
 
 // populateBirthdayBlock is a migration that attempts to populate the birthday

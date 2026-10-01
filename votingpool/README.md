@@ -1,17 +1,15 @@
-votingpool
-========
+# votingpool
 
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)]
-(https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 
 Package votingpool provides voting pool functionality for bchwallet as
 described here:
 [Voting Pools](http://opentransactions.org/wiki/index.php?title=Category:Voting_Pools).
 
-A suite of tests is provided to ensure proper functionality.  See
-`test_coverage.txt` for the gocov coverage report.  Alternatively, if you are
+A suite of tests is provided to ensure proper functionality. See
+`test_coverage.txt` for the gocov coverage report. Alternatively, if you are
 running a POSIX OS, you can run the `cov_report.sh` script for a real-time
-report.  Package votingpool is licensed under the liberal ISC license.
+report. Package votingpool is licensed under the liberal ISC license.
 
 Note that this is still a work in progress.
 

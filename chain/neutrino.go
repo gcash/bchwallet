@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/gcash/bchd/btcjson"
 	"sync"
 	"time"
+
+	"github.com/gcash/bchd/btcjson"
 
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -68,7 +69,9 @@ func (s *NeutrinoClient) BackEnd() string {
 // Start replicates the RPC client's Start method.
 func (s *NeutrinoClient) Start() error {
 	s.CS.RegisterMempoolCallback(s.onRecvTx)
-	s.CS.Start()
+	if err := s.CS.Start(); err != nil {
+		return err
+	}
 	s.clientMtx.Lock()
 	defer s.clientMtx.Unlock()
 	if !s.started {
@@ -201,13 +204,11 @@ func (s *NeutrinoClient) FilterBlocks(
 	// the filter returns a positive match, the full block is then requested
 	// and scanned for addresses using the block filterer.
 	for i, blk := range req.Blocks {
-		select {
-		case <-req.Interrupt:
-			return &FilterBlocksResponse{
-				BatchIndex: uint32(i - 1),
-			}, ErrFilterReqInterrupt
-		default:
-		}
+		// TODO(wilmer): Investigate why polling it still necessary
+		// here. While testing, I ran into a few instances where the
+		// filter was not retrieved, leading to a panic. This should not
+		// happen in most cases thanks to the query logic revamp within
+		// Neutrino, but it seems there's still an uncovered edge case.
 		filter, err := s.pollCFilter(&blk.Hash)
 		if err != nil {
 			return nil, err
@@ -328,7 +329,9 @@ func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash) (*gcs.Filter, error) 
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		filter, err = s.CS.GetCFilter(*hash, wire.GCSFilterRegular)
+		filter, err = s.CS.GetCFilter(
+			*hash, wire.GCSFilterRegular, neutrino.OptimisticBatch(),
+		)
 		if err != nil {
 			count++
 			continue
@@ -373,11 +376,11 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 
 	bestBlock, err := s.CS.BestBlock()
 	if err != nil {
-		return fmt.Errorf("Can't get chain service's best block: %s", err)
+		return fmt.Errorf("can't get chain service's best block: %s", err)
 	}
 	header, err := s.CS.GetBlockHeader(&bestBlock.Hash)
 	if err != nil {
-		return fmt.Errorf("Can't get block header for hash %v: %s",
+		return fmt.Errorf("can't get block header for hash %v: %s",
 			bestBlock.Hash, err)
 	}
 
@@ -519,6 +522,8 @@ func (s *NeutrinoClient) SetStartTime(startTime time.Time) {
 // channel.
 func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 	header *wire.BlockHeader, relevantTxs []*bchutil.Tx) {
+	log.Debugf("Filtered block connected height=%d hash=%v relevantTxs=%d",
+		height, header.BlockHash(), len(relevantTxs))
 	ntfn := FilteredBlockConnected{
 		Block: &wtxmgr.BlockMeta{
 			Block: wtxmgr.Block{
@@ -550,6 +555,15 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 
 	s.clientMtx.Lock()
 	s.lastFilteredBlockHeader = header
+	// Mirror the post-birthday branch of onBlockConnected: once we've
+	// crossed the rescan's start time, record that progress has been made.
+	// Without this, a rescan whose terminal blocks all match the filter
+	// (common when importprivkey rescans for a freshly imported address)
+	// never sets lastProgressSent and dispatchRescanFinished blocks
+	// forever on line 665.
+	if !header.Timestamp.Before(s.startTime) {
+		s.lastProgressSent = true
+	}
 	s.clientMtx.Unlock()
 
 	// Handle RescanFinished notification if required.

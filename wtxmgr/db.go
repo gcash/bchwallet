@@ -242,6 +242,7 @@ type blockIterator struct {
 	err  error
 }
 
+//lint:ignore U1000 retained for future block-iteration callers.
 func makeBlockIterator(ns walletdb.ReadWriteBucket, height int32) blockIterator {
 	seek := make([]byte, 4)
 	byteOrder.PutUint32(seek, uint32(height))
@@ -409,6 +410,7 @@ func putTxRecord(ns walletdb.ReadWriteBucket, rec *TxRecord, block *Block) error
 	return nil
 }
 
+//lint:ignore U1000 retained for future raw tx-record writes.
 func putRawTxRecord(ns walletdb.ReadWriteBucket, k, v []byte) error {
 	err := ns.NestedReadWriteBucket(bucketTxRecords).Put(k, v)
 	if err != nil {
@@ -678,21 +680,21 @@ func deleteRawCredit(ns walletdb.ReadWriteBucket, k []byte) error {
 //
 // Example usage:
 //
-//   prefix := keyTxRecord(txHash, block)
-//   it := makeCreditIterator(ns, prefix)
-//   for it.next() {
-//           // Use it.elem
-//           // If necessary, read additional details from it.ck, it.cv
-//   }
-//   if it.err != nil {
-//           // Handle error
-//   }
+//	prefix := keyTxRecord(txHash, block)
+//	it := makeCreditIterator(ns, prefix)
+//	for it.next() {
+//	        // Use it.elem
+//	        // If necessary, read additional details from it.ck, it.cv
+//	}
+//	if it.err != nil {
+//	        // Handle error
+//	}
 //
 // The elem's Spent field is not set to true if the credit is spent by an
 // unmined transaction.  To check for this case:
 //
-//   k := canonicalOutPoint(&txHash, it.elem.Index)
-//   it.elem.Spent = existsRawUnminedInput(ns, k) != nil
+//	k := canonicalOutPoint(&txHash, it.elem.Index)
+//	it.elem.Spent = existsRawUnminedInput(ns, k) != nil
 type creditIterator struct {
 	c      walletdb.ReadWriteCursor // Set to nil after final iteration
 	prefix []byte
@@ -702,6 +704,7 @@ type creditIterator struct {
 	err    error
 }
 
+//lint:ignore U1000 retained for future credit-iteration callers.
 func makeCreditIterator(ns walletdb.ReadWriteBucket, prefix []byte) creditIterator {
 	c := ns.NestedReadWriteBucket(bucketCredits).ReadWriteCursor()
 	return creditIterator{c: c, prefix: prefix}
@@ -918,15 +921,15 @@ func deleteRawDebit(ns walletdb.ReadWriteBucket, k []byte) error {
 //
 // Example usage:
 //
-//   prefix := keyTxRecord(txHash, block)
-//   it := makeDebitIterator(ns, prefix)
-//   for it.next() {
-//           // Use it.elem
-//           // If necessary, read additional details from it.ck, it.cv
-//   }
-//   if it.err != nil {
-//           // Handle error
-//   }
+//	prefix := keyTxRecord(txHash, block)
+//	it := makeDebitIterator(ns, prefix)
+//	for it.next() {
+//	        // Use it.elem
+//	        // If necessary, read additional details from it.ck, it.cv
+//	}
+//	if it.err != nil {
+//	        // Handle error
+//	}
 type debitIterator struct {
 	c      walletdb.ReadWriteCursor // Set to nil after final iteration
 	prefix []byte
@@ -936,6 +939,7 @@ type debitIterator struct {
 	err    error
 }
 
+//lint:ignore U1000 retained for future debit-iteration callers.
 func makeDebitIterator(ns walletdb.ReadWriteBucket, prefix []byte) debitIterator {
 	c := ns.NestedReadWriteBucket(bucketDebits).ReadWriteCursor()
 	return debitIterator{c: c, prefix: prefix}
@@ -1095,22 +1099,22 @@ func deleteRawUnminedCredit(ns walletdb.ReadWriteBucket, k []byte) error {
 // unminedCreditIterator allows for cursor iteration over all credits, in order,
 // from a single unmined transaction.
 //
-//  Example usage:
+//	Example usage:
 //
-//   it := makeUnminedCreditIterator(ns, txHash)
-//   for it.next() {
-//           // Use it.elem, it.ck and it.cv
-//           // Optionally, use it.delete() to remove this k/v pair
-//   }
-//   if it.err != nil {
-//           // Handle error
-//   }
+//	 it := makeUnminedCreditIterator(ns, txHash)
+//	 for it.next() {
+//	         // Use it.elem, it.ck and it.cv
+//	         // Optionally, use it.delete() to remove this k/v pair
+//	 }
+//	 if it.err != nil {
+//	         // Handle error
+//	 }
 //
 // The spentness of the credit is not looked up for performance reasons (because
 // for unspent credits, it requires another lookup in another bucket).  If this
 // is needed, it may be checked like this:
 //
-//   spent := existsRawUnminedInput(ns, it.ck) != nil
+//	spent := existsRawUnminedInput(ns, it.ck) != nil
 type unminedCreditIterator struct {
 	c      walletdb.ReadWriteCursor
 	prefix []byte
@@ -1190,6 +1194,7 @@ func (it *unminedCreditIterator) next() bool {
 // 	return nil
 // }
 
+//lint:ignore U1000 retained for future iterator-repositioning callers.
 func (it *unminedCreditIterator) reposition(txHash *chainhash.Hash, index uint32) {
 	it.c.Seek(canonicalOutPoint(txHash, index))
 }
@@ -1448,6 +1453,7 @@ func fetchVersion(ns walletdb.ReadBucket) (uint32, error) {
 	return byteOrder.Uint32(v), nil
 }
 
+//lint:ignore U1000 retained for future scoped-update transactions.
 func scopedUpdate(db walletdb.DB, namespaceKey []byte, f func(walletdb.ReadWriteBucket) error) error {
 	tx, err := db.BeginReadWriteTx()
 	if err != nil {
@@ -1477,6 +1483,7 @@ func scopedUpdate(db walletdb.DB, namespaceKey []byte, f func(walletdb.ReadWrite
 	return nil
 }
 
+//lint:ignore U1000 retained for future scoped-view transactions.
 func scopedView(db walletdb.DB, namespaceKey []byte, f func(walletdb.ReadBucket) error) error {
 	tx, err := db.BeginReadTx()
 	if err != nil {

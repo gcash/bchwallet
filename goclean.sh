@@ -17,11 +17,5 @@ if [ ! -x "$(type -p golangci-lint)" ]; then
 fi
 
 # Automatic checks
-test -z "$(golangci-lint run --disable-all \
---enable=gofmt \
---enable=golint \
---enable=vet \
---enable=gosimple \
---enable=unconvert \
---deadline=10m | grep -v 'ALL_CAPS\|OP_' 2>&1 | tee /dev/stderr)"
+golangci-lint run
 go test -tags rpctest ./...

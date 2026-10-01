@@ -15,14 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/ripemd160" //nolint:staticcheck // ripemd160 required for legacy keystore format compatibility.
 
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
@@ -42,6 +41,8 @@ const (
 
 	// Maximum length in bytes of a comment that can have a size represented
 	// as a uint16.
+	//
+	//lint:ignore U1000 retained for legacy keystore comment-size validation.
 	maxCommentLen = (1 << 16) - 1
 )
 
@@ -499,8 +500,11 @@ func (net *netParams) WriteTo(w io.Writer) (int64, error) {
 
 // Stringified byte slices for use as map lookup keys.
 type addressKey string
+
+//lint:ignore U1000 retained for legacy keystore map keys.
 type transactionHashKey string
 
+//lint:ignore U1000 retained for legacy keystore comment storage.
 type comment []byte
 
 func getAddressKey(addr bchutil.Address) addressKey {
@@ -830,7 +834,7 @@ func (s *Store) WriteIfDirty() error {
 	}
 
 	// TempFile creates the file 0600, so no need to chmod it.
-	fi, err := ioutil.TempFile(s.dir, s.file)
+	fi, err := os.CreateTemp(s.dir, s.file)
 	if err != nil {
 		s.mtx.RUnlock()
 		return err
@@ -2400,7 +2404,7 @@ func (a *bchAddress) encrypt(key []byte) error {
 	if err != nil {
 		return err
 	}
-	aesEncrypter := cipher.NewCFBEncrypter(aesBlockEncrypter, a.initVector[:])
+	aesEncrypter := cipher.NewCFBEncrypter(aesBlockEncrypter, a.initVector[:]) //nolint:staticcheck // CFB retained for legacy keystore compatibility.
 
 	aesEncrypter.XORKeyStream(a.privKey[:], a.privKeyCT)
 
@@ -2436,7 +2440,7 @@ func (a *bchAddress) unlock(key []byte) (privKeyCT []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	aesDecrypter := cipher.NewCFBDecrypter(aesBlockDecrypter, a.initVector[:])
+	aesDecrypter := cipher.NewCFBDecrypter(aesBlockDecrypter, a.initVector[:]) //nolint:staticcheck // CFB retained for legacy keystore compatibility.
 	privkey := make([]byte, 32)
 	aesDecrypter.XORKeyStream(privkey, a.privKey[:])
 
@@ -2487,7 +2491,7 @@ func (a *bchAddress) changeEncryptionKey(oldkey, newkey []byte) error {
 		return err
 	}
 	copy(a.initVector[:], newIV)
-	aesEncrypter := cipher.NewCFBEncrypter(aesBlockEncrypter, a.initVector[:])
+	aesEncrypter := cipher.NewCFBEncrypter(aesBlockEncrypter, a.initVector[:]) //nolint:staticcheck // CFB retained for legacy keystore compatibility.
 	aesEncrypter.XORKeyStream(a.privKey[:], privKeyCT)
 
 	return nil

@@ -23,7 +23,6 @@ import (
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
-	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 
@@ -49,12 +48,13 @@ const (
 	// data in the waddrmgr namespace.  Transactions are not yet encrypted.
 	InsecurePubPassphrase = "public"
 
+	//lint:ignore U1000 retained for future watching-only wallet database support.
 	walletDbWatchingOnlyName = "wowallet.db"
 
 	// recoveryBatchSize is the default number of blocks that will be
 	// scanned successively by the recovery manager, in the event that the
 	// wallet is started in recovery mode.
-	recoveryBatchSize = 10
+	recoveryBatchSize = 2000
 )
 
 var (
@@ -117,9 +117,13 @@ type Wallet struct {
 	changePassphrases  chan changePassphrasesRequest
 
 	// Information for reorganization handling.
+	//
+	//lint:ignore U1000 retained for future reorganization tracking.
 	reorganizingLock sync.Mutex
+	//lint:ignore U1000 retained for future reorganization tracking.
 	reorganizeToHash chainhash.Hash
-	reorganizing     bool
+	//lint:ignore U1000 retained for future reorganization tracking.
+	reorganizing bool
 
 	NtfnServer *NotificationServer
 
@@ -363,10 +367,21 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 		return err
 	}
 
+	// Neutrino relies on the information given to it by the cfheader server
+	// so it knows exactly whether it's synced up to the server's state or
+	// not, even on dev chains. To recover a Neutrino wallet, we need to
+	// make sure it's synced before we start scanning for addresses,
+	// otherwise we might miss some if we only scan up to its current sync
+	// point.
+	neutrinoRecovery := chainClient.BackEnd() == "neutrino" &&
+		w.recoveryWindow > 0
+
 	// We'll wait until the backend is synced to ensure we get the latest
 	// MaxReorgDepth blocks to store. We don't do this for development
-	// environments as we can't guarantee a lively chain.
-	if !w.isDevEnv() {
+	// environments as we can't guarantee a lively chain, except for
+	// Neutrino, where the cfheader server tells us what it believes the
+	// chain tip is.
+	if !w.isDevEnv() || neutrinoRecovery {
 		log.Debug("Waiting for chain backend to sync to tip")
 		if err := w.waitUntilBackendSynced(chainClient); err != nil {
 			return err
@@ -831,13 +846,13 @@ func (w *Wallet) recoverDefaultScopes(
 // recoverAccountAddresses scans a range of blocks in attempts to recover any
 // previously used addresses for a particular account derivation path. At a high
 // level, the algorithm works as follows:
-//  1) Ensure internal and external branch horizons are fully expanded.
-//  2) Filter the entire range of blocks, stopping if a non-zero number of
-//       address are contained in a particular block.
-//  3) Record all internal and external addresses found in the block.
-//  4) Record any outpoints found in the block that should be watched for spends
-//  5) Trim the range of blocks up to and including the one reporting the addrs.
-//  6) Repeat from (1) if there are still more blocks in the range.
+//  1. Ensure internal and external branch horizons are fully expanded.
+//  2. Filter the entire range of blocks, stopping if a non-zero number of
+//     address are contained in a particular block.
+//  3. Record all internal and external addresses found in the block.
+//  4. Record any outpoints found in the block that should be watched for spends
+//  5. Trim the range of blocks up to and including the one reporting the addrs.
+//  6. Repeat from (1) if there are still more blocks in the range.
 func (w *Wallet) recoverScopedAddresses(
 	chainClient chain.Interface,
 	tx walletdb.ReadWriteTx,
@@ -1532,6 +1547,8 @@ func (w *Wallet) ChangePassphrases(publicOld, publicNew, privateOld,
 // accountUsed returns whether there are any recorded transactions spending to
 // a given account. It returns true if atleast one address in the account was
 // used and false if no address in the account was used.
+//
+//lint:ignore U1000 retained for future account-used queries.
 func (w *Wallet) accountUsed(addrmgrNs walletdb.ReadWriteBucket, account uint32) (bool, error) {
 	var used bool
 	err := w.Manager.ForEachAccountAddress(addrmgrNs, account,
@@ -1845,6 +1862,7 @@ func (w *Wallet) RenameAccount(scope waddrmgr.KeyScope, account uint32, newName 
 	return err
 }
 
+//lint:ignore U1000 retained for future seed-restore account limits.
 const maxEmptyAccounts = 100
 
 // NextAccount creates the next account and returns its account number.  The
@@ -2254,7 +2272,6 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 	// TODO: Fetching block heights by their hashes is inherently racy
 	// because not all block headers are saved but when they are for SPV the
 	// db can be queried directly without this.
-	var startResp, endResp rpcclient.FutureGetBlockVerboseResult
 	if startBlock != nil {
 		if startBlock.hash == nil {
 			start = startBlock.height
@@ -2264,7 +2281,13 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 			}
 			switch client := chainClient.(type) {
 			case *chain.RPCClient:
-				startResp = client.GetBlockVerboseAsync(startBlock.hash, true)
+				startHeader, err := client.GetBlockHeaderVerbose(
+					startBlock.hash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				start = startHeader.Height
 			case *chain.BitcoindClient:
 				var err error
 				start, err = client.GetBlockHeight(startBlock.hash)
@@ -2289,7 +2312,19 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 			}
 			switch client := chainClient.(type) {
 			case *chain.RPCClient:
-				endResp = client.GetBlockVerboseAsync(endBlock.hash, true)
+				endHeader, err := client.GetBlockHeaderVerbose(
+					endBlock.hash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				end = endHeader.Height
+			case *chain.BitcoindClient:
+				var err error
+				start, err = client.GetBlockHeight(endBlock.hash)
+				if err != nil {
+					return nil, err
+				}
 			case *chain.NeutrinoClient:
 				var err error
 				end, err = client.GetBlockHeight(endBlock.hash)
@@ -2298,20 +2333,6 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 				}
 			}
 		}
-	}
-	if startResp != nil {
-		resp, err := startResp.Receive()
-		if err != nil {
-			return nil, err
-		}
-		start = int32(resp.Height)
-	}
-	if endResp != nil {
-		resp, err := endResp.Receive()
-		if err != nil {
-			return nil, err
-		}
-		end = int32(resp.Height)
 	}
 
 	var res GetTransactionsResult
@@ -2534,8 +2555,8 @@ func (s creditSlice) Len() int {
 func (s creditSlice) Less(i, j int) bool {
 	switch {
 	// If both credits are from the same tx, sort by output index.
-	case s[i].OutPoint.Hash == s[j].OutPoint.Hash:
-		return s[i].OutPoint.Index < s[j].OutPoint.Index
+	case s[i].Hash == s[j].Hash:
+		return s[i].Index < s[j].Index
 
 	// If both transactions are unmined, sort by their received date.
 	case s[i].Height == -1 && s[j].Height == -1:
@@ -2671,8 +2692,8 @@ func (w *Wallet) ListUnspent(minconf, maxconf int32,
 			}
 
 			result := &btcjson.ListUnspentResult{
-				TxID:          output.OutPoint.Hash.String(),
-				Vout:          output.OutPoint.Index,
+				TxID:          output.Hash.String(),
+				Vout:          output.Index,
 				Account:       acctName,
 				ScriptPubKey:  hex.EncodeToString(output.PkScript),
 				Amount:        output.Amount.ToBCH(),
@@ -2845,7 +2866,7 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *bchutil.WIF,
 	} else {
 		err := w.chainClient.NotifyReceived([]bchutil.Address{addr})
 		if err != nil {
-			return "", fmt.Errorf("Failed to subscribe for address ntfns for "+
+			return "", fmt.Errorf("failed to subscribe for address ntfns for "+
 				"address %s: %s", addr.EncodeAddress(), err)
 		}
 	}
@@ -3388,7 +3409,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			// Either it was already signed or we just signed it.
 			// Find out if it is completely satisfied or still needs more.
 			vm, err := txscript.NewEngine(prevOutScript, tx, i,
-				txscript.StandardVerifyFlags, nil, nil, amount)
+				txscript.StandardVerifyFlags, nil, nil, nil, amount)
 			if err == nil {
 				err = vm.Execute()
 			}

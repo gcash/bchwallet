@@ -20,7 +20,6 @@ package votingpool
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -85,7 +84,7 @@ func createMsgTx(pkScript []byte, amts []int64) *wire.MsgTx {
 	}
 
 	for _, amt := range amts {
-		msgtx.AddTxOut(wire.NewTxOut(amt, pkScript))
+		msgtx.AddTxOut(wire.NewTxOut(amt, pkScript, wire.TokenData{}))
 	}
 	return msgtx
 }
@@ -188,6 +187,8 @@ func TstCreateMasterKey(t *testing.T, seed []byte) *hdkeychain.ExtendedKey {
 }
 
 // createMasterKeys creates count master ExtendedKeys with unique seeds.
+//
+//lint:ignore U1000 retained for use by future tests.
 func createMasterKeys(t *testing.T, count int) []*hdkeychain.ExtendedKey {
 	keys := make([]*hdkeychain.ExtendedKey, count)
 	for i := range keys {
@@ -328,11 +329,11 @@ func TstCreatePool(t *testing.T) (tearDownFunc func(), db walletdb.DB, pool *Poo
 	t.Parallel()
 
 	// Create a new wallet DB and addr manager.
-	dir, err := ioutil.TempDir("", "pool_test")
+	dir, err := os.MkdirTemp("", "pool_test")
 	if err != nil {
 		t.Fatalf("Failed to create db dir: %v", err)
 	}
-	db, err = walletdb.Create("bdb", filepath.Join(dir, "wallet.db"))
+	db, err = walletdb.Create("bdb", filepath.Join(dir, "wallet.db"), true)
 	if err != nil {
 		t.Fatalf("Failed to create wallet DB: %v", err)
 	}

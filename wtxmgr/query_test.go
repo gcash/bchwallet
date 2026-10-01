@@ -447,18 +447,22 @@ func TestStoreQueries(t *testing.T) {
 		}
 
 		iterations := 0
-		err = s.RangeTransactions(ns, 0, -1, func([]TxDetails) (bool, error) {
+		if err = s.RangeTransactions(ns, 0, -1, func([]TxDetails) (bool, error) {
 			iterations++
 			return true, nil
-		})
+		}); err != nil {
+			t.Fatalf("RangeTransactions (forwards): %v", err)
+		}
 		if iterations != 1 {
 			t.Errorf("RangeTransactions (forwards) ran func %d times", iterations)
 		}
 		iterations = 0
-		err = s.RangeTransactions(ns, -1, 0, func([]TxDetails) (bool, error) {
+		if err = s.RangeTransactions(ns, -1, 0, func([]TxDetails) (bool, error) {
 			iterations++
 			return true, nil
-		})
+		}); err != nil {
+			t.Fatalf("RangeTransactions (reverse): %v", err)
+		}
 		if iterations != 1 {
 			t.Errorf("RangeTransactions (reverse) ran func %d times", iterations)
 		}
@@ -467,10 +471,12 @@ func TestStoreQueries(t *testing.T) {
 			return err
 		}
 		iterations = 0
-		err = s.RangeTransactions(ns, -1, 0, func([]TxDetails) (bool, error) {
+		if err = s.RangeTransactions(ns, -1, 0, func([]TxDetails) (bool, error) {
 			iterations++
 			return true, nil
-		})
+		}); err != nil {
+			t.Fatalf("RangeTransactions (reverse): %v", err)
+		}
 		if iterations != 1 {
 			t.Errorf("RangeTransactions (reverse) ran func %d times", iterations)
 		}
@@ -629,7 +635,7 @@ func TestPreviousPkScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dbtx.Commit()
+	defer func() { _ = dbtx.Commit() }()
 	ns := dbtx.ReadWriteBucket(namespaceKey)
 
 	// Insert transactions A-C unmined, but mark no credits yet.  Until

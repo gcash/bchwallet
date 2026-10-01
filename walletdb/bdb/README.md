@@ -1,27 +1,26 @@
-bdb
-===
+# bdb
 
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)]
-(https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 
 Package bdb implements an driver for walletdb that uses boltdb for the backing
-datastore.  Package bdb is licensed under the copyfree ISC license.
+datastore. Package bdb is licensed under the copyfree ISC license.
 
 ## Usage
 
 This package is only a driver to the walletdb package and provides the database
-type of "bdb".  The only parameter the Open and Create functions take is the
-database path as a string:
+type of "bdb". The only parameters the Open and Create functions take is the
+database path as a string, and an option for the database to not sync its
+freelist to disk as a bool:
 
 ```Go
-db, err := walletdb.Open("bdb", "path/to/database.db")
+db, err := walletdb.Open("bdb", "path/to/database.db", true)
 if err != nil {
 	// Handle error
 }
 ```
 
 ```Go
-db, err := walletdb.Create("bdb", "path/to/database.db")
+db, err := walletdb.Create("bdb", "path/to/database.db", true)
 if err != nil {
 	// Handle error
 }

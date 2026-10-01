@@ -6,7 +6,6 @@ package wallet
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -27,7 +26,7 @@ import (
 // non-dry run call produces a similar transaction to the dry-run.
 func TestTxToOutputsDryRun(t *testing.T) {
 	// Set up a wallet.
-	dir, err := ioutil.TempDir("", "createtx_test")
+	dir, err := os.MkdirTemp("", "createtx_test")
 	if err != nil {
 		t.Fatalf("Failed to create db dir: %v", err)
 	}
@@ -41,7 +40,7 @@ func TestTxToOutputsDryRun(t *testing.T) {
 	pubPass := []byte("hello")
 	privPass := []byte("world")
 
-	loader := NewLoader(&chaincfg.TestNet3Params, dir, 250)
+	loader := NewLoader(&chaincfg.TestNet3Params, dir, true, 250)
 	w, err := loader.CreateNewWallet(pubPass, privPass, seed, time.Now())
 	if err != nil {
 		t.Fatalf("unable to create wallet: %v", err)
@@ -63,7 +62,7 @@ func TestTxToOutputsDryRun(t *testing.T) {
 	}
 
 	// Add an output paying to the wallet's address to the database.
-	txOut := wire.NewTxOut(100000, p2shAddr)
+	txOut := wire.NewTxOut(100000, p2shAddr, wire.TokenData{})
 	incomingTx := &wire.MsgTx{
 		TxIn: []*wire.TxIn{
 			{},

@@ -1,8 +1,6 @@
-wtxmgr
-======
+# wtxmgr
 
-[![Build Status](https://travis-ci.org/gcash/bchwallet.png?branch=master)]
-(https://travis-ci.org/gcash/bchwallet)
+[![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 
 Package wtxmgr provides storage and spend tracking of wallet transactions and
 their relevant input and outputs.
@@ -21,7 +19,7 @@ their relevant input and outputs.
   - Programmatically detectable errors, including encapsulation of errors from
     packages it relies on
   - Operates under its own walletdb namespace
-    
+
 ## Documentation
 
 [![GoDoc](https://godoc.org/github.com/gcash/bchwallet/wtxmgr?status.png)]

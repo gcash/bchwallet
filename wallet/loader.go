@@ -46,6 +46,7 @@ type Loader struct {
 	callbacks      []func(*Wallet)
 	chainParams    *chaincfg.Params
 	dbDirPath      string
+	noFreelistSync bool
 	recoveryWindow uint32
 	wallet         *Wallet
 	db             walletdb.DB
@@ -56,7 +57,7 @@ type Loader struct {
 // recovery window is non-zero, the wallet will attempt to recovery addresses
 // starting from the last SyncedTo height.
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
-	recoveryWindow uint32) *Loader {
+	noFreelistSync bool, recoveryWindow uint32) *Loader {
 
 	// KeyScopeBIP0044 is a global var. If we are loading the wallet make
 	// sure we set the bip44 coin type to whatever is specified in the params.
@@ -71,6 +72,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	return &Loader{
 		chainParams:    chainParams,
 		dbDirPath:      dbDirPath,
+		noFreelistSync: noFreelistSync,
 		recoveryWindow: recoveryWindow,
 	}
 }
@@ -129,7 +131,7 @@ func (l *Loader) CreateNewWallet(pubPassphrase, privPassphrase, seed []byte,
 	if err != nil {
 		return nil, err
 	}
-	db, err := walletdb.Create("bdb", dbPath)
+	db, err := walletdb.Create("bdb", dbPath, l.noFreelistSync)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +180,7 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte, canConsolePrompt bool)
 
 	// Open the database using the boltdb backend.
 	dbPath := filepath.Join(l.dbDirPath, walletDbName)
-	db, err := walletdb.Open("bdb", dbPath)
+	db, err := walletdb.Open("bdb", dbPath, l.noFreelistSync)
 	if err != nil {
 		log.Errorf("Failed to open database: %v", err)
 		return nil, err

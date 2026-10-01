@@ -6,7 +6,6 @@ package waddrmgr
 
 import (
 	"encoding/hex"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -237,12 +236,12 @@ func hexToBytes(origHex string) []byte {
 }
 
 func emptyDB(t *testing.T) (tearDownFunc func(), db walletdb.DB) {
-	dirName, err := ioutil.TempDir("", "mgrtest")
+	dirName, err := os.MkdirTemp("", "mgrtest")
 	if err != nil {
 		t.Fatalf("Failed to create db temp dir: %v", err)
 	}
 	dbPath := filepath.Join(dirName, "mgrtest.db")
-	db, err = walletdb.Create("bdb", dbPath)
+	db, err = walletdb.Create("bdb", dbPath, true)
 	if err != nil {
 		_ = os.RemoveAll(dirName)
 		t.Fatalf("createDbNamespace: unexpected error: %v", err)
@@ -258,12 +257,12 @@ func emptyDB(t *testing.T) (tearDownFunc func(), db walletdb.DB) {
 // that should be invoked to ensure it is closed and removed upon completion.
 func setupManager(t *testing.T) (tearDownFunc func(), db walletdb.DB, mgr *Manager) {
 	// Create a new manager in a temp directory.
-	dirName, err := ioutil.TempDir("", "mgrtest")
+	dirName, err := os.MkdirTemp("", "mgrtest")
 	if err != nil {
 		t.Fatalf("Failed to create db temp dir: %v", err)
 	}
 	dbPath := filepath.Join(dirName, "mgrtest.db")
-	db, err = walletdb.Create("bdb", dbPath)
+	db, err = walletdb.Create("bdb", dbPath, true)
 	if err != nil {
 		_ = os.RemoveAll(dirName)
 		t.Fatalf("createDbNamespace: unexpected error: %v", err)

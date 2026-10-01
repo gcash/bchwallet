@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/grpc/metadata"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -90,12 +89,12 @@ func generateRPCKeyPair(writeKey bool) (tls.Certificate, error) {
 	}
 
 	// Write cert and (potentially) the key files.
-	err = ioutil.WriteFile(cfg.RPCCert.Value, cert, 0600)
+	err = os.WriteFile(cfg.RPCCert.Value, cert, 0600)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
 	if writeKey {
-		err = ioutil.WriteFile(cfg.RPCKey.Value, key, 0600)
+		err = os.WriteFile(cfg.RPCKey.Value, key, 0600)
 		if err != nil {
 			rmErr := os.Remove(cfg.RPCCert.Value)
 			if rmErr != nil {
@@ -114,7 +113,6 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 	var (
 		server       *grpc.Server
 		legacyServer *legacyrpc.Server
-		legacyListen = net.Listen
 		keyPair      tls.Certificate
 		err          error
 	)
@@ -130,7 +128,7 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"h2"}, // HTTP/2 over TLS
 	}
-	legacyListen = func(net string, laddr string) (net.Listener, error) {
+	legacyListen := func(net string, laddr string) (net.Listener, error) {
 		return tls.Listen(net, laddr, tlsConfig)
 	}
 

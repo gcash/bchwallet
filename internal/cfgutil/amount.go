@@ -24,7 +24,7 @@ func NewAmountFlag(defaultValue bchutil.Amount) *AmountFlag {
 
 // MarshalFlag satisifes the flags.Marshaler interface.
 func (a *AmountFlag) MarshalFlag() (string, error) {
-	return a.Amount.String(), nil
+	return a.String(), nil
 }
 
 // UnmarshalFlag satisifes the flags.Unmarshaler interface.

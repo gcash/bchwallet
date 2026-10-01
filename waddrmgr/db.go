@@ -277,6 +277,8 @@ func uint32ToBytes(number uint32) []byte {
 
 // uint64ToBytes converts a 64 bit unsigned integer into a 8-byte slice in
 // little-endian order: 1 -> [1 0 0 0 0 0 0 0].
+//
+//lint:ignore U1000 retained for future schema fields.
 func uint64ToBytes(number uint64) []byte {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, number)
@@ -313,6 +315,8 @@ func scopeToBytes(scope *KeyScope) [scopeKeySize]byte {
 
 // scopeFromBytes decodes a serializes manager scope into its concrete manager
 // scope struct.
+//
+//lint:ignore U1000 retained for future schema migrations.
 func scopeFromBytes(scopeBytes []byte) KeyScope {
 	return KeyScope{
 		Purpose: binary.LittleEndian.Uint32(scopeBytes[:]),
@@ -363,6 +367,8 @@ func fetchScopeAddrSchema(ns walletdb.ReadBucket,
 
 // putScopeAddrSchema attempts to store the passed addr scehma for the given
 // manager scope.
+//
+//lint:ignore U1000 retained for future scope-schema mutation paths.
 func putScopeAddrTypes(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	schema *ScopeAddrSchema) error {
 
@@ -1109,11 +1115,7 @@ func putAccountInfo(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	}
 
 	// Update account name index.
-	if err := putAccountNameIndex(ns, scope, account, name); err != nil {
-		return err
-	}
-
-	return nil
+	return putAccountNameIndex(ns, scope, account, name)
 }
 
 // putLastAccount stores the provided metadata - last account - to the
@@ -2031,9 +2033,10 @@ func putBirthday(ns walletdb.ReadWriteBucket, t time.Time) error {
 // FetchBirthdayBlock retrieves the birthday block from the database.
 //
 // The block is serialized as follows:
-//   [0:4]   block height
-//   [4:36]  block hash
-//   [36:44] block timestamp
+//
+//	[0:4]   block height
+//	[4:36]  block hash
+//	[36:44] block timestamp
 func FetchBirthdayBlock(ns walletdb.ReadBucket) (BlockStamp, error) {
 	var block BlockStamp
 
@@ -2071,9 +2074,10 @@ func DeleteBirthdayBlock(ns walletdb.ReadWriteBucket) error {
 // PutBirthdayBlock stores the provided birthday block to the database.
 //
 // The block is serialized as follows:
-//   [0:4]   block height
-//   [4:36]  block hash
-//   [36:44] block timestamp
+//
+//	[0:4]   block height
+//	[4:36]  block hash
+//	[36:44] block timestamp
 //
 // NOTE: This does not alter the birthday block verification state.
 func PutBirthdayBlock(ns walletdb.ReadWriteBucket, block BlockStamp) error {
