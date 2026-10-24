@@ -177,14 +177,15 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			defer spvdb.Close()
 			chainService, err = neutrino.NewChainService(
 				neutrino.Config{
-					DataDir:      netDir,
-					Database:     spvdb,
-					ChainParams:  *activeNet.Params,
-					ConnectPeers: cfg.ConnectPeers,
-					AddPeers:     cfg.AddPeers,
-					BlocksOnly:   cfg.BlocksOnly,
-					Proxy:        cfg.Proxy,
-					NameResolver: buildNeutrinoDNSResolver(),
+					DataDir:       netDir,
+					Database:      spvdb,
+					ChainParams:   *activeNet.Params,
+					ConnectPeers:  cfg.ConnectPeers,
+					AddPeers:      cfg.AddPeers,
+					BlocksOnly:    cfg.BlocksOnly,
+					PersistToDisk: cfg.PersistFilters,
+					Proxy:         cfg.Proxy,
+					NameResolver:  buildNeutrinoDNSResolver(),
 				})
 			if err != nil {
 				log.Errorf("Couldn't create Neutrino ChainService: %s", err)

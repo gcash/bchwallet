@@ -2,6 +2,7 @@ package pymtproto
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -48,11 +49,15 @@ type PaymentProtocolClient struct {
 // NewPaymentProtocolClient returns a PaymentRequestDownloader that can be used to get the payment request.
 func NewPaymentProtocolClient(params *chaincfg.Params, proxyDialer proxy.Dialer) *PaymentProtocolClient {
 	// Use proxy on http connection if one is provided
-	dial := net.Dial
+	dialContext := (&net.Dialer{}).DialContext
 	if proxyDialer != nil {
-		dial = proxyDialer.Dial
+		dialContext = func(_ context.Context, network,
+			addr string) (net.Conn, error) {
+
+			return proxyDialer.Dial(network, addr)
+		}
 	}
-	tbTransport := &http.Transport{Dial: dial}
+	tbTransport := &http.Transport{DialContext: dialContext}
 	client := &http.Client{Transport: tbTransport, Timeout: time.Minute}
 	return &PaymentProtocolClient{
 		httpClient:  client,

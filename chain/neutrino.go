@@ -563,8 +563,8 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 	// crossed the rescan's start time, record that progress has been made.
 	// Without this, a rescan whose terminal blocks all match the filter
 	// (common when importprivkey rescans for a freshly imported address)
-	// never sets lastProgressSent and dispatchRescanFinished blocks
-	// forever on line 665.
+	// never sets lastProgressSent and dispatchRescanFinished never sends
+	// RescanFinished.
 	if !header.Timestamp.Before(s.startTime) {
 		s.lastProgressSent = true
 	}
