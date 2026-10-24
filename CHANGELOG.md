@@ -35,6 +35,7 @@ This release moves to bchd 0.22.3 and the latest neutrino, fixes a rescan bug th
 - Update to the bchd 0.22.3 libraries.
 - Fix the staticcheck warnings that were failing CI: the payment protocol client now dials with `DialContext`, and the bchd RPC backend's legacy rescan notifications are marked as intentionally kept.
 - Run gofmt across the tree.
+- Tag the `walletdb` module as `walletdb/v1.0.0`, so projects that use it can depend on a version instead of a pseudo-version, and update it to bbolt 1.5.0 (#79).
 
 ### Upgrade notes
 
