@@ -57,10 +57,10 @@ func (c *websocketClient) send(b []byte) error {
 // Server holds the items the RPC server may need to access (auth,
 // config, shutdown, etc.)
 type Server struct {
-	httpServer    http.Server
-	wallet        *wallet.Wallet
-	walletLoader  *wallet.Loader
-	chainClient chain.Interface
+	httpServer   http.Server
+	wallet       *wallet.Wallet
+	walletLoader *wallet.Loader
+	chainClient  chain.Interface
 	//lint:ignore U1000 retained for future custom handler dispatch.
 	handlerLookup func(string) (requestHandler, bool)
 	handlerMu     sync.Mutex

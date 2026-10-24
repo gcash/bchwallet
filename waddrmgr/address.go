@@ -111,7 +111,7 @@ type ManagedScriptAddress interface {
 // managedAddress represents a public key address.  It also may or may not have
 // the private key associated with the public key.
 type managedAddress struct {
-	manager          *ScopedKeyManager
+	manager        *ScopedKeyManager
 	derivationPath DerivationPath
 	address        bchutil.Address
 	imported       bool
@@ -456,8 +456,8 @@ type scriptAddress struct {
 	account         uint32
 	address         *bchutil.AddressScriptHash
 	scriptEncrypted []byte
-	scriptCT    []byte
-	scriptMutex sync.Mutex
+	scriptCT        []byte
+	scriptMutex     sync.Mutex
 	//lint:ignore U1000 retained for future cached script-used tracking.
 	used bool
 }

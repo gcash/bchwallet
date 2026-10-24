@@ -95,13 +95,13 @@ const (
 // expectedAddr is used to house the expected return values from a managed
 // address.  Not all fields for used for all managed address types.
 type expectedAddr struct {
-	address        string
-	addressHash    []byte
-	internal   bool
-	compressed bool
+	address     string
+	addressHash []byte
+	internal    bool
+	compressed  bool
 	//lint:ignore U1000 retained for future expected-address checks.
-	used     bool
-	imported bool
+	used           bool
+	imported       bool
 	pubKey         []byte
 	privKey        []byte
 	privKeyWIF     string
