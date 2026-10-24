@@ -428,10 +428,9 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 			ChainService: s.CS,
 		},
 		neutrino.NotificationHandlers(rpcclient.NotificationHandlers{
-			OnClientConnected:        nil,
-			OnBlockConnected:         s.onBlockConnected,
-			OnFilteredBlockConnected: s.onFilteredBlockConnected,
-			OnBlockDisconnected:      s.onBlockDisconnected,
+			OnClientConnected:           nil,
+			OnFilteredBlockConnected:    s.onFilteredBlockConnected,
+			OnFilteredBlockDisconnected: s.onFilteredBlockDisconnected,
 		}),
 		neutrino.StartBlock(&waddrmgr.BlockStamp{Hash: *startHash}),
 		neutrino.StartTime(s.startTime),
@@ -486,9 +485,8 @@ func (s *NeutrinoClient) NotifyReceived(addrs []bchutil.Address) error {
 			ChainService: s.CS,
 		},
 		neutrino.NotificationHandlers(rpcclient.NotificationHandlers{
-			OnBlockConnected:         s.onBlockConnected,
-			OnFilteredBlockConnected: s.onFilteredBlockConnected,
-			OnBlockDisconnected:      s.onBlockDisconnected,
+			OnFilteredBlockConnected:    s.onFilteredBlockConnected,
+			OnFilteredBlockDisconnected: s.onFilteredBlockDisconnected,
 		}),
 		neutrino.StartTime(s.startTime),
 		neutrino.QuitChan(s.rescanQuit),
@@ -553,6 +551,12 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 		return
 	}
 
+	// Send this block's RescanProgress and BlockConnected notifications
+	// before marking progress below, so the RescanProgress for the block
+	// that crosses the rescan's start time still goes out.
+	hash := header.BlockHash()
+	s.onBlockConnected(&hash, height, header.Timestamp)
+
 	s.clientMtx.Lock()
 	s.lastFilteredBlockHeader = header
 	// Mirror the post-birthday branch of onBlockConnected: once we've
@@ -570,23 +574,26 @@ func (s *NeutrinoClient) onFilteredBlockConnected(height int32,
 	s.dispatchRescanFinished()
 }
 
-// onBlockDisconnected sends appropriate notifications to the notification
-// channel.
-func (s *NeutrinoClient) onBlockDisconnected(hash *chainhash.Hash, height int32,
-	t time.Time) {
+// onFilteredBlockDisconnected sends appropriate notifications to the
+// notification channel.
+func (s *NeutrinoClient) onFilteredBlockDisconnected(height int32,
+	header *wire.BlockHeader) {
 	select {
 	case s.enqueueNotification <- BlockDisconnected{
 		Block: wtxmgr.Block{
-			Hash:   *hash,
+			Hash:   header.BlockHash(),
 			Height: height,
 		},
-		Time: t,
+		Time: header.Timestamp,
 	}:
 	case <-s.quit:
 	case <-s.rescanQuit:
 	}
 }
 
+// onBlockConnected sends the RescanProgress and BlockConnected notifications
+// for a block. It's called from onFilteredBlockConnected, which dispatches
+// RescanFinished afterwards.
 func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
 	time time.Time) {
 	// TODO: Move this closure out and parameterize it? Is it useful
@@ -642,10 +649,6 @@ func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
 		case <-s.rescanQuit:
 		}
 	}
-
-	// Check if we're able to dispatch our final RescanFinished notification
-	// after processing this block.
-	s.dispatchRescanFinished()
 }
 
 // dispatchRescanFinished determines whether we're able to dispatch our final
