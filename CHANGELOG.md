@@ -8,6 +8,10 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 This release moves to bchd 0.22.3 and the latest neutrino, fixes a rescan bug that could stop the wallet from recording new blocks until the rescan finished, adds an option to keep downloaded filters on disk, and gets CI passing again.
 
+### Wallet
+
+- The address recovery scan at startup no longer announces recovery mode on every start. It logs only when the wallet has blocks to catch up on, and says which blocks it is scanning.
+
 ### SPV
 
 - Use neutrino's filtered block notifications instead of the deprecated `OnBlockConnected` and `OnBlockDisconnected` callbacks, which neutrino no longer sends.

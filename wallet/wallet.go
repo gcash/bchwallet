@@ -666,12 +666,27 @@ func locateBirthdayBlock(chainClient chainConn,
 
 // recovery attempts to recover any unspent outputs that pay to any of our
 // addresses starting from our birthday, or the wallet's tip (if higher), which
-// would indicate resuming a recovery after a restart.
+// would indicate resuming a recovery after a restart. It returns early if the
+// wallet is already synced to the backend's best block.
 func (w *Wallet) recovery(chainClient chain.Interface,
 	birthdayBlock *waddrmgr.BlockStamp) error {
 
-	log.Infof("RECOVERY MODE ENABLED -- rescanning for used addresses "+
-		"with recovery_window=%d", w.recoveryWindow)
+	// Fetch the best height from the backend to determine when we should
+	// stop. If the wallet is already synced to it, there is nothing to
+	// scan.
+	_, bestHeight, err := chainClient.GetBestBlock()
+	if err != nil {
+		return err
+	}
+	startHeight := w.Manager.SyncedTo().Height + 1
+	if startHeight > bestHeight {
+		log.Debugf("Wallet is synced to the best block (height %d), "+
+			"no blocks to scan for used addresses", bestHeight)
+		return nil
+	}
+
+	log.Infof("Scanning blocks %d-%d for used addresses (recovery "+
+		"window %d)", startHeight, bestHeight, w.recoveryWindow)
 
 	// We'll initialize the recovery manager with a default batch size of
 	// 2000.
@@ -700,13 +715,6 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		return err
 	}
 
-	// Fetch the best height from the backend to determine when we should
-	// stop.
-	_, bestHeight, err := chainClient.GetBestBlock()
-	if err != nil {
-		return err
-	}
-
 	// Now we can begin scanning the chain from the wallet's current tip to
 	// ensure we properly handle restarts. Since the recovery process itself
 	// acts as rescan, we'll also update our wallet's synced state along the
@@ -717,7 +725,6 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 	// that a wallet rescan will be performed from the wallet's tip, which
 	// will be of bestHeight after completing the recovery process.
 	var blocks []*waddrmgr.BlockStamp
-	startHeight := w.Manager.SyncedTo().Height + 1
 	for height := startHeight; height <= bestHeight; height++ {
 		hash, err := chainClient.GetBlockHash(int64(height))
 		if err != nil {
