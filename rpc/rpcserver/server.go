@@ -40,6 +40,7 @@ import (
 	"github.com/gcash/bchutil/hdkeychain"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/internal/cfgutil"
+	"github.com/gcash/bchwallet/internal/helpers"
 	"github.com/gcash/bchwallet/internal/zero"
 	"github.com/gcash/bchwallet/netparams"
 	pb "github.com/gcash/bchwallet/rpc/walletrpc"
@@ -1019,7 +1020,7 @@ func (s *loaderServer) checkReady() bool {
 func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletRequest) (
 	*pb.CreateWalletResponse, error) {
 
-	seed := bip39.NewSeed(req.MnemonicSeed, "")
+	seed, err := helpers.SeedFromMnemonic(req.MnemonicSeed)
 
 	defer func() {
 		zero.Bytes(req.PrivatePassphrase)
@@ -1027,6 +1028,10 @@ func (s *loaderServer) CreateWallet(ctx context.Context, req *pb.CreateWalletReq
 		req.WalletBirthday = 0
 		req.MnemonicSeed = ""
 	}()
+
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 
 	// Use an insecure public passphrase when the request's is empty.
 	pubPassphrase := req.PublicPassphrase

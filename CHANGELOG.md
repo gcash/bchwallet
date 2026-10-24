@@ -11,6 +11,8 @@ This release moves to bchd 0.22.3 and the latest neutrino, fixes a rescan bug th
 ### Wallet
 
 - The address recovery scan at startup no longer announces recovery mode on every start. It logs only when the wallet has blocks to catch up on, and says which blocks it is scanning.
+- `importprivkey` in SPV mode now finds transactions from before the wallet was created. Neutrino skipped the filters of blocks older than the wallet's birthday, so the import's rescan from genesis missed them (#73). The import has no start height, so in SPV mode this rescan checks the filter of every block and can take a long time.
+- Creating or restoring a wallet, with `--create` or the gRPC `CreateWallet` method, checks the mnemonic seed against the BIP39 wordlist and checksum, so a mistyped or empty seed is rejected instead of silently creating a different wallet. Extra spaces between words no longer change the seed (#70).
 
 ### SPV
 

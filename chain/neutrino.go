@@ -383,6 +383,11 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 		return fmt.Errorf("can't get block header for hash %v: %s",
 			bestBlock.Hash, err)
 	}
+	startHeader, err := s.CS.GetBlockHeader(startHash)
+	if err != nil {
+		return fmt.Errorf("can't get block header for hash %v: %s",
+			startHash, err)
+	}
 
 	// If the wallet is already fully caught up, or the rescan has started
 	// with state that indicates a "fresh" wallet, we'll send a
@@ -423,6 +428,17 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 	}
 
 	s.clientMtx.Lock()
+
+	// Neutrino doesn't check filters for blocks older than its start time,
+	// so don't let the wallet's birthday cut off a rescan that starts
+	// before it, like the one importprivkey starts from genesis. The
+	// client keeps the birthday as its own start time for the
+	// notifications it sends.
+	startTime := s.startTime
+	if startHeader.Timestamp.Before(startTime) {
+		startTime = startHeader.Timestamp
+	}
+
 	newRescan := neutrino.NewRescan(
 		&neutrino.RescanChainSource{
 			ChainService: s.CS,
@@ -433,7 +449,7 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 			OnFilteredBlockDisconnected: s.onFilteredBlockDisconnected,
 		}),
 		neutrino.StartBlock(&waddrmgr.BlockStamp{Hash: *startHash}),
-		neutrino.StartTime(s.startTime),
+		neutrino.StartTime(startTime),
 		neutrino.QuitChan(s.rescanQuit),
 		neutrino.WatchAddrs(addrs...),
 		neutrino.WatchInputs(inputsToWatch...),

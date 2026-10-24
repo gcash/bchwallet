@@ -14,6 +14,7 @@ import (
 
 	"github.com/btcsuite/golangcrypto/ssh/terminal"
 	"github.com/gcash/bchutil/hdkeychain"
+	"github.com/gcash/bchwallet/internal/helpers"
 	"github.com/gcash/bchwallet/internal/legacy/keystore"
 	"github.com/tyler-smith/go-bip39"
 )
@@ -311,14 +312,9 @@ func Seed(reader *bufio.Reader) ([]byte, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		seed := bip39.NewSeed(strings.TrimSpace(mnemonic), "")
-		if len(seed) < hdkeychain.MinSeedBytes ||
-			len(seed) > hdkeychain.MaxSeedBytes {
-
-			fmt.Printf("Invalid seed specified.  Must be a "+
-				"hexadecimal value that is at least %d bits and "+
-				"at most %d bits\n", hdkeychain.MinSeedBytes*8,
-				hdkeychain.MaxSeedBytes*8)
+		seed, err := helpers.SeedFromMnemonic(mnemonic)
+		if err != nil {
+			fmt.Println("Invalid seed. Check the words and their order.")
 			continue
 		}
 
