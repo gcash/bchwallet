@@ -10,7 +10,7 @@ require (
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
 	github.com/gcash/bchutil v0.0.0-20261023042530-83c74af4dbd7
 	github.com/gcash/bchwallet/walletdb v1.0.0
-	github.com/gcash/neutrino v0.0.0-20261024063811-6b58bb7bf3b8
+	github.com/gcash/neutrino v0.0.0-20261024075305-a96926b038ea
 	github.com/golang/protobuf v1.5.4
 	github.com/jarcoal/httpmock v1.0.8
 	github.com/jessevdk/go-flags v1.6.1
