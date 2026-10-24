@@ -3,11 +3,12 @@ bchwallet
 [![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/gcash/bchwallet)](https://goreportcard.com/report/github.com/gcash/bchwallet)
 [![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/gcash/bchwallet)
+[![Go Reference](https://pkg.go.dev/badge/github.com/gcash/bchwallet.svg)](https://pkg.go.dev/github.com/gcash/bchwallet)
 
 bchwallet is a daemon handling bitcoin cash wallet functionality for a
-single user.  It acts as both an RPC client to bchd and an RPC server
-for wallet clients and legacy RPC applications.
+single user.  It syncs with the network either as an RPC client to bchd
+or as an SPV client, and acts as an RPC server for wallet clients and
+legacy RPC applications.
 
 Public and private keys are derived using the hierarchical
 deterministic format described by
@@ -21,6 +22,7 @@ The default general derivation path for a fresh wallet is as follows:
 
  - mainnet: `m/44'/145'/0'` (if you are not sure, this is what you need)
  - testnet: `m/44'/1'/0'`
+ - regtest: `m/44'/1'/0'`
  - simnet: `m/44'/115'/0'`
 
 Due to the sensitive nature of public data in a BIP0032 wallet,
@@ -30,15 +32,15 @@ wallet file is compromised without exposing all current and future
 addresses (public keys) managed by the wallet. While access to this
 information would not allow an attacker to spend or steal coins, it
 does mean they could track all transactions involving your addresses
-and therefore know your exact balance.  In a future release, public data
-encryption will extend to transactions as well.
+and therefore know your exact balance.
 
-bchwallet is not an SPV client and requires connecting to a local or
-remote bchd instance for asynchronous blockchain queries and
-notifications over websockets.  Full bchd installation instructions
-can be found [here](https://github.com/gcash/bchd).  An alternative
-SPV mode that is compatible with bchd and Bitcoin Core is planned for
-a future release.
+By default bchwallet connects to a local or remote bchd instance for
+asynchronous blockchain queries and notifications over websockets.  Full
+bchd installation instructions can be found
+[here](https://github.com/gcash/bchd).  Alternatively, the experimental
+SPV mode (`--usespv`) syncs without an RPC connection, using compact
+block filters from peers that serve them, such as bchd nodes.  Use
+`--connect` or `--addpeer` to choose which peers it uses.
 
 Wallet clients can use one of two RPC servers:
 
@@ -62,9 +64,11 @@ Wallet clients can use one of two RPC servers:
 
 ## Installation and updating
 
-### Windows - MSIs Available
+### Download a release
 
-Install the latest MSIs available here:
+Prebuilt zips for Windows, macOS, Linux and the BSDs are available on the
+releases pages.  Each zip contains the executable, a README, the license and a
+sample configuration file.
 
 https://github.com/gcash/bchd/releases
 
@@ -74,26 +78,39 @@ https://github.com/gcash/bchwallet/releases
 
 Building or updating from source requires the following build dependencies:
 
-- **Go 1.24.0 and greater**
+- **Go 1.26 or newer**
 
   Installation instructions can be found here: http://golang.org/doc/install.
   It is recommended to add `$GOPATH/bin` to your `PATH` at this point.
 
-**Getting the source**:
+**Installing with Go**:
+
+To install the latest release of `bchwallet` to `$GOPATH/bin/`:
 
 ```
-go install github.com/gcash/bchwallet
+go install github.com/gcash/bchwallet@latest
 ```
 
-**Building/Installing**:
+To also install the helper commands (in the `cmd` directory):
 
-The `go` tool is used to build or install (to `GOPATH`) the project.  Some
-example build instructions are provided below (all must run from the `bchwallet`
-project directory).
+```
+go install github.com/gcash/bchwallet/cmd/...@latest
+```
+
+**Building from source**:
+
+Get the source with git:
+
+```
+git clone https://github.com/gcash/bchwallet.git
+cd bchwallet
+```
+
+The commands below must be run from the `bchwallet` project directory.
 
 To build and install `bchwallet` and all helper commands (in the `cmd`
-directory) to `$GOPATH/bin/`, as well as installing all compiled packages to
-`$GOPATH/pkg/` (**use this if you are unsure which command to run**):
+directory) to `$GOPATH/bin/` (**use this if you are unsure which command to
+run**):
 
 ```
 go install . ./cmd/...
@@ -148,26 +165,23 @@ copy the sample bchd and bchwallet configurations and update with your
 RPC username and password. Then you can use commands without providing
 the username and password with every command.
 
-PowerShell (Installed from MSI):
+The sample configurations, `sample-bchd.conf` and `sample-bchwallet.conf`,
+come in the release zips and in the root of each project's source.  Replace
+`path/to/bchd` and `path/to/bchwallet` below with the directories that hold
+them.
+
+PowerShell:
 ```
-PS> cp "$env:ProgramFiles\Gcash\Bchd\sample-bchd.conf" $env:LOCALAPPDATA\Btcd\bchd.conf
-PS> cp "$env:ProgramFiles\Gcash\Bchwallet\sample-bchwallet.conf" $env:LOCALAPPDATA\Bchwallet\bchwallet.conf
+PS> cp path\to\bchd\sample-bchd.conf $env:LOCALAPPDATA\Bchd\bchd.conf
+PS> cp path\to\bchwallet\sample-bchwallet.conf $env:LOCALAPPDATA\Bchwallet\bchwallet.conf
 PS> $editor $env:LOCALAPPDATA\Bchd\bchd.conf
 PS> $editor $env:LOCALAPPDATA\Bchwallet\bchwallet.conf
 ```
 
-PowerShell (Installed from source):
-```
-PS> cp $env:GOPATH\src\github.com\gcash\bchd\sample-bchd.conf $env:LOCALAPPDATA\Bchd\bchd.conf
-PS> cp $env:GOPATH\src\github.com\gcash\bchwallet\sample-bchwallet.conf $env:LOCALAPPDATA\Bchwallet\bchwallet.conf
-PS> $editor $env:LOCALAPPDATA\Bchd\bchd.conf
-PS> $editor $env:LOCALAPPDATA\Bchwallet\bchwallet.conf
-```
-
-Linux/BSD/POSIX (Installed from source):
+Linux/BSD/POSIX:
 ```bash
-$ cp $GOPATH/src/github.com/gcash/bchd/sample-bchd.conf ~/.bchd/bchd.conf
-$ cp $GOPATH/src/github.com/gcash/bchwallet/sample-bchwallet.conf ~/.bchwallet/bchwallet.conf
+$ cp path/to/bchd/sample-bchd.conf ~/.bchd/bchd.conf
+$ cp path/to/bchwallet/sample-bchwallet.conf ~/.bchwallet/bchwallet.conf
 $ $EDITOR ~/.bchd/bchd.conf
 $ $EDITOR ~/.bchwallet/bchwallet.conf
 ```
