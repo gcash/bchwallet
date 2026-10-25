@@ -2,6 +2,7 @@ package pymtproto
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"github.com/gcash/bchd/chaincfg"
@@ -17,6 +18,34 @@ var (
 	testPaymentAck     = "0ad6020a4c7b22696e766f6963654964223a224d46756e5261665755656d4b4d6f6a42626e54333352222c226d65726368616e744964223a22514871385734584d44386a765a45597a737935766931227d12e1010100000001e19aafde7cd10dbdcfdc3f7ebbcabbbcddc50422c98dbe20e8139009b22fa3e2010000006a4730440220763c2bde7707a28e7677517f1d128081018c9e0618b0600c2c0c37b2794629f602206995f7db1fcf3ee6802f87a1e62bd7509f4252fbef62e09170eeb2d124f58648412102af5d7bd2522968296b3704c09ba031d0b98b674dac5f67581fbe3c92370bf37affffffff02300b3300000000001976a9147a62aef5cdf4ac00f6cc2f0876c5c42fd2205d7588ac3c283200000000001976a914dcc17bdff94e5140e8d684e5a3142526f5d9128288ac000000001a2008b096cc01121976a9142054e43b0defc8f295e03d443e5d9b6c0b4be72e88ac2200125f5472616e73616374696f6e207265636569766564206279204269745061792e20496e766f6963652077696c6c206265206d61726b6564206173207061696420696620746865207472616e73616374696f6e20697320636f6e6669726d65642e"
 )
 
+// goDaddyRootG2 is the root certificate authority of testPaymentRequest's
+// certificate, which the request does not include: "Go Daddy Root Certificate
+// Authority - G2", SHA-256 fingerprint
+// 45140B3247EB9CC8C5B4F0D7B53091F73292089E6E5A63E2749DD3ACA9198EDA.
+const goDaddyRootG2 = `-----BEGIN CERTIFICATE-----
+MIIDxTCCAq2gAwIBAgIBADANBgkqhkiG9w0BAQsFADCBgzELMAkGA1UEBhMCVVMx
+EDAOBgNVBAgTB0FyaXpvbmExEzARBgNVBAcTClNjb3R0c2RhbGUxGjAYBgNVBAoT
+EUdvRGFkZHkuY29tLCBJbmMuMTEwLwYDVQQDEyhHbyBEYWRkeSBSb290IENlcnRp
+ZmljYXRlIEF1dGhvcml0eSAtIEcyMB4XDTA5MDkwMTAwMDAwMFoXDTM3MTIzMTIz
+NTk1OVowgYMxCzAJBgNVBAYTAlVTMRAwDgYDVQQIEwdBcml6b25hMRMwEQYDVQQH
+EwpTY290dHNkYWxlMRowGAYDVQQKExFHb0RhZGR5LmNvbSwgSW5jLjExMC8GA1UE
+AxMoR28gRGFkZHkgUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkgLSBHMjCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAL9xYgjx+lk09xvJGKP3gElY6SKD
+E6bFIEMBO4Tx5oVJnyfq9oQbTqC023CYxzIBsQU+B07u9PpPL1kwIuerGVZr4oAH
+/PMWdYA5UXvl+TW2dE6pjYIT5LY/qQOD+qK+ihVqf94Lw7YZFAXK6sOoBJQ7Rnwy
+DfMAZiLIjWltNowRGLfTshxgtDj6AozO091GB94KPutdfMh8+7ArU6SSYmlRJQVh
+GkSBjCypQ5Yj36w6gZoOKcUcqeldHraenjAKOc7xiID7S13MMuyFYkMlNAJWJwGR
+tDtwKj9useiciAF9n9T521NtYJ2/LOdYq7hfRvzOxBsDPAnrSTFcaUaz4EcCAwEA
+AaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYE
+FDqahQcQZyi27/a9BUFuIMGU2g/eMA0GCSqGSIb3DQEBCwUAA4IBAQCZ21151fmX
+WWcDYfF+OwYxdS2hII5PZYe096acvNjpL9DbWu7PdIxztDhC2gV7+AJ1uP2lsdeu
+9tfeE8tTEH6KRtGX+rcuKxGrkLAngPnon1rpN5+r5N9ss4UXnT3ZJE95kTXWXwTr
+gIOrmgIttRD02JDHBHNA7XIloKmf7J6raBKZV8aPEjoJpL1E/QYVN8Gb5DKj7Tjo
+2GTzLH4U/ALqn83/B2gX2yKQOC16jdFU8WnjXzPKej17CuPKf1855eJ1usV2GDPO
+LPAvTK33sefOT6jEm0pUBsV/fdUID+Ic/n4XuKxe9tQWskMJDE32p2u0mYRlynqI
+4uJEvlz36hz1
+-----END CERTIFICATE-----`
+
 func TestPaymentProtocolClient_TestDownloadBip0070PaymentRequest(t *testing.T) {
 	uri := "bitcoincash:?r=https://test.bitpay.com/i/KqSWvRBKC58CgdpfsttzBC"
 
@@ -28,6 +57,13 @@ func TestPaymentProtocolClient_TestDownloadBip0070PaymentRequest(t *testing.T) {
 	prClient := NewPaymentProtocolClient(&chaincfg.TestNet3Params, nil)
 	prClient.httpClient = client
 	prClient.skipExpirationChecks = true
+
+	// Trust only the root of the request's certificate, so the test does not
+	// depend on the system's certificate authorities.
+	prClient.roots = x509.NewCertPool()
+	if !prClient.roots.AppendCertsFromPEM([]byte(goDaddyRootG2)) {
+		t.Fatal("unable to parse the root certificate")
+	}
 
 	serializedResponse, err := hex.DecodeString(testPaymentRequest)
 	if err != nil {

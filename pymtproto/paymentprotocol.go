@@ -3,6 +3,8 @@ package pymtproto
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -44,6 +46,10 @@ type PaymentProtocolClient struct {
 	params               *chaincfg.Params
 	proxyDialer          proxy.Dialer
 	skipExpirationChecks bool
+
+	// roots are the certificate authorities that a payment request's
+	// certificate must chain to.  Nil means the system's.
+	roots *x509.CertPool
 }
 
 // NewPaymentProtocolClient returns a PaymentRequestDownloader that can be used to get the payment request.
@@ -68,9 +74,10 @@ func NewPaymentProtocolClient(params *chaincfg.Params, proxyDialer proxy.Dialer)
 
 // DownloadBip0070PaymentRequest will download a Bip70 (protobuf) payment request from
 // the provided bitcoincash URI. Upon download it will validate the request is formatted
-// correctly and signed with a valid X509 certificate. The cert will be checked against
-// the OS's certificate store. A PaymentRequest object with the relevant data extracted
-// is returned.
+// correctly, is for the client's network and is signed with a valid X509 certificate.
+// The cert must chain to a certificate authority in the OS's certificate store, through
+// the intermediate certs the request includes. A PaymentRequest object with the relevant
+// data extracted is returned.
 func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*PaymentRequest, error) {
 	// Extract the `r` parameter from the URI
 	u, err := url.Parse(uri)
@@ -135,8 +142,8 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		}
 		certs = append(certs, cert)
 	}
-	if len(certs) < 2 {
-		return nil, errors.New("invalid number of certs")
+	if len(certs) == 0 {
+		return nil, errors.New("payment request has no certificate")
 	}
 
 	// If the certificate is expired or not valid yet we return and error
@@ -149,12 +156,17 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		return nil, errors.New("certificate is not valid yet")
 	}
 
-	// Now make sure the cert is signed by a valid certificate authority
-	roots := x509.NewCertPool()
-	roots.AddCert(certs[1])
-
+	// Now make sure the merchant's certificate, the first one, chains to a
+	// certificate authority that the system trusts.  The other certificates
+	// are only intermediates: trusting one of them as a root would let anyone
+	// sign a payment request in any merchant's name with a CA they made.
+	intermediates := x509.NewCertPool()
+	for _, cert := range certs[1:] {
+		intermediates.AddCert(cert)
+	}
 	opts := x509.VerifyOptions{
-		Roots: roots,
+		Roots:         c.roots,
+		Intermediates: intermediates,
 	}
 	if c.skipExpirationChecks {
 		opts.CurrentTime = certs[0].NotAfter.Add(-time.Minute)
@@ -163,7 +175,12 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		return nil, err
 	}
 
-	// Verify the signature on the PaymentRequest object
+	// Verify the signature on the PaymentRequest object, which x509+sha256
+	// makes over a SHA-256 hash with the key of the merchant's certificate.
+	sigAlgorithm, err := sha256SignatureAlgorithm(certs[0].PublicKey)
+	if err != nil {
+		return nil, err
+	}
 	signature := paymentRequest.Signature
 	paymentRequest.Signature = []byte{} // Zero out the signature for verification
 
@@ -171,7 +188,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	if err != nil {
 		return nil, err
 	}
-	if err := certs[0].CheckSignature(certs[0].SignatureAlgorithm, serializedPaymentRequest, signature); err != nil {
+	if err := certs[0].CheckSignature(sigAlgorithm, serializedPaymentRequest, signature); err != nil {
 		return nil, err
 	}
 
@@ -181,8 +198,18 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 		return nil, err
 	}
 
+	// A payment request is for the main network or a test network.
+	network := "main"
+	if c.params.Net != wire.MainNet {
+		network = "test"
+	}
+	if paymentDetails.GetNetwork() != network {
+		return nil, fmt.Errorf("payment request is for the %q network, not %q",
+			paymentDetails.GetNetwork(), network)
+	}
+
 	pr := &PaymentRequest{
-		PayToName: certs[0].Subject.CommonName,
+		PayToName: payToName(certs[0]),
 	}
 
 	for _, out := range paymentDetails.Outputs {
@@ -216,6 +243,29 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	pr.MerchantData = paymentDetails.GetMerchantData()
 
 	return pr, nil
+}
+
+// sha256SignatureAlgorithm returns the algorithm of a signature over a SHA-256
+// hash made with a key of pub's type, as the x509+sha256 PKI type uses.
+func sha256SignatureAlgorithm(pub any) (x509.SignatureAlgorithm, error) {
+	switch pub.(type) {
+	case *rsa.PublicKey:
+		return x509.SHA256WithRSA, nil
+	case *ecdsa.PublicKey:
+		return x509.ECDSAWithSHA256, nil
+	default:
+		return x509.UnknownSignatureAlgorithm,
+			fmt.Errorf("unsupported payment request certificate key %T", pub)
+	}
+}
+
+// payToName returns the name of the merchant a certificate was issued to: its
+// common name, or its first DNS name when it has none.
+func payToName(cert *x509.Certificate) string {
+	if cert.Subject.CommonName != "" || len(cert.DNSNames) == 0 {
+		return cert.Subject.CommonName
+	}
+	return cert.DNSNames[0]
 }
 
 // Payment is an object that holds all information needed to POST a payment back

@@ -30,6 +30,8 @@ This release lets an app run the wallet again in the same process and start it w
 
 - Stopping the gRPC server waits for its handlers to return, and its services can be started again by a later run of the wallet in the same process. Starting them a second time panicked.
 - A legacy address for another network is refused: `ValidateAddress` reports it invalid, and `CreateTransaction`, `SweepAccount` and `PostPayment` return an error. A testnet address was accepted on mainnet, and a transaction paid mainnet coins to its hash (latest bchutil).
+- `DownloadPaymentRequest` accepts a BIP70 payment request only when its certificate chains to a certificate authority the system trusts. It trusted the second certificate in the request itself, so anyone could sign a request that named any merchant.
+- `DownloadPaymentRequest` also refuses a payment request for another network, and checks the request's signature with SHA-256 and the algorithm of the merchant's key, where it used the algorithm of the certificate authority's signature and refused some valid requests. A merchant whose certificate has no common name is named by its first DNS name.
 
 ### Build & Packaging
 
