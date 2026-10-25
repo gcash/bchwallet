@@ -16,8 +16,8 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
-github.com/gcash/bchd v0.22.3 h1:tWSu8XebWhGzKxDZ/D3fsQwSGvpRpMEmCb8nBQwkcfI=
-github.com/gcash/bchd v0.22.3/go.mod h1:/7YpKEjpYhLsdhy7Nsl9G2kci+OfxDU4HGcue5y46rk=
+github.com/gcash/bchd v0.22.4-0.20261024085922-52bdb0e536bf h1:BVVtIzVy+79H+9VKFStmf7trliePNdFd78LfzZy8emc=
+github.com/gcash/bchd v0.22.4-0.20261024085922-52bdb0e536bf/go.mod h1:/7YpKEjpYhLsdhy7Nsl9G2kci+OfxDU4HGcue5y46rk=
 github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6 h1:3pZvWJ8MSfWstGrb8Hfh4ZpLyZNcXypcGx2Ju4ZibVM=
 github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6/go.mod h1:PpfmXTLfjRp7Tf6v/DCGTRXHz+VFbiRcsoUxi7HvwlQ=
 github.com/gcash/bchutil v0.0.0-20261023042530-83c74af4dbd7 h1:t/uE41HMhgBU1Tcr+enUSNolmkjBVMXEkYTFCMCCrpc=
@@ -28,12 +28,12 @@ github.com/gcash/goleveldb v1.1.0 h1:ea7gh9xqgAD+llDYhP7ep7daQxLMlcr1zaFTENCygxE
 github.com/gcash/goleveldb v1.1.0/go.mod h1:5iJUbCHZlp/Gm54CgQz0uYPSX5EMGStfnEzxRiQ3l3Y=
 github.com/gcash/goslp v1.0.0 h1:CUaw4OixaLjJGws1x/lW+56d2QwoABlrUhXG7ssadDw=
 github.com/gcash/goslp v1.0.0/go.mod h1:9hXiB3vl/4agpprXS0i/i2WV7e7Yk9BRT7ThXl5eAM4=
-github.com/gcash/neutrino v0.0.0-20261024075305-a96926b038ea h1:zqUT46RcUhTCcrx5/O9u9ENPfWxSAEpV/rjCiOyOoKY=
-github.com/gcash/neutrino v0.0.0-20261024075305-a96926b038ea/go.mod h1:JzfalYbfgNIjN3lD79h0+QGUfOqGB9D373RkPVhFWNk=
+github.com/gcash/neutrino v0.0.0-20261025063424-9881bb8677e9 h1:Zjz3BTAPLValPUju+Y9NvB+Tk/JNjU1KN9PkB9xuNmo=
+github.com/gcash/neutrino v0.0.0-20261025063424-9881bb8677e9/go.mod h1:wHzlva32ZSAUF1rvZxkxrb5otDV1HL2Zl7RNpbksLDc=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
 github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
-github.com/golang/snappy v0.0.4 h1:yAGX7huGHXlcLOEtBnF4w7FQwA26wojNCwOYAEhLjQM=
-github.com/golang/snappy v0.0.4/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+github.com/golang/snappy v1.0.0 h1:Oy607GVXHs7RtbggtPBnr2RmDArIsAefDwvrdWvRhGs=
+github.com/golang/snappy v1.0.0/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=

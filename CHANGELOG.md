@@ -22,6 +22,7 @@ This release lets an app run the wallet again in the same process and start it w
 ### SPV
 
 - When the wallet shuts down, the neutrino ChainService is stopped and its database closed. They kept running until the process exited.
+- The block and filter header files are closed when the wallet stops, so each run of the wallet in the same process no longer leaves two file handles open (latest neutrino).
 - The chain backend waits 5 seconds before trying again after it failed to start, instead of retrying right away, and no longer starts again while the wallet shuts down.
 
 ### RPC & gRPC
