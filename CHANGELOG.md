@@ -17,6 +17,7 @@ This release lets an app run the wallet again in the same process and start it w
 - `StopWallet` no longer exits the process 3 seconds after asking the wallet to stop. It returns once the wallet has shut down and closed its databases, after at most 30 seconds, and `StartWallet` can then run the wallet again in the same process. On Android the exit killed the app, which showed as a crash without any log when the app was reopened quickly ([gcash/android-neutrino#14](https://github.com/gcash/android-neutrino/issues/14)).
 - `StartWallet` does nothing while the wallet runs and waits for a shutdown in progress before starting. The new `IsRunning` and `LastError` report whether the wallet runs and why it last failed to start or stopped, such as an invalid config file or an RPC port that is in use.
 - The wallet starts in apps targeting Android API 30 or newer. The RPC TLS key pair is only loaded or generated when a server uses TLS, since generating it reads the network interface addresses, which Android denies to such apps, so with `--noservertls` the wallet failed to start with "route ip+net: netlinkrib: permission denied".
+- With TLS on, the wallet starts in such apps too: its RPC TLS key pair is generated without the network interface addresses they can't read (latest bchutil).
 - The wallet is configured only by its config file and leaves the app's signals alone: the command line of the app's process is no longer parsed.
 
 ### SPV
@@ -28,6 +29,7 @@ This release lets an app run the wallet again in the same process and start it w
 ### RPC & gRPC
 
 - Stopping the gRPC server waits for its handlers to return, and its services can be started again by a later run of the wallet in the same process. Starting them a second time panicked.
+- A legacy address for another network is refused: `ValidateAddress` reports it invalid, and `CreateTransaction`, `SweepAccount` and `PostPayment` return an error. A testnet address was accepted on mainnet, and a transaction paid mainnet coins to its hash (latest bchutil).
 
 ### Build & Packaging
 

@@ -8,7 +8,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/gcash/bchd v0.22.4-0.20261024085922-52bdb0e536bf
 	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
-	github.com/gcash/bchutil v0.0.0-20261023042530-83c74af4dbd7
+	github.com/gcash/bchutil v0.0.0-20261025065706-5d8b84f19a75
 	github.com/gcash/bchwallet/walletdb v1.0.0
 	github.com/gcash/neutrino v0.0.0-20261025063424-9881bb8677e9
 	github.com/golang/protobuf v1.5.4
