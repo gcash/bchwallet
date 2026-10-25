@@ -316,6 +316,13 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 			continue
 		}
 
+		// Outputs carrying CashTokens are skipped, since the wallet
+		// creates outputs without tokens and spending them would burn
+		// their tokens.
+		if output.HasTokens() {
+			continue
+		}
+
 		// Only include the output if it is associated with the passed
 		// account.
 		//

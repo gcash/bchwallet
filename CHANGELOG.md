@@ -4,6 +4,41 @@ All notable user-visible changes to [bchwallet](https://github.com/gcash/bchwall
 
 bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in October 2018, at upstream commit 29ee944 ([btcsuite/btcwallet#551](https://github.com/btcsuite/btcwallet/pull/551)). The original btcwallet changelog (0.1.0 through 0.7.0) is preserved unchanged at the bottom of this file under **Legacy btcwallet changelog (pre-fork)**.
 
+## Unreleased
+
+This release lets an app run the wallet again in the same process and start it when targeting current Android, and keeps the wallet from spending outputs that carry CashTokens.
+
+### Wallet
+
+- Outputs that carry CashTokens are no longer spent. The wallet signs without the token prefix of the outputs it spends, so the network rejected any transaction that spent one, and since `SweepAccount` spends every output, sweeping failed for as long as the wallet held one. They are left out of coin selection, `SweepAccount` and the spendable balance, and still count toward the total balance. The wallet does not otherwise support CashTokens yet.
+
+### Mobile
+
+- `StopWallet` no longer exits the process 3 seconds after asking the wallet to stop. It returns once the wallet has shut down and closed its databases, after at most 30 seconds, and `StartWallet` can then run the wallet again in the same process. On Android the exit killed the app, which showed as a crash without any log when the app was reopened quickly ([gcash/android-neutrino#14](https://github.com/gcash/android-neutrino/issues/14)).
+- `StartWallet` does nothing while the wallet runs and waits for a shutdown in progress before starting. The new `IsRunning` and `LastError` report whether the wallet runs and why it last failed to start or stopped, such as an invalid config file or an RPC port that is in use.
+- The wallet starts in apps targeting Android API 30 or newer. The RPC TLS key pair is only loaded or generated when a server uses TLS, since generating it reads the network interface addresses, which Android denies to such apps, so with `--noservertls` the wallet failed to start with "route ip+net: netlinkrib: permission denied".
+- The wallet is configured only by its config file and leaves the app's signals alone: the command line of the app's process is no longer parsed.
+
+### SPV
+
+- When the wallet shuts down, the neutrino ChainService is stopped and its database closed. They kept running until the process exited.
+- The chain backend waits 5 seconds before trying again after it failed to start, instead of retrying right away, and no longer starts again while the wallet shuts down.
+
+### RPC & gRPC
+
+- Stopping the gRPC server waits for its handlers to return, and its services can be started again by a later run of the wallet in the same process. Starting them a second time panicked.
+
+### Build & Packaging
+
+- Track `golang.org/x/mobile/cmd/gobind` as a go tool, which `gomobile bind` requires to bind the mobile package from the module.
+- The mobile README covers NDK r28 or newer, whose 64-bit libraries are aligned for the 16 KB pages Google Play requires, and how to check the alignment.
+
+### Upgrade notes
+
+- The mobile package's `StopWallet` blocks until the wallet has shut down, so call it off an app's UI thread.
+- Programs that embed the wallet can use `boot.WalletMainContext`, which runs the wallet until its context is done, and set `boot.HandleSignals` and `boot.Args` to keep their own signal handling and command line. `rpcserver.StopServices` resets the gRPC services between runs.
+- `wtxmgr.Credit` has a `TokenData` field and a `HasTokens` method, and `wallet.OutputSelectionPolicy` an `IncludeTokens` field that selects outputs carrying tokens too.
+
 ## 0.13.1 (2026-10-23)
 
 This release moves to bchd 0.22.3 and the latest neutrino, fixes a rescan bug that could stop the wallet from recording new blocks until the rescan finished, adds an option to keep downloaded filters on disk, and gets CI passing again.

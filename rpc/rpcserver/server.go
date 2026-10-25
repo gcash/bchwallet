@@ -186,6 +186,22 @@ func StartWalletService(server *grpc.Server, wallet *wallet.Wallet) {
 	}
 }
 
+// StopServices marks the WalletService and WalletLoaderService as not ready
+// and drops the wallet and loader they use, so that a process that runs the
+// wallet again can start them again.  It must only be called once the gRPC
+// server is stopped and its handlers have returned.
+func StopServices() {
+	atomic.StoreUint32(&walletService.ready, 0)
+	walletService.wallet = nil
+
+	atomic.StoreUint32(&loaderService.ready, 0)
+	loaderService.mu.Lock()
+	loaderService.loader = nil
+	loaderService.activeNet = nil
+	loaderService.rpcClient = nil
+	loaderService.mu.Unlock()
+}
+
 func (s *walletServer) checkReady() bool {
 	return atomic.LoadUint32(&s.ready) != 0
 }

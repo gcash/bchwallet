@@ -1606,7 +1606,8 @@ func (w *Wallet) CalculateBalance(confirms int32) (bchutil.Amount, error) {
 }
 
 // Balances records total, spendable (by policy), and immature coinbase
-// reward balance amounts.
+// reward balance amounts.  The amounts of outputs that carry CashTokens count
+// toward the total but are not spendable, since the wallet does not spend them.
 type Balances struct {
 	Total          bchutil.Amount
 	Spendable      bchutil.Amount
@@ -1650,7 +1651,8 @@ func (w *Wallet) CalculateAccountBalances(account uint32, confirms int32) (Balan
 			if output.FromCoinBase && !confirmed(int32(w.chainParams.CoinbaseMaturity),
 				output.Height, syncBlock.Height) {
 				bals.ImmatureReward += output.Amount
-			} else if confirmed(confirms, output.Height, syncBlock.Height) {
+			} else if confirmed(confirms, output.Height, syncBlock.Height) &&
+				!output.HasTokens() {
 				bals.Spendable += output.Amount
 			}
 		}

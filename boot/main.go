@@ -1,11 +1,14 @@
 package boot
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"golang.org/x/net/proxy"
 
@@ -18,6 +21,10 @@ import (
 	"github.com/miekg/dns"
 )
 
+// chainRetryInterval is how long the chain backend waits before it tries
+// again to connect after it failed to start.
+const chainRetryInterval = 5 * time.Second
+
 var (
 	cfg *config
 )
@@ -28,6 +35,15 @@ var (
 // point any defers have already run, and if the error is non-nil, the program
 // can be exited with an error exit status.
 func WalletMain(optionalConfigPath *string) error {
+	return WalletMainContext(context.Background(), optionalConfigPath)
+}
+
+// WalletMainContext runs the wallet like WalletMain, and also shuts it down
+// cleanly once ctx is done.  It returns after the shutdown has completed: the
+// RPC servers are stopped and the wallet and chain backend databases are
+// closed.  A process that embeds the wallet can therefore call it again to run
+// the wallet again.
+func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
 	tcfg, _, err := loadConfig(optionalConfigPath)
@@ -35,9 +51,18 @@ func WalletMain(optionalConfigPath *string) error {
 		return err
 	}
 	cfg = tcfg
-	defer func() {
-		if logRotator != nil {
-			logRotator.Close()
+	defer closeLogRotator()
+
+	// Shut down when ctx is done, and run the interrupt handlers added so
+	// far whenever this function returns, also on an error, so that
+	// nothing started here outlives it.
+	interrupts := newInterruptState()
+	defer interrupts.shutdown()
+	go func() {
+		select {
+		case <-ctx.Done():
+			interrupts.request()
+		case <-interrupts.done:
 		}
 	}()
 
@@ -69,7 +94,59 @@ func WalletMain(optionalConfigPath *string) error {
 
 	// Create and start chain RPC client so it's ready to connect to
 	// the wallet when loaded later.
-	go rpcClientConnectLoop(legacyRPCServer, loader)
+	chainStopping := make(chan struct{})
+	chainQuit := make(chan struct{})
+	chainDone := make(chan struct{})
+	go func() {
+		defer close(chainDone)
+		rpcClientConnectLoop(legacyRPCServer, loader, chainStopping,
+			chainQuit)
+	}()
+
+	// Add interrupt handlers to shutdown the various process components
+	// before exiting.  Interrupt handlers run in LIFO order, so the chain
+	// backend (which should be closed last) is added first, followed by the
+	// wallet (which uses it), and then the RPC servers.
+	interrupts.addInterruptHandler(func() {
+		log.Info("Stopping chain backend...")
+		close(chainQuit)
+		<-chainDone
+		log.Info("Chain backend shutdown")
+	})
+	interrupts.addInterruptHandler(func() {
+		err := loader.UnloadWallet()
+		if err != nil && err != wallet.ErrNotLoaded {
+			log.Errorf("Failed to close wallet: %v", err)
+		}
+	})
+	if rpcs != nil {
+		interrupts.addInterruptHandler(func() {
+			log.Warn("Stopping RPC server...")
+			rpcs.Stop()
+			rpcserver.StopServices()
+			log.Info("RPC server shutdown")
+		})
+	}
+	if legacyRPCServer != nil {
+		interrupts.addInterruptHandler(func() {
+			log.Warn("Stopping legacy RPC server...")
+			legacyRPCServer.Stop()
+			log.Info("Legacy RPC server shutdown")
+		})
+		go func() {
+			select {
+			case <-legacyRPCServer.RequestProcessShutdown():
+				interrupts.request()
+			case <-interrupts.done:
+			}
+		}()
+	}
+
+	// Run first on shutdown, so that the chain backend does not reconnect
+	// when the wallet stops its client.
+	interrupts.addInterruptHandler(func() {
+		close(chainStopping)
+	})
 
 	var proxyDialer proxy.Dialer
 	if cfg.Proxy != "" {
@@ -108,37 +185,7 @@ func WalletMain(optionalConfigPath *string) error {
 		}
 	}
 
-	// Add interrupt handlers to shutdown the various process components
-	// before exiting.  Interrupt handlers run in LIFO order, so the wallet
-	// (which should be closed last) is added first.
-	addInterruptHandler(func() {
-		err := loader.UnloadWallet()
-		if err != nil && err != wallet.ErrNotLoaded {
-			log.Errorf("Failed to close wallet: %v", err)
-		}
-	})
-	if rpcs != nil {
-		addInterruptHandler(func() {
-			// TODO: Does this need to wait for the grpc server to
-			// finish up any requests?
-			log.Warn("Stopping RPC server...")
-			rpcs.Stop()
-			log.Info("RPC server shutdown")
-		})
-	}
-	if legacyRPCServer != nil {
-		addInterruptHandler(func() {
-			log.Warn("Stopping legacy RPC server...")
-			legacyRPCServer.Stop()
-			log.Info("Legacy RPC server shutdown")
-		})
-		go func() {
-			<-legacyRPCServer.RequestProcessShutdown()
-			SimulateInterrupt()
-		}()
-	}
-
-	<-interruptHandlersDone
+	<-interrupts.done
 	log.Info("Shutdown complete")
 	return nil
 }
@@ -150,7 +197,14 @@ func WalletMain(optionalConfigPath *string) error {
 // The legacy RPC is optional.  If set, the connected RPC client will be
 // associated with the server for RPC passthrough and to enable additional
 // methods.
-func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Loader) {
+//
+// Once stopping is closed the loop no longer reconnects, and it returns after
+// the chain client has shut down and, in SPV mode, the neutrino chain service
+// has stopped and its database is closed.  When quit is closed it stops the
+// chain client itself, for when no loaded wallet stopped it.
+func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Loader,
+	stopping, quit <-chan struct{}) {
+
 	var certs []byte
 	if !cfg.UseSPV {
 		certs = readCAFile()
@@ -159,49 +213,30 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 	for {
 		var (
 			chainClient chain.Interface
+			stopBackend func()
 			err         error
 		)
 
 		if cfg.UseSPV {
-			var (
-				chainService *neutrino.ChainService
-				spvdb        walletdb.DB
-			)
-			netDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
-			spvdb, err = walletdb.Create("bdb",
-				filepath.Join(netDir, "neutrino.db"), true)
-			if err != nil {
-				log.Errorf("Unable to create Neutrino DB: %s", err)
-				continue
-			}
-			defer spvdb.Close()
-			chainService, err = neutrino.NewChainService(
-				neutrino.Config{
-					DataDir:       netDir,
-					Database:      spvdb,
-					ChainParams:   *activeNet.Params,
-					ConnectPeers:  cfg.ConnectPeers,
-					AddPeers:      cfg.AddPeers,
-					BlocksOnly:    cfg.BlocksOnly,
-					PersistToDisk: cfg.PersistFilters,
-					Proxy:         cfg.Proxy,
-					NameResolver:  buildNeutrinoDNSResolver(),
-				})
-			if err != nil {
-				log.Errorf("Couldn't create Neutrino ChainService: %s", err)
-				continue
-			}
-			chainClient = chain.NewNeutrinoClient(activeNet.Params, chainService)
-			err = chainClient.Start()
-			if err != nil {
-				log.Errorf("Couldn't start Neutrino client: %s", err)
-			}
+			chainClient, stopBackend, err = startNeutrino()
 		} else {
 			chainClient, err = startChainRPC(certs)
 			if err != nil {
-				log.Errorf("Unable to open connection to consensus RPC server: %v", err)
-				continue
+				err = fmt.Errorf("unable to open connection to "+
+					"consensus RPC server: %v", err)
 			}
+		}
+		if err != nil {
+			log.Error(err)
+
+			// Wait before trying again, unless the wallet is
+			// shutting down.
+			select {
+			case <-stopping:
+				return
+			case <-time.After(chainRetryInterval):
+			}
+			continue
 		}
 
 		// Rather than inlining this logic directly into the loader
@@ -226,11 +261,32 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			}
 		})
 
+		// Stop the client when the wallet shuts down.  The wallet stops
+		// it itself when it is loaded, but it may never have been.
+		clientDone := make(chan struct{})
+		go func() {
+			select {
+			case <-quit:
+				chainClient.Stop()
+			case <-clientDone:
+			}
+		}()
+
 		chainClient.WaitForShutdown()
+		close(clientDone)
+		if stopBackend != nil {
+			stopBackend()
+		}
 
 		mu.Lock()
 		associateRPCClient = nil
 		mu.Unlock()
+
+		select {
+		case <-stopping:
+			return
+		default:
+		}
 
 		loadedWallet, ok := loader.LoadedWallet()
 		if ok {
@@ -249,6 +305,51 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			loadedWallet.Start()
 		}
 	}
+}
+
+// startNeutrino opens the neutrino database and starts a neutrino chain
+// service with a client for it.  The returned function stops the chain service
+// and closes its database, and must be called once the client has shut down.
+func startNeutrino() (*chain.NeutrinoClient, func(), error) {
+	netDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
+	spvdb, err := walletdb.Create("bdb",
+		filepath.Join(netDir, "neutrino.db"), true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to create Neutrino DB: %v", err)
+	}
+	chainService, err := neutrino.NewChainService(
+		neutrino.Config{
+			DataDir:       netDir,
+			Database:      spvdb,
+			ChainParams:   *activeNet.Params,
+			ConnectPeers:  cfg.ConnectPeers,
+			AddPeers:      cfg.AddPeers,
+			BlocksOnly:    cfg.BlocksOnly,
+			PersistToDisk: cfg.PersistFilters,
+			Proxy:         cfg.Proxy,
+			NameResolver:  buildNeutrinoDNSResolver(),
+		})
+	if err != nil {
+		_ = spvdb.Close()
+		return nil, nil, fmt.Errorf("couldn't create Neutrino "+
+			"ChainService: %v", err)
+	}
+
+	stop := func() {
+		if err := chainService.Stop(); err != nil {
+			log.Errorf("Unable to stop Neutrino ChainService: %v", err)
+		}
+		if err := spvdb.Close(); err != nil {
+			log.Errorf("Unable to close Neutrino DB: %v", err)
+		}
+	}
+
+	chainClient := chain.NewNeutrinoClient(activeNet.Params, chainService)
+	if err := chainClient.Start(); err != nil {
+		stop()
+		return nil, nil, fmt.Errorf("couldn't start Neutrino client: %v", err)
+	}
+	return chainClient, stop, nil
 }
 
 func readCAFile() []byte {

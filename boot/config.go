@@ -257,6 +257,24 @@ func parseAndSetDebugLevels(debugLevel string) error {
 // The above results in bchwallet functioning properly without any config
 // settings while still allowing the user to override settings with config files
 // and command line options.  Command line options always take precedence.
+// Args are the command line arguments, without the program name, that
+// loadConfig parses after the config file.  When nil, the arguments the process
+// was started with are used.  Programs that embed the wallet, such as the
+// mobile package, set it to an empty slice so that the command line of the
+// host process is not parsed.  It must be set before WalletMain is called.
+var Args []string
+
+// commandLineArgs returns the command line arguments loadConfig parses.
+func commandLineArgs() []string {
+	if Args != nil {
+		return Args
+	}
+	if len(os.Args) > 1 {
+		return os.Args[1:]
+	}
+	return []string{}
+}
+
 func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	// Default config.
 	cfg := config{
@@ -283,7 +301,7 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	// file or the version flag was specified.
 	preCfg := cfg
 	preParser := flags.NewParser(&preCfg, flags.Default)
-	_, err := preParser.Parse()
+	_, err := preParser.ParseArgs(commandLineArgs())
 	if err != nil {
 		if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
 			preParser.WriteHelp(os.Stderr)
@@ -293,8 +311,11 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 
 	// Show the version and exit if the version flag was specified.
 	funcName := "loadConfig"
-	appName := filepath.Base(os.Args[0])
-	appName = strings.TrimSuffix(appName, filepath.Ext(appName))
+	appName := "bchwallet"
+	if len(os.Args) > 0 {
+		appName = filepath.Base(os.Args[0])
+		appName = strings.TrimSuffix(appName, filepath.Ext(appName))
+	}
 	usageMessage := fmt.Sprintf("Use %s -h to show usage", appName)
 	if preCfg.ShowVersion {
 		fmt.Println(appName, "version", version())
@@ -333,7 +354,7 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	}
 
 	// Parse command line options again to ensure they take precedence.
-	remainingArgs, err := parser.Parse()
+	remainingArgs, err := parser.ParseArgs(commandLineArgs())
 	if err != nil {
 		if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
 			parser.WriteHelp(os.Stderr)

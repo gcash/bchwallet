@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchlog"
@@ -27,7 +28,9 @@ type logWriter struct{}
 
 func (logWriter) Write(p []byte) (n int, err error) {
 	_, _ = os.Stdout.Write(p)
-	_, _ = logRotatorPipe.Write(p)
+	if pw := logRotatorPipe.Load(); pw != nil {
+		_, _ = pw.Write(p)
+	}
 	return len(p), nil
 }
 
@@ -50,8 +53,9 @@ var (
 	logRotator *rotator.Rotator
 
 	// logRotatorPipe is the write-end pipe for writing to the log rotator.  It
-	// is written to by the Write method of the logWriter type.
-	logRotatorPipe *io.PipeWriter
+	// is written to by the Write method of the logWriter type, and is nil
+	// while no log rotator is running.
+	logRotatorPipe atomic.Pointer[io.PipeWriter]
 
 	log          = backendLog.Logger("BCHW")
 	walletLog    = backendLog.Logger("WLLT")
@@ -106,7 +110,19 @@ func initLogRotator(logFile string) {
 	}()
 
 	logRotator = r
-	logRotatorPipe = pw
+	logRotatorPipe.Store(pw)
+}
+
+// closeLogRotator stops writing logs to the log file and closes it.  Logs are
+// still written to standard output.
+func closeLogRotator() {
+	if pw := logRotatorPipe.Swap(nil); pw != nil {
+		_ = pw.Close()
+	}
+	if logRotator != nil {
+		_ = logRotator.Close()
+		logRotator = nil
+	}
 }
 
 // setLogLevel sets the logging level for provided subsystem.  Invalid

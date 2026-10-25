@@ -16,6 +16,11 @@ import (
 type OutputSelectionPolicy struct {
 	Account               uint32
 	RequiredConfirmations int32
+
+	// IncludeTokens selects outputs that carry CashTokens as well.  They
+	// are left out by default, since spending them in a transaction that
+	// does not send their tokens on burns the tokens.
+	IncludeTokens bool
 }
 
 func (p *OutputSelectionPolicy) meetsRequiredConfs(txHeight, curHeight int32) bool {
@@ -43,6 +48,11 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 			// Ignore outputs that haven't reached the required
 			// number of confirmations.
 			if !policy.meetsRequiredConfs(output.Height, syncBlock.Height) {
+				continue
+			}
+
+			// Ignore outputs that carry tokens unless asked for.
+			if output.HasTokens() && !policy.IncludeTokens {
 				continue
 			}
 
@@ -74,8 +84,9 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 			result := &TransactionOutput{
 				OutPoint: output.OutPoint,
 				Output: wire.TxOut{
-					Value:    int64(output.Amount),
-					PkScript: output.PkScript,
+					Value:     int64(output.Amount),
+					PkScript:  output.PkScript,
+					TokenData: output.TokenData,
 				},
 				OutputKind:      outputSource,
 				ContainingBlock: BlockIdentity(output.Block),

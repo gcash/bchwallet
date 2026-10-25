@@ -130,6 +130,16 @@ type Credit struct {
 	PkScript     []byte
 	Received     time.Time
 	FromCoinBase bool
+
+	// TokenData holds the CashTokens the output carries.  It is empty for
+	// an output without tokens.
+	TokenData wire.TokenData
+}
+
+// HasTokens returns whether the output carries CashTokens.  Spending such an
+// output without sending its tokens on burns them.
+func (c *Credit) HasTokens() bool {
+	return !c.TokenData.IsEmpty()
 }
 
 // Store implements a transaction store for storing and managing wallet
@@ -749,6 +759,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]Credit, error) {
 			PkScript:     txOut.PkScript,
 			Received:     rec.Received,
 			FromCoinBase: blockchain.IsCoinBaseTx(&rec.MsgTx),
+			TokenData:    txOut.TokenData,
 		}
 		unspent = append(unspent, cred)
 		return nil
@@ -792,6 +803,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]Credit, error) {
 			PkScript:     txOut.PkScript,
 			Received:     rec.Received,
 			FromCoinBase: blockchain.IsCoinBaseTx(&rec.MsgTx),
+			TokenData:    txOut.TokenData,
 		}
 		unspent = append(unspent, cred)
 		return nil

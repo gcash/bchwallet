@@ -117,9 +117,19 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		err          error
 	)
 
-	keyPair, err = openRPCKeyPair()
-	if err != nil {
-		return nil, nil, err
+	// Load or generate the TLS key pair only when a server uses TLS: the
+	// gRPC server unless its TLS is disabled, and the legacy RPC server,
+	// which always does.  Generating it reads the addresses of the network
+	// interfaces, which Android does not let apps targeting API 30 or newer
+	// do, so an app that embeds the wallet with --noservertls must not.
+	grpcTLS := len(cfg.ExperimentalRPCListeners) != 0 && !cfg.DisableServerTLS
+	legacyRPC := cfg.Username != "" && cfg.Password != "" &&
+		len(cfg.LegacyRPCListeners) != 0
+	if grpcTLS || legacyRPC {
+		keyPair, err = openRPCKeyPair()
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Change the standard net.Listen function to the tls one.
@@ -138,7 +148,10 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 			err := errors.New("failed to create listeners for RPC server")
 			return nil, nil, err
 		}
-		opts := []grpc.ServerOption{grpc.StreamInterceptor(interceptStreaming), grpc.UnaryInterceptor(interceptUnary)}
+		// Stop waits for the handlers to return, so that the services
+		// can be reset for another run of the wallet in this process.
+		opts := []grpc.ServerOption{grpc.StreamInterceptor(interceptStreaming), grpc.UnaryInterceptor(interceptUnary),
+			grpc.WaitForHandlers(true)}
 		if !cfg.DisableServerTLS {
 			creds := credentials.NewServerTLSFromCert(&keyPair)
 			opts = append(opts, grpc.Creds(creds))
