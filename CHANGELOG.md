@@ -11,6 +11,7 @@ This release lets an app run the wallet again in the same process and start it w
 ### Wallet
 
 - Outputs that carry CashTokens are no longer spent. The wallet signs without the token prefix of the outputs it spends, so the network rejected any transaction that spent one, and since `SweepAccount` spends every output, sweeping failed for as long as the wallet held one. They are left out of coin selection, `SweepAccount` and the spendable balance, and still count toward the total balance. The wallet does not otherwise support CashTokens yet.
+- Stopping the wallet no longer hangs when a relevant transaction arrives, or one is published, just as it stops. Passing the transaction on to the recovery, whose handler had already returned, blocked forever, and the shutdown waited for it: the daemon did not exit, and in an app `StopWallet` gave up after 30 seconds, and the wallet could not be opened again until the app restarted.
 
 ### Mobile
 

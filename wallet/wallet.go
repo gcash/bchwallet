@@ -162,7 +162,7 @@ func (w *Wallet) Start() {
 	}
 	w.quitMu.Unlock()
 
-	w.wg.Add(2)
+	w.wg.Add(3)
 	go w.txCreator()
 	go w.walletLocker()
 	go w.recoveryInterruptHandler()
@@ -171,6 +171,8 @@ func (w *Wallet) Start() {
 // recoveryInterruptHandler handles the recovery interrupt and closes
 // any outstanding channels to interrupt the recovery.
 func (w *Wallet) recoveryInterruptHandler() {
+	defer w.wg.Done()
+
 	for {
 		select {
 		case <-w.quit:
@@ -183,6 +185,19 @@ func (w *Wallet) recoveryInterruptHandler() {
 			w.filterInterruptChans = []chan struct{}{}
 			w.recoveryLock.Unlock()
 		}
+	}
+}
+
+// interruptRecovery interrupts the filters a recovery is fetching, through
+// recoveryInterruptHandler.  It returns false without waiting once the wallet
+// is stopping, since the handler then returns and nothing receives the
+// interrupt.
+func (w *Wallet) interruptRecovery() bool {
+	select {
+	case w.recoveryInterruptChan <- struct{}{}:
+		return true
+	case <-w.quitChan():
+		return false
 	}
 }
 
@@ -3466,7 +3481,9 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	if err != nil {
 		return nil, err
 	}
-	w.recoveryInterruptChan <- struct{}{}
+	if !w.interruptRecovery() {
+		return nil, ErrWalletShuttingDown
+	}
 	err = walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 		return w.addRelevantTx(dbTx, txRec, nil)
 	})
