@@ -30,6 +30,24 @@ var TestNet3Params = Params{
 	RPCServerPort: "18332",
 }
 
+// TestNet4Params contains parameters specific running bchwallet and
+// bchd on the test network (version 4) (wire.TestNet4).  bchd serves RPC on
+// the same port as on testnet3.
+var TestNet4Params = Params{
+	Params:        &chaincfg.TestNet4Params,
+	RPCClientPort: "18334",
+	RPCServerPort: "18332",
+}
+
+// ChipNetParams contains parameters specific running bchwallet and
+// bchd on chipnet (wire.ChipNet), the test network that activates upgrades
+// early.  bchd serves RPC on the same port as on testnet3.
+var ChipNetParams = Params{
+	Params:        &chaincfg.ChipNetParams,
+	RPCClientPort: "18334",
+	RPCServerPort: "18332",
+}
+
 // RegtestParams contains parameters specific running bchwallet and
 // bchd on the regression test network (wire.TestNet).
 var RegtestParams = Params{

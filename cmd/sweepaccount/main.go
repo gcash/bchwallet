@@ -42,6 +42,8 @@ func errContext(err error, context string) error {
 // Flags.
 var opts = struct {
 	TestNet3              bool                `long:"testnet" description:"Use the test bitcoin network (version 3)"`
+	TestNet4              bool                `long:"testnet4" description:"Use the test Bitcoin Cash network (version 4)"`
+	ChipNet               bool                `long:"chipnet" description:"Use chipnet, the test network that activates upgrades early"`
 	SimNet                bool                `long:"simnet" description:"Use the simulation bitcoin network"`
 	RPCConnect            string              `short:"c" long:"connect" description:"Hostname[:port] of wallet RPC server"`
 	RPCUsername           string              `short:"u" long:"rpcuser" description:"Wallet RPC username"`
@@ -79,14 +81,24 @@ func init() {
 		os.Exit(1)
 	}
 
-	if opts.TestNet3 && opts.SimNet {
-		fatalf("Multiple bitcoin networks may not be used simultaneously")
-	}
 	var activeNet = &netparams.MainNetParams
-	if opts.TestNet3 {
-		activeNet = &netparams.TestNet3Params
-	} else if opts.SimNet {
-		activeNet = &netparams.SimNetParams
+	selected := 0
+	for _, network := range []struct {
+		selected bool
+		params   *netparams.Params
+	}{
+		{opts.TestNet3, &netparams.TestNet3Params},
+		{opts.TestNet4, &netparams.TestNet4Params},
+		{opts.ChipNet, &netparams.ChipNetParams},
+		{opts.SimNet, &netparams.SimNetParams},
+	} {
+		if network.selected {
+			activeNet = network.params
+			selected++
+		}
+	}
+	if selected > 1 {
+		fatalf("Multiple bitcoin networks may not be used simultaneously")
 	}
 
 	if opts.RPCConnect == "" {

@@ -21,12 +21,17 @@ This release lets an app run the wallet again in the same process and start it w
 - With TLS on, the wallet starts in such apps too: its RPC TLS key pair is generated without the network interface addresses they can't read (latest bchutil).
 - The wallet is configured only by its config file and leaves the app's signals alone: the command line of the app's process is no longer parsed.
 - A wallet that can't sync with its chain backend, because checking its birthday block or syncing to the chain fails, stops with that error, which `LastError` reports. It panicked, which killed the app.
+- Each run of the wallet chooses its network from its own config, so a process that runs the wallet again with a config for another network, or for mainnet, no longer keeps the network of the earlier run.
 
 ### SPV
 
 - When the wallet shuts down, the neutrino ChainService is stopped and its database closed. They kept running until the process exited.
 - The block and filter header files are closed when the wallet stops, so each run of the wallet in the same process no longer leaves two file handles open (latest neutrino).
 - The chain backend waits 5 seconds before trying again after it failed to start, instead of retrying right away, and no longer starts again while the wallet shuts down.
+
+### New options
+
+- `--testnet4` and `--chipnet` run the wallet on testnet4 and on chipnet, the test network that activates upgrades early. They use the default ports of testnet3, as bchd does, and keep their wallets in the `testnet4` and `chipnet` directories of the application data directory.
 
 ### RPC & gRPC
 

@@ -326,6 +326,13 @@ func (c *BitcoindConn) getCurrentNet() (wire.BitcoinNet, error) {
 	switch *hash {
 	case *chaincfg.TestNet3Params.GenesisHash:
 		return chaincfg.TestNet3Params.Net, nil
+	case *chaincfg.TestNet4Params.GenesisHash:
+		// Chipnet shares the genesis block of testnet4, so a node with it
+		// runs one of the two, and the wallet's network can't be ruled out.
+		if c.chainParams.Net == chaincfg.ChipNetParams.Net {
+			return chaincfg.ChipNetParams.Net, nil
+		}
+		return chaincfg.TestNet4Params.Net, nil
 	case *chaincfg.RegressionNetParams.GenesisHash:
 		return chaincfg.RegressionNetParams.Net, nil
 	case *chaincfg.MainNetParams.GenesisHash:

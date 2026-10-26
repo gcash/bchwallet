@@ -5,6 +5,7 @@
 package boot
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -53,6 +54,8 @@ type config struct {
 	CreateTemp    bool                    `long:"createtemp" description:"Create a temporary simulation wallet (pass=password) in the data directory indicated; must call with --datadir"`
 	AppDataDir    *cfgutil.ExplicitString `short:"A" long:"appdata" description:"Application data directory for wallet config, databases and logs"`
 	TestNet3      bool                    `long:"testnet" description:"Use the test Bitcoin network (version 3) (default mainnet)"`
+	TestNet4      bool                    `long:"testnet4" description:"Use the test Bitcoin Cash network (version 4) (default mainnet)"`
+	ChipNet       bool                    `long:"chipnet" description:"Use chipnet, the test network that activates upgrades early (default mainnet)"`
 	Regtest       bool                    `long:"regtest" description:"Use the regression test network (default mainnet)"`
 	SimNet        bool                    `long:"simnet" description:"Use the simulation test network (default mainnet)"`
 	NoInitialLoad bool                    `long:"noinitialload" description:"Defer wallet creation/opening on startup and enable loading wallets over RPC"`
@@ -64,7 +67,7 @@ type config struct {
 	WalletPass string `long:"walletpass" default-mask:"-" description:"The public wallet password -- Only required if the wallet was created with one"`
 
 	// RPC client options
-	RPCConnect       string                  `short:"c" long:"rpcconnect" description:"Hostname/IP and port of bchd RPC server to connect to (default localhost:8334, testnet: localhost:18334, simnet: localhost:18556)"`
+	RPCConnect       string                  `short:"c" long:"rpcconnect" description:"Hostname/IP and port of bchd RPC server to connect to (default localhost:8334, testnet, testnet4 and chipnet: localhost:18334, simnet: localhost:18556)"`
 	CAFile           *cfgutil.ExplicitString `long:"cafile" description:"File containing root certificates to authenticate a TLS connections with bchd"`
 	DisableClientTLS bool                    `long:"noclienttls" description:"Disable TLS for the RPC client -- NOTE: This is only allowed if the RPC client is connecting to localhost"`
 	BchdUsername     string                  `long:"bchdusername" description:"Username for bchd authentication"`
@@ -95,7 +98,7 @@ type config struct {
 	RPCKey                 *cfgutil.ExplicitString `long:"rpckey" description:"File containing the certificate key"`
 	OneTimeTLSKey          bool                    `long:"onetimetlskey" description:"Generate a new TLS certpair at startup, but only write the certificate to disk"`
 	DisableServerTLS       bool                    `long:"noservertls" description:"Disable TLS for the RPC server -- NOTE: This is only allowed if the RPC server is bound to localhost"`
-	LegacyRPCListeners     []string                `long:"rpclisten" description:"Listen for legacy RPC connections on this interface/port (default port: 8332, testnet: 18332, simnet: 18554)"`
+	LegacyRPCListeners     []string                `long:"rpclisten" description:"Listen for legacy RPC connections on this interface/port (default port: 8332, testnet, testnet4 and chipnet: 18332, simnet: 18554)"`
 	LegacyRPCMaxClients    int64                   `long:"rpcmaxclients" description:"Max number of legacy RPC clients for standard connections"`
 	LegacyRPCMaxWebsockets int64                   `long:"rpcmaxwebsockets" description:"Max number of legacy RPC websocket connections"`
 	Username               string                  `short:"u" long:"username" description:"Username for legacy RPC and bchd authentication (if bchdusername is unset)"`
@@ -245,6 +248,34 @@ func parseAndSetDebugLevels(debugLevel string) error {
 	return nil
 }
 
+// networkParams returns the params of the network a config selects, mainnet
+// when it selects none, and an error when it selects more than one.
+func networkParams(cfg *config) (*netparams.Params, error) {
+	networks := []struct {
+		selected bool
+		params   *netparams.Params
+	}{
+		{cfg.TestNet3, &netparams.TestNet3Params},
+		{cfg.TestNet4, &netparams.TestNet4Params},
+		{cfg.ChipNet, &netparams.ChipNetParams},
+		{cfg.Regtest, &netparams.RegtestParams},
+		{cfg.SimNet, &netparams.SimNetParams},
+	}
+	params := &netparams.MainNetParams
+	selected := 0
+	for _, network := range networks {
+		if network.selected {
+			params = network.params
+			selected++
+		}
+	}
+	if selected > 1 {
+		return nil, errors.New("the testnet, testnet4, chipnet, regtest, " +
+			"or simnet params can't be used together -- choose one")
+	}
+	return params, nil
+}
+
 // loadConfig initializes and parses the config using a config file and command
 // line options.
 //
@@ -386,28 +417,17 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	}
 
 	// Choose the active network params based on the selected network.
-	// Multiple networks can't be selected simultaneously.
-	numNets := 0
-	if cfg.TestNet3 {
-		activeNet = &netparams.TestNet3Params
-		numNets++
-	}
-	if cfg.SimNet {
-		activeNet = &netparams.SimNetParams
-		numNets++
-	}
-	if cfg.Regtest {
-		activeNet = &netparams.RegtestParams
-		numNets++
-	}
-	if numNets > 1 {
-		str := "%s: The testnet, regtest, or simnet params can't be used " +
-			"together -- choose one"
-		err := fmt.Errorf(str, "loadConfig")
+	// Multiple networks can't be selected simultaneously.  It is chosen on
+	// every run, so that a process that runs the wallet again with another
+	// config does not keep the network of an earlier run.
+	network, err := networkParams(&cfg)
+	if err != nil {
+		err := fmt.Errorf("%s: %v", "loadConfig", err)
 		fmt.Fprintln(os.Stderr, err)
 		parser.WriteHelp(os.Stderr)
 		return nil, nil, err
 	}
+	activeNet = network
 
 	// Append the network type to the log directory so it is "namespaced"
 	// per network.
