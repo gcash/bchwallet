@@ -32,6 +32,8 @@ This release lets an app run the wallet again in the same process and start it w
 - A legacy address for another network is refused: `ValidateAddress` reports it invalid, and `CreateTransaction`, `SweepAccount` and `PostPayment` return an error. A testnet address was accepted on mainnet, and a transaction paid mainnet coins to its hash (latest bchutil).
 - `DownloadPaymentRequest` accepts a BIP70 payment request only when its certificate chains to a certificate authority the system trusts. It trusted the second certificate in the request itself, so anyone could sign a request that named any merchant.
 - `DownloadPaymentRequest` also refuses a payment request for another network, and checks the request's signature with SHA-256 and the algorithm of the merchant's key, where it used the algorithm of the certificate authority's signature and refused some valid requests. A merchant whose certificate has no common name is named by its first DNS name.
+- `CreateTransaction` and `SweepAccount` return `InvalidArgument` for an address that is not for the wallet's network or is a public key, an amount below the dust limit, a fee rate below the minimum relay fee of 1000 satoshis per kB, or a fee above 0.1 BCH, the default `--maxtxfee` of bchd and BCHN. They built transactions that nodes refused, and paid whatever fee rate they were given. A fee rate of 0 now stands for the minimum relay fee.
+- `SweepAccount` returns `FailedPrecondition` when the account has nothing to sweep, or too little to pay the fee and keep the output above the dust limit, where it built a transaction with a negative or dust output. `ValidateAddress` reports a public key invalid, and `PostPayment` without a refund output returns `InvalidArgument` instead of crashing the wallet.
 
 ### Build & Packaging
 
@@ -43,6 +45,7 @@ This release lets an app run the wallet again in the same process and start it w
 - The mobile package's `StopWallet` blocks until the wallet has shut down, so call it off an app's UI thread.
 - Programs that embed the wallet can use `boot.WalletMainContext`, which runs the wallet until its context is done, and set `boot.HandleSignals` and `boot.Args` to keep their own signal handling and command line. `rpcserver.StopServices` resets the gRPC services between runs.
 - `wtxmgr.Credit` has a `TokenData` field and a `HasTokens` method, and `wallet.OutputSelectionPolicy` an `IncludeTokens` field that selects outputs carrying tokens too.
+- gRPC clients of `CreateTransaction` and `SweepAccount` must send a fee rate of at least 1000 satoshis per kB, or 0 for that minimum, and amounts of at least the dust limit.
 
 ## 0.13.1 (2026-10-23)
 

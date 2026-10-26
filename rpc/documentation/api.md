@@ -776,15 +776,18 @@ passed into `SignTransaction`
   
    **Nested message:** `Output`
   
-    - `string address`: The address for this output to pay.
+    - `string address`: The address for this output to pay, for the wallet's
+      network. A public key is not an address.
   
-    - `int64 amount`: The amount to pay.
+    - `int64 amount`: The amount to pay in satoshis, at least the dust limit
+      (546 satoshis to a P2PKH address).
 
 - `int32 required_confirmations`: The minimum number of block confirmations
   needed to consider including an output in the return set.  This may not be
   negative.
 
-- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte.
+- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte, at least
+  the minimum relay fee of 1000. 0 pays the minimum relay fee.
 
 **Response:** `CreateTransactionResponse`
 
@@ -798,9 +801,14 @@ passed into `SignTransaction`
 
 **Expected errors:**
 
-- `InvalidArgument`: The target amount is negative.
+- `InvalidArgument`: There are no outputs, or an output's address is not valid
+  for the wallet's network, or its amount is below the dust limit or above the
+  money supply.
 
 - `InvalidArgument`: The required confirmations is negative.
+
+- `InvalidArgument`: The fee rate is below the minimum relay fee, or the fee
+  would be above 0.1 BCH.
 
 - `Aborted`: The wallet database is closed.
 
@@ -828,9 +836,11 @@ rather than added.
 - `uint32 account`: Account number containing the keys controlling the output
   set to query.
 
-- `string sweep_to_address`: The address to sweep all the funds into.
+- `string sweep_to_address`: The address to sweep all the funds into, for the
+  wallet's network.
 
-- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte.
+- `uint32 sat_per_kb_fee`: The fee to pay in satoshis per kilobyte, at least
+  the minimum relay fee of 1000. 0 pays the minimum relay fee.
 
 **Response:** `SweepAccountResponse`
 
@@ -845,6 +855,12 @@ rather than added.
 - `int64 fee`: The fee that ended up being set when the transaction was created.
 
 **Expected errors:**
+
+- `InvalidArgument`: The address is not valid for the wallet's network, the fee
+  rate is below the minimum relay fee, or the fee would be above 0.1 BCH.
+
+- `FailedPrecondition`: The account has no outputs to sweep, or too little to
+  pay the fee and leave an output above the dust limit.
 
 - `Aborted`: The wallet database is closed.
 
@@ -922,8 +938,9 @@ ___
 
 The `ValidateAddress` method is a helper function that will return whether or not
 an address is valid. That is, whether it's serialized properly, the checksum matches,
-and it's for the correct network. Since the cashaddr is difficult to implement this
-method saves the client the trouble of implementing it.
+and it's for the correct network. A public key is not a valid address. Since the
+cashaddr is difficult to implement this method saves the client the trouble of
+implementing it.
 
 **Request:** `ValidateAddressRequest`
 

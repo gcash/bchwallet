@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gcash/bchwallet/pymtproto"
+	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
 	"google.golang.org/grpc/status"
@@ -32,6 +33,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchd/txscript"
@@ -463,24 +465,130 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 	}, nil
 }
 
-func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTransactionRequest) (
-	*pb.CreateTransactionResponse, error) {
+// maxTxFee is the highest fee that CreateTransaction and SweepAccount put on a
+// transaction, the default --maxtxfee of bchd and BCHN, which catches a fee
+// rate entered wrong.
+const maxTxFee = bchutil.Amount(bchutil.SatoshiPerBitcoin / 10)
 
-	fee := bchutil.Amount(req.SatPerKbFee)
-	var outputs []*wire.TxOut
-	for _, out := range req.Outputs {
-		addr, err := bchutil.DecodeAddress(out.Address, s.wallet.ChainParams())
+// decodeAddress decodes an address to pay for the wallet's network.  A raw
+// public key is refused, and so is a legacy address for another network,
+// which older versions of bchutil decoded.
+func decodeAddress(address string, params *chaincfg.Params) (bchutil.Address, error) {
+	addr, err := bchutil.DecodeAddress(address, params)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid address %q: %v", address, err)
+	}
+	switch a := addr.(type) {
+	case *bchutil.AddressPubKey:
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid address %q: a public key is not an address", address)
+	case *bchutil.LegacyAddressPubKeyHash, *bchutil.LegacyAddressScriptHash:
+		if !a.IsForNet(params) {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"invalid address %q: not for %s", address, params.Name)
+		}
+	}
+	return addr, nil
+}
+
+// feeRate returns the fee rate in satoshis per kB that a request asks for: the
+// minimum relay fee when it is 0, and an error when it is below that, since
+// nodes would not relay the transaction.
+func feeRate(satPerKb uint32) (bchutil.Amount, error) {
+	rate := bchutil.Amount(satPerKb)
+	switch {
+	case rate == 0:
+		return txrules.DefaultRelayFeePerKb, nil
+	case rate < txrules.DefaultRelayFeePerKb:
+		return 0, status.Errorf(codes.InvalidArgument,
+			"fee rate of %d satoshis per kB is below the minimum relay fee of %d",
+			satPerKb, int64(txrules.DefaultRelayFeePerKb))
+	}
+	return rate, nil
+}
+
+// checkFee returns an error when fee is above maxTxFee.
+func checkFee(fee bchutil.Amount) error {
+	if fee > maxTxFee {
+		return status.Errorf(codes.InvalidArgument,
+			"fee of %v is above the maximum of %v", fee, maxTxFee)
+	}
+	return nil
+}
+
+// requestOutputs returns the outputs that pay a request's outputs, which must
+// pay addresses for the wallet's network amounts that nodes relay: at least
+// the dust limit and at most the money supply.
+func requestOutputs(outs []*pb.CreateTransactionRequest_Output,
+	params *chaincfg.Params) ([]*wire.TxOut, error) {
+
+	if len(outs) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "no outputs")
+	}
+	outputs := make([]*wire.TxOut, 0, len(outs))
+	for _, out := range outs {
+		addr, err := decodeAddress(out.Address, params)
 		if err != nil {
 			return nil, err
 		}
 		script, err := txscript.PayToAddrScript(addr)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.InvalidArgument,
+				"invalid address %q: %v", out.Address, err)
 		}
-		outputs = append(outputs, wire.NewTxOut(out.Amount, script, wire.TokenData{}))
+		txOut := wire.NewTxOut(out.Amount, script, wire.TokenData{})
+		if err := txrules.CheckOutput(txOut, txrules.DefaultRelayFeePerKb); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"output of %d satoshis to %s: %v", out.Amount, out.Address, err)
+		}
+		outputs = append(outputs, txOut)
+	}
+	return outputs, nil
+}
+
+// sweepOutput returns the output that sweeps total, spent by numInputs
+// inputs, to script at the fee rate, and the fee it leaves.  It returns an
+// error when there is nothing to sweep, or too little to pay the fee and keep
+// the output above the dust limit.
+func sweepOutput(script []byte, numInputs int, total, rate bchutil.Amount) (
+	*wire.TxOut, bchutil.Amount, error) {
+
+	if numInputs == 0 {
+		return nil, 0, status.Errorf(codes.FailedPrecondition,
+			"no outputs to sweep")
+	}
+	out := wire.NewTxOut(0, script, wire.TokenData{})
+	size := txsizes.EstimateSerializeSize(numInputs, []*wire.TxOut{out}, false)
+	fee := txrules.FeeForSerializeSize(rate, size)
+	if err := checkFee(fee); err != nil {
+		return nil, 0, err
+	}
+	out.Value = int64(total - fee)
+	if err := txrules.CheckOutput(out, txrules.DefaultRelayFeePerKb); err != nil {
+		return nil, 0, status.Errorf(codes.FailedPrecondition,
+			"%v is too little to sweep with a fee of %v", total, fee)
+	}
+	return out, fee, nil
+}
+
+func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTransactionRequest) (
+	*pb.CreateTransactionResponse, error) {
+
+	if req.RequiredConfirmations < 0 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"required confirmations may not be negative")
+	}
+	rate, err := feeRate(req.SatPerKbFee)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := requestOutputs(req.Outputs, s.wallet.ChainParams())
+	if err != nil {
+		return nil, err
 	}
 
-	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, fee)
+	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, rate)
 	if err != nil {
 		return nil, err
 	}
@@ -500,6 +608,9 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 	for _, out := range authoredTx.Tx.TxOut {
 		totalOut += out.Value
 	}
+	if err := checkFee(bchutil.Amount(totalIn - totalOut)); err != nil {
+		return nil, err
+	}
 
 	return &pb.CreateTransactionResponse{
 		SerializedTransaction: serializedTx.Bytes(),
@@ -511,6 +622,20 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountRequest) (
 	*pb.SweepAccountResponse, error) {
 
+	rate, err := feeRate(req.SatPerKbFee)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := decodeAddress(req.SweepToAddress, s.wallet.ChainParams())
+	if err != nil {
+		return nil, err
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid address %q: %v", req.SweepToAddress, err)
+	}
+
 	policy := wallet.OutputSelectionPolicy{
 		Account:               req.Account,
 		RequiredConfirmations: 0,
@@ -520,38 +645,24 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 		return nil, translateError(err)
 	}
 
-	totalIn := int64(0)
+	var totalIn bchutil.Amount
 	var inputs []*wire.TxIn
 	var inputValues []int64
 	for _, u := range unspentOutputs {
-		totalIn += u.Output.Value
+		totalIn += bchutil.Amount(u.Output.Value)
 		inputValues = append(inputValues, u.Output.Value)
 		inputs = append(inputs, wire.NewTxIn(&u.OutPoint, nil))
 	}
 
-	addr, err := bchutil.DecodeAddress(req.SweepToAddress, s.wallet.ChainParams())
+	out, fee, err := sweepOutput(script, len(inputs), totalIn, rate)
 	if err != nil {
 		return nil, err
 	}
-	script, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set the value to zero as a placeholder while we calculate the estimate size
-	out := wire.NewTxOut(0, script, wire.TokenData{})
-	outputs := []*wire.TxOut{out}
-
-	txSize := txsizes.EstimateSerializeSize(len(inputs), outputs, false)
-
-	fee := (float64(txSize) / float64(1000)) * float64(req.SatPerKbFee)
-
-	out.Value = totalIn - int64(fee)
 
 	tx := &wire.MsgTx{
 		Version:  wire.TxVersion,
 		TxIn:     inputs,
-		TxOut:    outputs,
+		TxOut:    []*wire.TxOut{out},
 		LockTime: 0,
 	}
 
@@ -768,12 +879,15 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (
 	*pb.PostPaymentResponse, error) {
 
-	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-
-	refundAddr, err := bchutil.DecodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
+	if req.RefundOutput == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "no refund output")
+	}
+	refundAddr, err := decodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
 	if err != nil {
 		return nil, err
 	}
+
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
 
 	payment := &pymtproto.Payment{
 		PaymentURL:   req.PaymentUrl,
@@ -806,12 +920,8 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
 	*pb.ValidateAddressResponse, error) {
 
-	valid := false
-	_, err := bchutil.DecodeAddress(req.Address, s.wallet.ChainParams())
-	if err == nil {
-		valid = true
-	}
-	return &pb.ValidateAddressResponse{Valid: valid}, nil
+	_, err := decodeAddress(req.Address, s.wallet.ChainParams())
+	return &pb.ValidateAddressResponse{Valid: err == nil}, nil
 }
 
 func marshalTransactionInputs(v []wallet.TransactionSummaryInput) []*pb.TransactionDetails_Input {
