@@ -277,6 +277,8 @@ The service provides the following methods:
 - [`GenerateMnemonicSeed`](#generatemnemonicseed)
 - [`SignTransaction`](#signtransaction)
 - [`PublishTransaction`](#publishtransaction)
+- [`DownloadPaymentRequest`](#downloadpaymentrequest)
+- [`PostPayment`](#postpayment)
 - [`TransactionNotifications`](#transactionnotifications)
 - [`SpentnessNotifications`](#spentnessnotifications)
 - [`AccountNotifications`](#accountnotifications)
@@ -940,6 +942,88 @@ wallet and republished later if it or a double spend are not mined.
   input scripts.
 
 - `Aborted`: The wallet database is closed.
+
+**Stability:** Unstable
+
+___
+
+#### `DownloadPaymentRequest`
+
+The `DownloadPaymentRequest` method downloads the payment request of a
+`bitcoincash:` URI with an `r` parameter. It uses version 2 of BitPay's JSON
+Payment Protocol when the merchant offers it, signed by a key the wallet trusts
+for the merchant's domain, which are BitPay's, and BIP70 otherwise, whose
+certificate must chain to a certificate authority the system trusts. Pay the
+outputs with `CreateTransaction`, at a fee rate of at least
+`required_sat_per_kb_fee`, then sign the transaction and send it with
+`PostPayment`.
+
+**Request:** `DownloadPaymentRequestRequest`
+
+- `string uri`: The `bitcoincash:` URI.
+
+**Response:** `DownloadPaymentRequestResponse`
+
+- `string pay_to_name`: The verified name of the merchant: the owner of the JSON
+  Payment Protocol key, or the name in the BIP70 certificate.
+
+- `repeated Output outputs`: The addresses and amounts to pay.
+
+- `int64 expires`: When the payment request expires, as a Unix time.
+
+- `string memo`: The merchant's memo.
+
+- `string payment_url`: Where `PostPayment` sends the payment.
+
+- `bytes merchant_data`: BIP70 merchant data to send back with the payment.
+
+- `PaymentProtocol protocol`: The payment protocol of the request.
+
+- `uint32 required_sat_per_kb_fee`: The lowest fee rate the merchant accepts,
+  in satoshis per kilobyte, or 0 when it does not say.
+
+**Expected errors:**
+
+- `Unknown`: The payment request could not be downloaded or verified with
+  either protocol.
+
+**Stability:** Unstable
+
+___
+
+#### `PostPayment`
+
+The `PostPayment` method sends a signed payment to the merchant of a payment
+request. With the JSON Payment Protocol, the merchant first verifies the
+unsigned transactions, and only once it accepts them gets the signed ones. When
+the merchant has accepted the payment, the wallet records its transactions as
+`PublishTransaction` does, which also broadcasts them.
+
+**Request:** `PostPaymentRequest`
+
+- `string payment_url`: The `payment_url` of the payment request.
+
+- `bytes merchant_data`: The `merchant_data` of a BIP70 payment request.
+
+- `repeated bytes transactions`: The signed, serialized transactions.
+
+- `Output refund_output`: The address and amount a BIP70 merchant refunds to.
+  Required with BIP70, unused with the JSON Payment Protocol.
+
+- `string memo`: A memo for a BIP70 merchant.
+
+- `PaymentProtocol protocol`: The `protocol` of the payment request.
+
+**Response:** `PostPaymentResponse`
+
+- `string memo`: The merchant's memo.
+
+**Expected errors:**
+
+- `InvalidArgument`: A BIP70 payment has no refund output, or its address is
+  not valid for the wallet's network.
+
+- `Unknown`: The merchant refused the payment or could not be reached.
 
 **Stability:** Unstable
 

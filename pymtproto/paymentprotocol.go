@@ -22,15 +22,31 @@ import (
 	"time"
 )
 
-// PaymentRequest is returned by the DownloadBip0070PaymentRequest method. It
+// Protocol is a payment protocol.
+type Protocol int
+
+const (
+	// ProtocolBIP70 is the BIP70 payment protocol.
+	ProtocolBIP70 Protocol = iota
+
+	// ProtocolJPPv2 is version 2 of BitPay's JSON Payment Protocol.
+	ProtocolJPPv2
+)
+
+// PaymentRequest is returned by the DownloadPaymentRequest methods. It
 // contains all the relevant information from the downloaded payment request.
 type PaymentRequest struct {
+	Protocol     Protocol
 	PayToName    string
 	Outputs      []Output
 	Expires      time.Time
 	Memo         string
 	PaymentURL   string
 	MerchantData []byte
+
+	// RequiredFeeRate is the lowest fee rate, in satoshis per kB, that
+	// the merchant accepts, or 0 when it does not say.
+	RequiredFeeRate bchutil.Amount
 }
 
 // Output represents an address and amount to be paid.
@@ -50,6 +66,10 @@ type PaymentProtocolClient struct {
 	// roots are the certificate authorities that a payment request's
 	// certificate must chain to.  Nil means the system's.
 	roots *x509.CertPool
+
+	// jppKeys are the keys trusted to sign JSON Payment Protocol
+	// responses, by their identity.
+	jppKeys map[string]jppKey
 }
 
 // NewPaymentProtocolClient returns a PaymentRequestDownloader that can be used to get the payment request.
@@ -69,7 +89,38 @@ func NewPaymentProtocolClient(params *chaincfg.Params, proxyDialer proxy.Dialer)
 		httpClient:  client,
 		params:      params,
 		proxyDialer: proxyDialer,
+		jppKeys:     bitPayKeys,
 	}
+}
+
+// paymentRequestURL returns the URL of the payment request of a bitcoincash
+// URI, its `r` parameter.
+func paymentRequestURL(uri string) (string, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	endpoint := u.Query().Get("r")
+	if endpoint == "" {
+		return "", errors.New("invalid bitcoin cash URI")
+	}
+	return endpoint, nil
+}
+
+// DownloadPaymentRequest downloads the payment request of a bitcoincash URI
+// with the JSON Payment Protocol, and with BIP70 when the merchant does not
+// offer the former or does not sign it with a key the client trusts.
+func (c *PaymentProtocolClient) DownloadPaymentRequest(uri string) (*PaymentRequest, error) {
+	pr, jppErr := c.DownloadJPPv2PaymentRequest(uri)
+	if jppErr == nil {
+		return pr, nil
+	}
+	pr, bip70Err := c.DownloadBip0070PaymentRequest(uri)
+	if bip70Err != nil {
+		return nil, fmt.Errorf("JSON payment protocol: %v; BIP70: %v",
+			jppErr, bip70Err)
+	}
+	return pr, nil
 }
 
 // DownloadBip0070PaymentRequest will download a Bip70 (protobuf) payment request from
@@ -79,14 +130,9 @@ func NewPaymentProtocolClient(params *chaincfg.Params, proxyDialer proxy.Dialer)
 // the intermediate certs the request includes. A PaymentRequest object with the relevant
 // data extracted is returned.
 func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*PaymentRequest, error) {
-	// Extract the `r` parameter from the URI
-	u, err := url.Parse(uri)
+	endpoint, err := paymentRequestURL(uri)
 	if err != nil {
 		return nil, err
-	}
-	endpoint := u.Query().Get("r")
-	if endpoint == "" {
-		return nil, errors.New("invalid bitcoin cash URI")
 	}
 
 	// Build GET request
@@ -101,6 +147,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*Paym
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http status not OK: %d", resp.StatusCode)
 	}
@@ -269,8 +316,11 @@ func payToName(cert *x509.Certificate) string {
 }
 
 // Payment is an object that holds all information needed to POST a payment back
-// to the merchant server. All fields except memo are required.
+// to the merchant server. The protocol is the payment request's. All fields
+// except memo are required, and BIP70 alone uses merchant data and the refund
+// output.
 type Payment struct {
+	Protocol     Protocol
 	PaymentURL   string
 	MerchantData []byte
 	Transactions []*wire.MsgTx
@@ -282,6 +332,10 @@ type Payment struct {
 // that are encountered in the process are returned along with an optional "memo"
 // that the merchant can include in the ACK.
 func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err error) {
+	if payment.Protocol == ProtocolJPPv2 {
+		return c.postJPPv2Payment(payment)
+	}
+
 	// Build the payment protobuf object
 	var transactions [][]byte
 	for _, tx := range payment.Transactions {
@@ -326,6 +380,7 @@ func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err 
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("http status not OK: %d", resp.StatusCode)

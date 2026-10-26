@@ -23,8 +23,12 @@ import (
 	"github.com/gcash/bchlog"
 )
 
+// log is the logger of the package, the one UseLogger sets.
+var log = bchlog.Disabled
+
 // UseLogger sets the logger to use for the gRPC server.
 func UseLogger(l bchlog.Logger) {
+	log = l
 	grpclog.SetLogger(logger{l}) //nolint:staticcheck // SetLogger retained; SetLoggerV2 has an incompatible interface.
 }
 

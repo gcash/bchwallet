@@ -406,6 +406,12 @@ message GenerateMnemonicSeedResponse {
 	string mnemonic = 1;
 }
 
+// The payment protocol of a payment request.
+enum PaymentProtocol {
+	BIP70 = 0;
+	JSON_PAYMENT_PROTOCOL_V2 = 1;
+}
+
 message DownloadPaymentRequestRequest {
 	string uri = 1;
 }
@@ -421,6 +427,10 @@ message DownloadPaymentRequestResponse {
 	string memo = 4;
 	string payment_url = 5;
 	bytes merchant_data = 6;
+	PaymentProtocol protocol = 7;
+	// The lowest fee rate the merchant accepts, in satoshis per kB, or 0
+	// when it does not say.
+	uint32 required_sat_per_kb_fee = 8;
 }
 
 message PostPaymentRequest {
@@ -434,6 +444,9 @@ message PostPaymentRequest {
 	repeated bytes transactions = 3;
 	Output refund_output = 4;
 	string memo = 5;
+	// The protocol of the payment request.  merchant_data and refund_output
+	// are only used with BIP70.
+	PaymentProtocol protocol = 6;
 }
 message PostPaymentResponse {
 	string memo = 1;

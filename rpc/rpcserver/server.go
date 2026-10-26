@@ -870,16 +870,22 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 	*pb.DownloadPaymentRequestResponse, error) {
 
 	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-	pr, err := client.DownloadBip0070PaymentRequest(req.Uri)
+	pr, err := client.DownloadPaymentRequest(req.Uri)
 	if err != nil {
 		return nil, err
 	}
+	protocol := pb.PaymentProtocol_BIP70
+	if pr.Protocol == pymtproto.ProtocolJPPv2 {
+		protocol = pb.PaymentProtocol_JSON_PAYMENT_PROTOCOL_V2
+	}
 	resp := &pb.DownloadPaymentRequestResponse{
-		PayToName:    pr.PayToName,
-		Expires:      pr.Expires.Unix(),
-		Memo:         pr.Memo,
-		PaymentUrl:   pr.PaymentURL,
-		MerchantData: pr.MerchantData,
+		PayToName:           pr.PayToName,
+		Expires:             pr.Expires.Unix(),
+		Memo:                pr.Memo,
+		PaymentUrl:          pr.PaymentURL,
+		MerchantData:        pr.MerchantData,
+		Protocol:            protocol,
+		RequiredSatPerKbFee: uint32(pr.RequiredFeeRate),
 	}
 	for _, out := range pr.Outputs {
 		output := &pb.DownloadPaymentRequestResponse_Output{
@@ -894,24 +900,30 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (
 	*pb.PostPaymentResponse, error) {
 
-	if req.RefundOutput == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "no refund output")
-	}
-	refundAddr, err := decodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
-	if err != nil {
-		return nil, err
-	}
-
-	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-
 	payment := &pymtproto.Payment{
+		Protocol:     pymtproto.ProtocolBIP70,
 		PaymentURL:   req.PaymentUrl,
 		MerchantData: req.MerchantData,
 		Memo:         req.Memo,
-		RefundOutput: pymtproto.Output{
+	}
+	switch req.Protocol {
+	case pb.PaymentProtocol_BIP70:
+		if req.RefundOutput == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "no refund output")
+		}
+		refundAddr, err := decodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
+		if err != nil {
+			return nil, err
+		}
+		payment.RefundOutput = pymtproto.Output{
 			Amount:  bchutil.Amount(req.RefundOutput.Amount),
 			Address: refundAddr,
-		},
+		}
+	case pb.PaymentProtocol_JSON_PAYMENT_PROTOCOL_V2:
+		payment.Protocol = pymtproto.ProtocolJPPv2
+	default:
+		return nil, status.Errorf(codes.InvalidArgument,
+			"unknown payment protocol %v", req.Protocol)
 	}
 
 	for _, serializedTx := range req.Transactions {
@@ -922,10 +934,24 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 		payment.Transactions = append(payment.Transactions, tx)
 	}
 
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
 	ackMemo, err := client.PostPayment(payment)
 	if err != nil {
 		return nil, err
 	}
+
+	// The merchant has accepted the payment, so record its transactions,
+	// which also broadcasts them as the merchant does.  Otherwise the
+	// wallet would spend their inputs again until it sees them on the
+	// network.  The payment is made either way, so a failure is only
+	// logged.
+	for _, tx := range payment.Transactions {
+		if err := s.wallet.PublishTransaction(tx); err != nil {
+			log.Warnf("Unable to record payment transaction %v: %v",
+				tx.TxHash(), err)
+		}
+	}
+
 	resp := &pb.PostPaymentResponse{
 		Memo: ackMemo,
 	}
