@@ -300,7 +300,8 @@ ___
 
 The `Network` method returns information about the network including the 
 identifier constant describing the server's active network, the current
-blockchain's height and hash of the best block.
+blockchain's height and hash of the best block, and how the chain backend is
+syncing with the network.
 
 **Request:** `NetworkRequest`
 
@@ -309,8 +310,18 @@ blockchain's height and hash of the best block.
 - `uint32 active_network`: The network identifier.
 - `string best_block`: The hash of the best block in the blockchain.
 - `int32 best_height`: The height of the blockchain.
+- `int32 synced_to`: The height of the block the wallet has processed up to.
+- `uint32 peer_count`: The number of peers the SPV chain backend is connected
+  to, 0 with a bchd RPC backend.
+- `int32 peer_best_height`: The highest block height the SPV backend's peers
+  announced, 0 with a bchd RPC backend. With `best_height`, it tells how far
+  the backend is from the network's tip.
+- `bool chain_current`: Whether the chain backend considers itself synced with
+  the network.
 
-**Expected errors:** None
+**Expected errors:**
+
+- `FailedPrecondition`: The wallet has no chain backend yet.
 
 **Stability:** Unstable: This may be moved to another service as it does not
   depend on the wallet.

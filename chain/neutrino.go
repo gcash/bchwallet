@@ -169,6 +169,18 @@ func (s *NeutrinoClient) IsCurrent() bool {
 	return s.CS.IsCurrent()
 }
 
+// PeerInfo returns how many peers the chain service is connected to, and the
+// highest block height they announced.
+func (s *NeutrinoClient) PeerInfo() (count int, bestHeight int32) {
+	peers := s.CS.Peers()
+	for _, p := range peers {
+		if height := p.LastBlock(); height > bestHeight {
+			bestHeight = height
+		}
+	}
+	return len(peers), bestHeight
+}
+
 // SendRawTransaction replicates the RPC client's SendRawTransaction command.
 func (s *NeutrinoClient) SendRawTransaction(tx *wire.MsgTx, allowHighFees bool) (
 	*chainhash.Hash, error) {

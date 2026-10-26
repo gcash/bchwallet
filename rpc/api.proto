@@ -104,6 +104,12 @@ message NetworkResponse {
 	string best_block = 2;
 	int32 best_height = 3;
 	int32 synced_to = 4;
+	// The peers of the SPV chain backend, and the highest block height they
+	// announced.  Both are 0 with a bchd RPC backend.
+	uint32 peer_count = 5;
+	int32 peer_best_height = 6;
+	// Whether the chain backend considers itself synced with the network.
+	bool chain_current = 7;
 }
 
 message AccountNumberRequest {

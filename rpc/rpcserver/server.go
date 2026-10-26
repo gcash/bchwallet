@@ -212,24 +212,39 @@ func (s *walletServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingR
 	return &pb.PingResponse{}, nil
 }
 
+// peerReporter is a chain backend that reports its peers, as the SPV backend
+// does.
+type peerReporter interface {
+	PeerInfo() (count int, bestHeight int32)
+}
+
 func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	*pb.NetworkResponse, error) {
 
-	if s.wallet.ChainClient() == nil {
-		return nil, translateError(errors.New("chain client to available yet"))
+	chainClient := s.wallet.ChainClient()
+	if chainClient == nil {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"chain client not available yet")
 	}
 
-	bestHash, bestHeight, err := s.wallet.ChainClient().GetBestBlock()
+	bestHash, bestHeight, err := chainClient.GetBestBlock()
 	if err != nil {
 		return nil, err
 	}
 
-	return &pb.NetworkResponse{
+	resp := &pb.NetworkResponse{
 		ActiveNetwork: uint32(s.wallet.ChainParams().Net),
 		BestBlock:     bestHash.String(),
 		BestHeight:    bestHeight,
 		SyncedTo:      s.wallet.Manager.SyncedTo().Height,
-	}, nil
+		ChainCurrent:  chainClient.IsCurrent(),
+	}
+	if p, ok := chainClient.(peerReporter); ok {
+		count, peerBestHeight := p.PeerInfo()
+		resp.PeerCount = uint32(count)
+		resp.PeerBestHeight = peerBestHeight
+	}
+	return resp, nil
 }
 
 func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberRequest) (
