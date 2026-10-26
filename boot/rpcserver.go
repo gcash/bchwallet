@@ -6,6 +6,7 @@ package boot
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -22,8 +24,10 @@ import (
 	"github.com/gcash/bchwallet/rpc/rpcserver"
 	"github.com/gcash/bchwallet/wallet"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // AuthenticationTokenKey is the key used in the context to authenticate clients.
@@ -205,14 +209,27 @@ func serviceName(method string) string {
 	return method[:strings.IndexRune(method, '/')]
 }
 
-func interceptStreaming(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+// recoverHandler, deferred by an interceptor, turns a panic in a call to method
+// into an Internal error, so that a bug in one call does not crash the process,
+// which is an app's when the wallet is embedded.
+func recoverHandler(method string, err *error) {
+	if r := recover(); r != nil {
+		grpcLog.Errorf("Method %s panicked: %v\n%s", method, r, debug.Stack())
+		*err = status.Errorf(codes.Internal, "%s failed with an internal error",
+			method)
+	}
+}
+
+func interceptStreaming(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+	defer recoverHandler(info.FullMethod, &err)
+
 	p, ok := peer.FromContext(ss.Context())
 	if ok {
 		grpcLog.Infof("Streaming method %s invoked by %s", info.FullMethod,
 			p.Addr.String())
 	}
 
-	err := validateAuthenticationToken(ss.Context())
+	err = validateAuthenticationToken(ss.Context())
 	if err != nil {
 		return err
 	}
@@ -230,6 +247,8 @@ func interceptStreaming(srv interface{}, ss grpc.ServerStream, info *grpc.Stream
 }
 
 func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+	defer recoverHandler(info.FullMethod, &err)
+
 	p, ok := peer.FromContext(ctx)
 	if ok {
 		grpcLog.Infof("Unary method %s invoked by %s", info.FullMethod,
@@ -254,9 +273,19 @@ func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServer
 }
 
 func validateAuthenticationToken(ctx context.Context) error {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if cfg.AuthToken != "" && (!ok || len(md.Get(AuthenticationTokenKey)) == 0 || md.Get(AuthenticationTokenKey)[0] != cfg.AuthToken) {
-		return errors.New("invalid authentication token")
+	if cfg.AuthToken == "" {
+		return nil
+	}
+	var token string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if tokens := md.Get(AuthenticationTokenKey); len(tokens) > 0 {
+			token = tokens[0]
+		}
+	}
+	// Compare in constant time, so that how long a wrong token takes to
+	// refuse does not tell how much of it is right.
+	if subtle.ConstantTimeCompare([]byte(token), []byte(cfg.AuthToken)) != 1 {
+		return status.Error(codes.Unauthenticated, "invalid authentication token")
 	}
 	return nil
 }

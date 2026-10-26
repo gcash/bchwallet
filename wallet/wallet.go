@@ -139,6 +139,9 @@ type Wallet struct {
 	recoveryLock          sync.Mutex
 
 	proxyDialer proxy.Dialer
+
+	fatalMtx          sync.Mutex
+	fatalErrorHandler func(error)
 }
 
 // Start starts the goroutines necessary to manage a wallet.
@@ -3626,6 +3629,29 @@ func (w *Wallet) SetProxyDialer(dialer proxy.Dialer) {
 // was never set.
 func (w *Wallet) GetProxyDialer() proxy.Dialer {
 	return w.proxyDialer
+}
+
+// SetFatalErrorHandler sets the function the wallet calls with an error it
+// can't go on from, such as failing to sync with its chain backend, instead
+// of panicking.  The function should stop the wallet, which stops processing
+// chain notifications until then.  It must not block.
+func (w *Wallet) SetFatalErrorHandler(handler func(error)) {
+	w.fatalMtx.Lock()
+	w.fatalErrorHandler = handler
+	w.fatalMtx.Unlock()
+}
+
+// fatal passes err to the fatal error handler, or panics with it when there is
+// none, as the wallet always did before it had one.
+func (w *Wallet) fatal(err error) {
+	w.fatalMtx.Lock()
+	handler := w.fatalErrorHandler
+	w.fatalMtx.Unlock()
+
+	if handler == nil {
+		panic(err)
+	}
+	handler(err)
 }
 
 // Create creates an new wallet, writing it to an empty database.  If the passed

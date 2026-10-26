@@ -66,6 +66,10 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		}
 	}()
 
+	// A wallet that can't go on syncing with the chain backend stops the
+	// run, which then returns its error, instead of panicking.
+	var stopped stopError
+
 	// Show version at startup.
 	log.Infof("Version %s", version())
 
@@ -173,6 +177,9 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		}
 
 		w.SetProxyDialer(proxyDialer)
+		w.SetFatalErrorHandler(func(err error) {
+			stopped.stopWith(interrupts, err)
+		})
 	})
 
 	if !cfg.NoInitialLoad {
@@ -187,7 +194,32 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 
 	<-interrupts.done
 	log.Info("Shutdown complete")
-	return nil
+	return stopped.get()
+}
+
+// stopError holds the error that stopped a run of the wallet, if any.
+type stopError struct {
+	mtx sync.Mutex
+	err error
+}
+
+// stopWith records err as the reason the run stops, unless an error was
+// recorded already, and requests the shutdown of the run.  It does not block.
+func (s *stopError) stopWith(interrupts *interruptState, err error) {
+	log.Errorf("Stopping the wallet: %v", err)
+	s.mtx.Lock()
+	if s.err == nil {
+		s.err = err
+	}
+	s.mtx.Unlock()
+	interrupts.request()
+}
+
+// get returns the error recorded by stopWith, or nil.
+func (s *stopError) get() error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return s.err
 }
 
 // rpcClientConnectLoop continuously attempts a connection to the consensus RPC
