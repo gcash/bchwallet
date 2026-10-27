@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -86,14 +87,10 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	log.Infof("Version %s", version())
 
 	if cfg.Profile != "" {
-		go func() {
-			listenAddr := net.JoinHostPort("", cfg.Profile)
-			log.Infof("Profile server listening on %s", listenAddr)
-			profileRedirect := http.RedirectHandler("/debug/pprof",
-				http.StatusSeeOther)
-			http.Handle("/", profileRedirect)
-			log.Errorf("%v", http.ListenAndServe(listenAddr, nil))
-		}()
+		profileServer := startProfileServer(cfg.Profile)
+		interrupts.addInterruptHandler(func() {
+			_ = profileServer.Close()
+		})
 	}
 
 	if interrupts.stopRequested() {
@@ -284,6 +281,31 @@ func (s *stopError) get() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	return s.err
+}
+
+// startProfileServer serves the profiling handlers on port with a server and
+// mux of its own, so that each run of the wallet in a process has its own
+// server, which it closes when it stops.  The mux passes /debug/ to
+// http.DefaultServeMux, where importing net/http/pprof, as the bchwallet
+// command does, registers the profiling handlers.
+func startProfileServer(port string) *http.Server {
+	listenAddr := net.JoinHostPort("", port)
+	mux := http.NewServeMux()
+	mux.Handle("/debug/", http.DefaultServeMux)
+	mux.Handle("/", http.RedirectHandler("/debug/pprof", http.StatusSeeOther))
+	server := &http.Server{
+		Addr:              listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		log.Infof("Profile server listening on %s", listenAddr)
+		err := server.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Errorf("%v", err)
+		}
+	}()
+	return server
 }
 
 // rpcClientConnectLoop continuously attempts a connection to the consensus RPC

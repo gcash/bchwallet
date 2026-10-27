@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -216,4 +217,43 @@ func TestStartRPCServersListenerFailure(t *testing.T) {
 		t.Fatalf("the gRPC address is still in use: %v", err)
 	}
 	_ = l.Close()
+}
+
+// TestProfileServerRestart ensures that each run's profile server can serve
+// on the port of an earlier run that closed its own.  Every run registered its
+// handler on http.DefaultServeMux, so the second panicked.
+func TestProfileServerRestart(t *testing.T) {
+	_, port, err := net.SplitHostPort(freeAddr(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	for run := 0; run < 2; run++ {
+		server := startProfileServer(port)
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			resp, err := client.Get("http://127.0.0.1:" + port + "/")
+			if err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusSeeOther {
+					t.Fatalf("run %d: got status %d, want a redirect",
+						run, resp.StatusCode)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("run %d: the profile server doesn't serve: %v",
+					run, err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := server.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
