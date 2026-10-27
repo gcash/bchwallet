@@ -28,8 +28,8 @@ github.com/gcash/goleveldb v1.1.0 h1:ea7gh9xqgAD+llDYhP7ep7daQxLMlcr1zaFTENCygxE
 github.com/gcash/goleveldb v1.1.0/go.mod h1:5iJUbCHZlp/Gm54CgQz0uYPSX5EMGStfnEzxRiQ3l3Y=
 github.com/gcash/goslp v1.0.0 h1:CUaw4OixaLjJGws1x/lW+56d2QwoABlrUhXG7ssadDw=
 github.com/gcash/goslp v1.0.0/go.mod h1:9hXiB3vl/4agpprXS0i/i2WV7e7Yk9BRT7ThXl5eAM4=
-github.com/gcash/neutrino v0.0.0-20261026212150-f19c4d70377a h1:hVEl278s3XMb60pBMoVvUvtoMVlp1k5YrVKmJYKAZOM=
-github.com/gcash/neutrino v0.0.0-20261026212150-f19c4d70377a/go.mod h1:u4KmNWhKnM2A6LPGgeforWU74XTKee8/TFe6CE4QYck=
+github.com/gcash/neutrino v0.0.0-20261027232704-f0a8e3b17811 h1:C6P0qlFCfb1meQOLQ4eLwbKDrrC7tx1vwjGmPpDWE9c=
+github.com/gcash/neutrino v0.0.0-20261027232704-f0a8e3b17811/go.mod h1:u4KmNWhKnM2A6LPGgeforWU74XTKee8/TFe6CE4QYck=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
 github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
 github.com/golang/snappy v1.0.0 h1:Oy607GVXHs7RtbggtPBnr2RmDArIsAefDwvrdWvRhGs=
