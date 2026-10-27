@@ -7,6 +7,7 @@ import (
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/neutrino/pushtx"
 )
@@ -119,6 +120,36 @@ func TestPublishTransactionErrors(t *testing.T) {
 			t.Errorf("%s: kept the transaction: %v, want %v",
 				test.name, kept, test.kept)
 		}
+	}
+}
+
+// unwatchingChainClient is a chain backend that can't take requests to watch
+// addresses, as one that is stopping.
+type unwatchingChainClient struct {
+	brokenChainClient
+}
+
+func (c *unwatchingChainClient) NotifyReceived([]bchutil.Address) error {
+	return errors.New("the client has been shutdown")
+}
+
+// TestPublishTransactionNotifyError checks that a backend that can't watch the
+// outputs of a transaction the wallet has recorded doesn't make the publish
+// fail, since the wallet keeps the transaction and broadcasts it again, so a
+// caller that created it again would pay twice.
+func TestPublishTransactionNotifyError(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	op := addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	tx := spendTx([]wire.OutPoint{op},
+		wire.NewTxOut(90000, script, wire.TokenData{}))
+	w.chainClient = &unwatchingChainClient{}
+
+	if err := w.PublishTransaction(tx); err != nil {
+		t.Fatalf("got %v for a transaction the wallet keeps", err)
+	}
+	if !recorded(t, w, tx) {
+		t.Fatal("the wallet didn't keep the transaction")
 	}
 }
 

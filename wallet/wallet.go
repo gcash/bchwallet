@@ -3803,6 +3803,11 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	// multisig. In either case, we'll still ask to be notified of when it
 	// confirms to maintain consistency.
 	//
+	// The transaction is recorded by now, and goes out again after the next
+	// block or reconnection, so a backend that can't take the request, such
+	// as one that is stopping, doesn't make the publish fail: a caller that
+	// created the transaction again would pay twice.
+	//
 	// TODO(wilmer): import script as external if the address does not
 	// belong to the wallet to handle confs during restarts?
 	for _, txOut := range tx.TxOut {
@@ -3816,7 +3821,9 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 		}
 
 		if err := chainClient.NotifyReceived(addrs); err != nil {
-			return nil, err
+			log.Warnf("Unable to watch the outputs of transaction %v: %v",
+				tx.TxHash(), err)
+			break
 		}
 	}
 
