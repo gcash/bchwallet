@@ -165,7 +165,7 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 				log.Errorf("RPC calls still running %v after the "+
 					"RPC server stopped", grpcStopTimeout)
 			}
-			rpcserver.StopServices()
+			rpcserver.StopServices(rpcs)
 			unloadWallet()
 			log.Info("RPC server shutdown")
 		})
@@ -215,20 +215,35 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		}
 	}
 
-	loader.RunAfterLoad(func(w *wallet.Wallet) {
-		if rpcs != nil {
-			rpcserver.StartWalletService(rpcs, w)
-		}
-
-		if legacyRPCServer != nil {
-			legacyRPCServer.RegisterWallet(w)
-		}
-
+	// Set up every wallet the loader loads, also one that a client opens
+	// over gRPC after closing another, and take it out of the RPC servers
+	// before it is unloaded.  This runs before the chain backend's callback
+	// syncs the wallet, so that the wallet's fatal errors stop the run.
+	loader.OnLoad(func(w *wallet.Wallet) {
 		w.SetProxyDialer(proxyDialer)
 		w.SetFatalErrorHandler(func(err error) {
 			stopped.stopWith(interrupts, err)
 		})
+		if rpcs != nil {
+			rpcserver.StartWalletService(rpcs, w)
+		}
+		if legacyRPCServer != nil {
+			legacyRPCServer.RegisterWallet(w)
+		}
 	})
+	loader.OnUnload(func(*wallet.Wallet) {
+		if rpcs != nil {
+			rpcserver.StopWalletService(rpcs)
+		}
+		if legacyRPCServer != nil {
+			legacyRPCServer.RegisterWallet(nil)
+		}
+	})
+
+	// Clients can load wallets over gRPC now that the loader sets them up.
+	if rpcs != nil {
+		rpcserver.StartWalletLoaderService(rpcs, loader, activeNet)
+	}
 
 	if !cfg.NoInitialLoad && !interrupts.stopRequested() {
 		// Load the wallet database.  It must have been created already

@@ -67,7 +67,9 @@ func newNetworkTestServer(t *testing.T, client chain.Interface) *walletServer {
 	if client != nil {
 		w.SynchronizeRPC(client)
 	}
-	return &walletServer{wallet: w}
+	s := &walletServer{}
+	s.wallet.Store(w)
+	return s
 }
 
 func TestNetwork(t *testing.T) {

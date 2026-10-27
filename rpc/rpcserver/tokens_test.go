@@ -31,7 +31,7 @@ func (c *addressChain) NotifyReceived([]bchutil.Address) error { return nil }
 func TestTokenAwareAddresses(t *testing.T) {
 	s := newNetworkTestServer(t, &addressChain{})
 	ctx := context.Background()
-	params := s.wallet.ChainParams()
+	params := s.wallet.Load().ChainParams()
 
 	plain, err := s.CurrentAddress(ctx, &pb.CurrentAddressRequest{})
 	if err != nil {

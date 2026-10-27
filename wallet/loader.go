@@ -44,6 +44,8 @@ var (
 // Loader is safe for concurrent access.
 type Loader struct {
 	callbacks      []func(*Wallet)
+	loadHooks      []func(*Wallet)
+	unloadHooks    []func(*Wallet)
 	chainParams    *chaincfg.Params
 	dbDirPath      string
 	noFreelistSync bool
@@ -77,9 +79,12 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	}
 }
 
-// onLoaded executes each added callback and prevents loader from loading any
-// additional wallets.  Requires mutex to be locked.
+// onLoaded executes each load hook and each added callback and prevents loader
+// from loading any additional wallets.  Requires mutex to be locked.
 func (l *Loader) onLoaded(w *Wallet, db walletdb.DB) {
+	for _, fn := range l.loadHooks {
+		fn(w)
+	}
 	for _, fn := range l.callbacks {
 		fn(w)
 	}
@@ -87,6 +92,31 @@ func (l *Loader) onLoaded(w *Wallet, db walletdb.DB) {
 	l.wallet = w
 	l.db = db
 	l.callbacks = nil // not needed anymore
+}
+
+// OnLoad adds a function that is called with every wallet the loader creates or
+// opens from now on, and right away with the loaded wallet if there is one.
+// Unlike a function added by RunAfterLoad, it stays added, so it also sets up a
+// wallet that is unloaded and loaded again, and it runs before those
+// functions, so that what it sets up is in place before they use the wallet.
+// It runs with the loader locked, so it must not call the loader.
+func (l *Loader) OnLoad(fn func(*Wallet)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.loadHooks = append(l.loadHooks, fn)
+	if l.wallet != nil {
+		fn(l.wallet)
+	}
+}
+
+// OnUnload adds a function that is called with the loaded wallet each time
+// UnloadWallet is about to stop it.  It runs with the loader locked, so it
+// must not call the loader.
+func (l *Loader) OnUnload(fn func(*Wallet)) {
+	l.mu.Lock()
+	l.unloadHooks = append(l.unloadHooks, fn)
+	l.mu.Unlock()
 }
 
 // RunAfterLoad adds a function to be executed when the loader creates or opens
@@ -242,6 +272,10 @@ func (l *Loader) UnloadWallet() error {
 
 	if l.wallet == nil {
 		return ErrNotLoaded
+	}
+
+	for _, fn := range l.unloadHooks {
+		fn(l.wallet)
 	}
 
 	l.wallet.Stop()

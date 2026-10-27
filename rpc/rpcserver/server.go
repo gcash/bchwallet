@@ -119,10 +119,12 @@ func errorCode(err error) codes.Code {
 type versionServer struct {
 }
 
-// walletServer provides wallet services for RPC clients.
+// walletServer provides wallet services for RPC clients.  Its wallet changes
+// when a client closes the wallet and opens one again, even while calls run,
+// so it is read atomically.
 type walletServer struct {
 	ready  uint32 // atomic
-	wallet *wallet.Wallet
+	wallet atomic.Pointer[wallet.Wallet]
 }
 
 // loaderServer provides RPC clients with the ability to load and close wallets,
@@ -135,43 +137,95 @@ type loaderServer struct {
 	mu        sync.Mutex
 }
 
-// Singleton implementations of each service.  Not all services are immediately
-// usable.
+// Implementations of each service that every server shared, before each got
+// services of its own.  The version service, which has no state, still is.
 var (
 	versionService versionServer
-	walletService  walletServer
-	loaderService  loaderServer
+	//lint:ignore U1000 kept from when every server shared it.
+	walletService walletServer
+	//lint:ignore U1000 kept from when every server shared it.
+	loaderService loaderServer
+)
+
+// services are the implementations of the wallet and loader services of one
+// server.  Each server has its own, so that a run of the wallet in a process
+// that runs it again starts with services of its own, which calls that
+// outlive an earlier run can't reach.
+type services struct {
+	wallet *walletServer
+	loader *loaderServer
+}
+
+var (
+	servicesMtx sync.Mutex
+
+	// servicesByServer holds the services of each server, from
+	// RegisterServices until StopServices.
+	servicesByServer = make(map[*grpc.Server]*services)
+
+	// lastServices are the services RegisterServices registered last, which
+	// ServiceReady checks.
+	lastServices *services
 )
 
 // RegisterServices registers implementations of each gRPC service and registers
 // it with the server.  Not all service are ready to be used after registration.
+// The server gets implementations of its own, which the functions that start
+// and stop the services find by the server.
 func RegisterServices(server *grpc.Server) {
+	svcs := &services{wallet: &walletServer{}, loader: &loaderServer{}}
+	servicesMtx.Lock()
+	servicesByServer[server] = svcs
+	lastServices = svcs
+	servicesMtx.Unlock()
+
 	pb.RegisterVersionServiceServer(server, &versionService)
-	pb.RegisterWalletServiceServer(server, &walletService)
-	pb.RegisterWalletLoaderServiceServer(server, &loaderService)
+	pb.RegisterWalletServiceServer(server, svcs.wallet)
+	pb.RegisterWalletLoaderServiceServer(server, svcs.loader)
 }
 
-var serviceMap = map[string]interface{}{
-	"walletrpc.VersionService":      &versionService,
-	"walletrpc.WalletService":       &walletService,
-	"walletrpc.WalletLoaderService": &loaderService,
+// servicesOf returns the services of server, or nil when it has none, because
+// RegisterServices didn't register them or StopServices dropped them.
+func servicesOf(server *grpc.Server) *services {
+	servicesMtx.Lock()
+	defer servicesMtx.Unlock()
+	return servicesByServer[server]
+}
+
+// serviceMap finds each service, by its name, among the services of a server.
+var serviceMap = map[string]func(*services) interface{}{
+	"walletrpc.VersionService":      func(*services) interface{} { return &versionService },
+	"walletrpc.WalletService":       func(s *services) interface{} { return s.wallet },
+	"walletrpc.WalletLoaderService": func(s *services) interface{} { return s.loader },
 }
 
 // ServiceReady returns nil when the service is ready and a gRPC error when not.
+// It checks the services that RegisterServices registered last.
+//
+// Deprecated: Use ServiceReadyFor with the service implementation of the call,
+// which checks the services of the call's server rather than of the last one,
+// since a process that runs the wallet again runs another server.
 func ServiceReady(service string) error {
-	s, ok := serviceMap[service]
+	find, ok := serviceMap[service]
 	if !ok {
 		return status.Errorf(codes.Unimplemented, "service %s not found", service)
 	}
+	servicesMtx.Lock()
+	svcs := lastServices
+	servicesMtx.Unlock()
+	if svcs == nil {
+		return status.Errorf(codes.FailedPrecondition, "service %v is not ready", service)
+	}
+	return ServiceReadyFor(service, find(svcs))
+}
+
+// ServiceReadyFor returns nil when srv, the implementation of service that a
+// server's interceptor gets with a call, is ready, and a gRPC error when not.
+func ServiceReadyFor(service string, srv interface{}) error {
 	type readyChecker interface {
 		checkReady() bool
 	}
-	ready := true
-	r, ok := s.(readyChecker)
-	if ok {
-		ready = r.checkReady()
-	}
-	if !ready {
+	if r, ok := srv.(readyChecker); ok && !r.checkReady() {
 		return status.Errorf(codes.FailedPrecondition, "service %v is not ready", service)
 	}
 	return nil
@@ -186,29 +240,54 @@ func (*versionServer) Version(ctx context.Context, req *pb.VersionRequest) (*pb.
 	}, nil
 }
 
-// StartWalletService creates an implementation of the WalletService and
-// registers it with the gRPC server.
+// StartWalletService makes the WalletService of server serve wallet, and marks
+// it ready.  It is called with each wallet that is loaded, also one loaded
+// again after StopWalletService.
 func StartWalletService(server *grpc.Server, wallet *wallet.Wallet) {
-	walletService.wallet = wallet
-	if atomic.SwapUint32(&walletService.ready, 1) != 0 {
-		panic("service already started")
+	svcs := servicesOf(server)
+	if svcs == nil {
+		return
+	}
+	svcs.wallet.wallet.Store(wallet)
+	atomic.StoreUint32(&svcs.wallet.ready, 1)
+}
+
+// StopWalletService marks the WalletService of server not ready, for when its
+// wallet is unloaded, so that calls fail until StartWalletService gives it a
+// wallet again.
+func StopWalletService(server *grpc.Server) {
+	if svcs := servicesOf(server); svcs != nil {
+		atomic.StoreUint32(&svcs.wallet.ready, 0)
 	}
 }
 
-// StopServices marks the WalletService and WalletLoaderService as not ready
-// and drops the wallet and loader they use, so that a process that runs the
-// wallet again can start them again.  It must only be called once the gRPC
-// server is stopped and its handlers have returned.
-func StopServices() {
-	atomic.StoreUint32(&walletService.ready, 0)
-	walletService.wallet = nil
+// StopServices marks the services of server not ready and drops them, and stops
+// the consensus RPC client that StartConsensusRPC started, if any, so that
+// none of them outlives the server in a process that runs the wallet again.  It
+// must only be called once the gRPC server is stopped and its handlers have
+// returned, or have been given up on.
+func StopServices(server *grpc.Server) {
+	servicesMtx.Lock()
+	svcs := servicesByServer[server]
+	delete(servicesByServer, server)
+	if lastServices == svcs {
+		lastServices = nil
+	}
+	servicesMtx.Unlock()
+	if svcs == nil {
+		return
+	}
 
-	atomic.StoreUint32(&loaderService.ready, 0)
-	loaderService.mu.Lock()
-	loaderService.loader = nil
-	loaderService.activeNet = nil
-	loaderService.rpcClient = nil
-	loaderService.mu.Unlock()
+	atomic.StoreUint32(&svcs.wallet.ready, 0)
+	atomic.StoreUint32(&svcs.loader.ready, 0)
+	svcs.loader.mu.Lock()
+	rpcClient := svcs.loader.rpcClient
+	svcs.loader.rpcClient = nil
+	svcs.loader.mu.Unlock()
+	if rpcClient != nil {
+		rpcClient.Stop()
+		rpcClient.WaitForShutdown()
+	}
 }
 
 func (s *walletServer) checkReady() bool {
@@ -228,7 +307,7 @@ type peerReporter interface {
 func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	*pb.NetworkResponse, error) {
 
-	chainClient := s.wallet.ChainClient()
+	chainClient := s.wallet.Load().ChainClient()
 	if chainClient == nil {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"chain client not available yet")
@@ -240,10 +319,10 @@ func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	}
 
 	resp := &pb.NetworkResponse{
-		ActiveNetwork: uint32(s.wallet.ChainParams().Net),
+		ActiveNetwork: uint32(s.wallet.Load().ChainParams().Net),
 		BestBlock:     bestHash.String(),
 		BestHeight:    bestHeight,
-		SyncedTo:      s.wallet.Manager.SyncedTo().Height,
+		SyncedTo:      s.wallet.Load().Manager.SyncedTo().Height,
 		ChainCurrent:  chainClient.IsCurrent(),
 	}
 	if p, ok := chainClient.(peerReporter); ok {
@@ -257,7 +336,7 @@ func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberRequest) (
 	*pb.AccountNumberResponse, error) {
 
-	accountNum, err := s.wallet.AccountNumber(waddrmgr.KeyScopeBIP0044, req.AccountName)
+	accountNum, err := s.wallet.Load().AccountNumber(waddrmgr.KeyScopeBIP0044, req.AccountName)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -268,7 +347,7 @@ func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberR
 func (s *walletServer) Accounts(ctx context.Context, req *pb.AccountsRequest) (
 	*pb.AccountsResponse, error) {
 
-	resp, err := s.wallet.Accounts(waddrmgr.KeyScopeBIP0044)
+	resp, err := s.wallet.Load().Accounts(waddrmgr.KeyScopeBIP0044)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -294,7 +373,7 @@ func (s *walletServer) Accounts(ctx context.Context, req *pb.AccountsRequest) (
 func (s *walletServer) RenameAccount(ctx context.Context, req *pb.RenameAccountRequest) (
 	*pb.RenameAccountResponse, error) {
 
-	err := s.wallet.RenameAccount(waddrmgr.KeyScopeBIP0044, req.AccountNumber, req.NewName)
+	err := s.wallet.Load().RenameAccount(waddrmgr.KeyScopeBIP0044, req.AccountNumber, req.NewName)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -315,12 +394,12 @@ func (s *walletServer) NextAccount(ctx context.Context, req *pb.NextAccountReque
 	defer func() {
 		lock <- time.Time{} // send matters, not the value
 	}()
-	err := s.wallet.Unlock(req.Passphrase, lock)
+	err := s.wallet.Load().Unlock(req.Passphrase, lock)
 	if err != nil {
 		return nil, translateError(err)
 	}
 
-	account, err := s.wallet.NextAccount(waddrmgr.KeyScopeBIP0044, req.AccountName)
+	account, err := s.wallet.Load().NextAccount(waddrmgr.KeyScopeBIP0044, req.AccountName)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -337,9 +416,9 @@ func (s *walletServer) NextAddress(ctx context.Context, req *pb.NextAddressReque
 	)
 	switch req.Kind {
 	case pb.NextAddressRequest_BIP0044_EXTERNAL:
-		addr, err = s.wallet.NewAddress(req.Account, waddrmgr.KeyScopeBIP0044)
+		addr, err = s.wallet.Load().NewAddress(req.Account, waddrmgr.KeyScopeBIP0044)
 	case pb.NextAddressRequest_BIP0044_INTERNAL:
-		addr, err = s.wallet.NewChangeAddress(req.Account, waddrmgr.KeyScopeBIP0044)
+		addr, err = s.wallet.Load().NewChangeAddress(req.Account, waddrmgr.KeyScopeBIP0044)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "kind=%v", req.Kind)
 	}
@@ -357,7 +436,7 @@ func (s *walletServer) NextAddress(ctx context.Context, req *pb.NextAddressReque
 func (s *walletServer) CurrentAddress(ctx context.Context, req *pb.CurrentAddressRequest) (
 	*pb.CurrentAddressResponse, error) {
 
-	addr, err := s.wallet.CurrentAddress(req.Account, waddrmgr.KeyScopeBIP0044)
+	addr, err := s.wallet.Load().CurrentAddress(req.Account, waddrmgr.KeyScopeBIP0044)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -398,7 +477,7 @@ func (s *walletServer) ImportPrivateKey(ctx context.Context, req *pb.ImportPriva
 	defer func() {
 		lock <- time.Time{} // send matters, not the value
 	}()
-	err = s.wallet.Unlock(req.Passphrase, lock)
+	err = s.wallet.Load().Unlock(req.Passphrase, lock)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -410,7 +489,7 @@ func (s *walletServer) ImportPrivateKey(ctx context.Context, req *pb.ImportPriva
 			"Only the imported account accepts private key imports")
 	}
 
-	_, err = s.wallet.ImportPrivateKey(waddrmgr.KeyScopeBIP0044, wif, nil, req.Rescan)
+	_, err = s.wallet.Load().ImportPrivateKey(waddrmgr.KeyScopeBIP0044, wif, nil, req.Rescan)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -423,7 +502,7 @@ func (s *walletServer) Balance(ctx context.Context, req *pb.BalanceRequest) (
 
 	account := req.AccountNumber
 	reqConfs := req.RequiredConfirmations
-	bals, err := s.wallet.CalculateAccountBalances(account, reqConfs)
+	bals, err := s.wallet.Load().CalculateAccountBalances(account, reqConfs)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -441,7 +520,7 @@ func (s *walletServer) Balance(ctx context.Context, req *pb.BalanceRequest) (
 func (s *walletServer) TokenBalances(ctx context.Context, req *pb.TokenBalancesRequest) (
 	*pb.TokenBalancesResponse, error) {
 
-	bals, err := s.wallet.TokenBalances(req.AccountNumber,
+	bals, err := s.wallet.Load().TokenBalances(req.AccountNumber,
 		req.RequiredConfirmations)
 	if err != nil {
 		return nil, translateError(err)
@@ -478,7 +557,7 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 		Account:               req.Account,
 		RequiredConfirmations: req.RequiredConfirmations,
 	}
-	unspentOutputs, err := s.wallet.UnspentOutputs(policy)
+	unspentOutputs, err := s.wallet.Load().UnspentOutputs(policy)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -503,7 +582,7 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 
 	var changeScript []byte
 	if req.IncludeChangeScript && totalAmount > bchutil.Amount(req.TargetAmount) {
-		changeAddr, err := s.wallet.NewChangeAddress(req.Account, waddrmgr.KeyScopeBIP0044)
+		changeAddr, err := s.wallet.Load().NewChangeAddress(req.Account, waddrmgr.KeyScopeBIP0044)
 		if err != nil {
 			return nil, translateError(err)
 		}
@@ -699,12 +778,12 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 	if err != nil {
 		return nil, err
 	}
-	outputs, nfts, err := requestOutputs(req.Outputs, s.wallet.ChainParams())
+	outputs, nfts, err := requestOutputs(req.Outputs, s.wallet.Load().ChainParams())
 	if err != nil {
 		return nil, err
 	}
 
-	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, nfts,
+	authoredTx, err := s.wallet.Load().CreateUnsignedTx(req.Account, outputs, nfts,
 		req.RequiredConfirmations, rate)
 	if err != nil {
 		return nil, translateError(err)
@@ -743,7 +822,7 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 	if err != nil {
 		return nil, err
 	}
-	addr, err := decodeAddress(req.SweepToAddress, s.wallet.ChainParams())
+	addr, err := decodeAddress(req.SweepToAddress, s.wallet.Load().ChainParams())
 	if err != nil {
 		return nil, err
 	}
@@ -757,7 +836,7 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 		Account:               req.Account,
 		RequiredConfirmations: 0,
 	}
-	unspentOutputs, err := s.wallet.UnspentOutputs(policy)
+	unspentOutputs, err := s.wallet.Load().UnspentOutputs(policy)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -856,7 +935,7 @@ func (s *walletServer) GetTransactions(ctx context.Context, req *pb.GetTransacti
 
 	_ = minRecentTxs
 
-	gtr, err := s.wallet.GetTransactions(startBlock, endBlock, ctx.Done())
+	gtr, err := s.wallet.Load().GetTransactions(startBlock, endBlock, ctx.Done())
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -874,9 +953,9 @@ func (s *walletServer) ChangePassphrase(ctx context.Context, req *pb.ChangePassp
 	var err error
 	switch req.Key {
 	case pb.ChangePassphraseRequest_PRIVATE:
-		err = s.wallet.ChangePrivatePassphrase(req.OldPassphrase, req.NewPassphrase)
+		err = s.wallet.Load().ChangePrivatePassphrase(req.OldPassphrase, req.NewPassphrase)
 	case pb.ChangePassphraseRequest_PUBLIC:
-		err = s.wallet.ChangePublicPassphrase(req.OldPassphrase, req.NewPassphrase)
+		err = s.wallet.Load().ChangePublicPassphrase(req.OldPassphrase, req.NewPassphrase)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "Unknown key type (%d)", req.Key)
 	}
@@ -903,12 +982,12 @@ func (s *walletServer) SignTransaction(ctx context.Context, req *pb.SignTransact
 	defer func() {
 		lock <- time.Time{} // send matters, not the value
 	}()
-	err = s.wallet.Unlock(req.Passphrase, lock)
+	err = s.wallet.Load().Unlock(req.Passphrase, lock)
 	if err != nil {
 		return nil, translateError(err)
 	}
 
-	invalidSigs, err := s.wallet.SignTransaction(&tx, req.InputValues,
+	invalidSigs, err := s.wallet.Load().SignTransaction(&tx, req.InputValues,
 		txscript.SigHashAll, nil, nil, nil, req.AllowTokenBurn)
 	if err != nil {
 		return nil, translateError(err)
@@ -950,7 +1029,7 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 			"Bytes do not represent a valid raw transaction: %v", err)
 	}
 
-	err = s.wallet.PublishTransaction(&msgTx)
+	err = s.wallet.Load().PublishTransaction(&msgTx)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -963,23 +1042,23 @@ func (s *walletServer) Rescan(ctx context.Context, req *pb.RescanRequest) (
 
 	// Without a chain client, nothing takes the job, and submitting it
 	// would wait until the wallet stops.
-	if s.wallet.ChainClient() == nil {
+	if s.wallet.Load().ChainClient() == nil {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"chain client not available yet")
 	}
 
-	job, err := s.wallet.NewRescanJob()
+	job, err := s.wallet.Load().NewRescanJob()
 	if err != nil {
 		return nil, err
 	}
-	s.wallet.SubmitRescan(job)
+	s.wallet.Load().SubmitRescan(job)
 	return &pb.RescanResponse{}, nil
 }
 
 func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.DownloadPaymentRequestRequest) (
 	*pb.DownloadPaymentRequestResponse, error) {
 
-	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.Load().ChainParams(), s.wallet.Load().GetProxyDialer())
 	pr, err := client.DownloadPaymentRequest(ctx, req.Uri)
 	if err != nil {
 		return nil, err
@@ -1021,7 +1100,7 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 		if req.RefundOutput == nil {
 			return nil, status.Errorf(codes.InvalidArgument, "no refund output")
 		}
-		refundAddr, err := decodeAddress(req.RefundOutput.Address, s.wallet.ChainParams())
+		refundAddr, err := decodeAddress(req.RefundOutput.Address, s.wallet.Load().ChainParams())
 		if err != nil {
 			return nil, err
 		}
@@ -1044,7 +1123,7 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 		payment.Transactions = append(payment.Transactions, tx)
 	}
 
-	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.Load().ChainParams(), s.wallet.Load().GetProxyDialer())
 	ackMemo, err := client.PostPayment(ctx, payment)
 	if err != nil {
 		return nil, err
@@ -1056,7 +1135,7 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 	// network.  The payment is made either way, so a failure is only
 	// logged.
 	for _, tx := range payment.Transactions {
-		if err := s.wallet.PublishTransaction(tx); err != nil {
+		if err := s.wallet.Load().PublishTransaction(tx); err != nil {
 			log.Warnf("Unable to record payment transaction %v: %v",
 				tx.TxHash(), err)
 		}
@@ -1071,7 +1150,7 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
 	*pb.ValidateAddressResponse, error) {
 
-	addr, err := decodeAddress(req.Address, s.wallet.ChainParams())
+	addr, err := decodeAddress(req.Address, s.wallet.Load().ChainParams())
 	if err != nil {
 		return &pb.ValidateAddressResponse{}, nil
 	}
@@ -1225,7 +1304,7 @@ func marshalAccountBalances(v []wallet.AccountBalance) []*pb.AccountBalance {
 func (s *walletServer) TransactionNotifications(req *pb.TransactionNotificationsRequest,
 	svr pb.WalletService_TransactionNotificationsServer) error {
 
-	n := s.wallet.NtfnServer.TransactionNotifications()
+	n := s.wallet.Load().NtfnServer.TransactionNotifications()
 	defer n.Done()
 
 	ctxDone := svr.Context().Done()
@@ -1257,7 +1336,7 @@ func (s *walletServer) SpentnessNotifications(req *pb.SpentnessNotificationsRequ
 			"no_notify_unspent and no_notify_spent may not both be true")
 	}
 
-	n := s.wallet.NtfnServer.AccountSpentnessNotifications(req.Account)
+	n := s.wallet.Load().NtfnServer.AccountSpentnessNotifications(req.Account)
 	defer n.Done()
 
 	ctxDone := svr.Context().Done()
@@ -1293,7 +1372,7 @@ func (s *walletServer) SpentnessNotifications(req *pb.SpentnessNotificationsRequ
 func (s *walletServer) AccountNotifications(req *pb.AccountNotificationsRequest,
 	svr pb.WalletService_AccountNotificationsServer) error {
 
-	n := s.wallet.NtfnServer.AccountNotifications()
+	n := s.wallet.Load().NtfnServer.AccountNotifications()
 	defer n.Done()
 
 	ctxDone := svr.Context().Done()
@@ -1321,7 +1400,7 @@ func (s *walletServer) AccountNotifications(req *pb.AccountNotificationsRequest,
 func (s *walletServer) RescanNotifications(req *pb.RescanNotificationsRequest,
 	svr pb.WalletService_RescanNotificationsServer) error {
 
-	n := s.wallet.NtfnServer.RescanNotifications()
+	n := s.wallet.Load().NtfnServer.RescanNotifications()
 	defer n.Done()
 
 	ctxDone := svr.Context().Done()
@@ -1344,14 +1423,17 @@ func (s *walletServer) RescanNotifications(req *pb.RescanNotificationsRequest,
 	}
 }
 
-// StartWalletLoaderService creates an implementation of the WalletLoaderService
-// and registers it with the gRPC server.
+// StartWalletLoaderService makes the WalletLoaderService of server load wallets
+// with loader for activeNet, and marks it ready.  It must be called once for a
+// server.
 func StartWalletLoaderService(server *grpc.Server, loader *wallet.Loader, activeNet *netparams.Params) {
-	loaderService.loader = loader
-	loaderService.activeNet = activeNet
-	if atomic.SwapUint32(&loaderService.ready, 1) != 0 {
-		panic("service already started")
+	svcs := servicesOf(server)
+	if svcs == nil {
+		return
 	}
+	svcs.loader.loader = loader
+	svcs.loader.activeNet = activeNet
+	atomic.StoreUint32(&svcs.loader.ready, 1)
 }
 
 func (s *loaderServer) checkReady() bool {

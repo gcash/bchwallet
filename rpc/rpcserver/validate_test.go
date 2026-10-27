@@ -230,7 +230,8 @@ func TestHandlerValidation(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	s := &walletServer{wallet: w}
+	s := &walletServer{}
+	s.wallet.Store(w)
 	ctx := context.Background()
 
 	for address, valid := range map[string]bool{

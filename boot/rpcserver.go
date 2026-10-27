@@ -162,7 +162,6 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		}
 		server = grpc.NewServer(opts...)
 		rpcserver.RegisterServices(server)
-		rpcserver.StartWalletLoaderService(server, walletLoader, activeNet)
 		for _, lis := range listeners {
 			lis := lis
 			go func() {
@@ -234,7 +233,7 @@ func interceptStreaming(srv interface{}, ss grpc.ServerStream, info *grpc.Stream
 		return err
 	}
 
-	err = rpcserver.ServiceReady(serviceName(info.FullMethod))
+	err = rpcserver.ServiceReadyFor(serviceName(info.FullMethod), srv)
 	if err != nil {
 		return err
 	}
@@ -260,7 +259,7 @@ func interceptUnary(ctx context.Context, req interface{}, info *grpc.UnaryServer
 		return nil, err
 	}
 
-	err = rpcserver.ServiceReady(serviceName(info.FullMethod))
+	err = rpcserver.ServiceReadyFor(serviceName(info.FullMethod), info.Server)
 	if err != nil {
 		return nil, err
 	}
