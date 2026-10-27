@@ -1314,7 +1314,8 @@ out:
 // address/amount pairs.  Change and an appropriate transaction fee are
 // automatically included, if necessary.  All transaction creation through this
 // function is serialized to prevent the creation of many transactions which
-// spend the same outputs.
+// spend the same outputs.  Once the wallet has stopped, which stops the
+// goroutine that creates them, it returns ErrWalletShuttingDown.
 //
 // NOTE: The dryRun argument can be set true to create a tx that doesn't alter
 // the database. A tx created with this set to true SHOULD NOT be broadcasted.
@@ -1330,7 +1331,11 @@ func (w *Wallet) CreateSimpleTx(account uint32, outputs []*wire.TxOut,
 		dryRun:      dryRun,
 		resp:        make(chan createTxResponse),
 	}
-	w.createTxRequests <- req
+	select {
+	case w.createTxRequests <- req:
+	case <-w.quitChan():
+		return nil, ErrWalletShuttingDown
+	}
 	resp := <-req.resp
 	return resp.tx, resp.err
 }
@@ -1486,24 +1491,42 @@ out:
 // correct, the current timeout is replaced with the new one.  The wallet will
 // be locked if the passphrase is incorrect or any other error occurs during the
 // unlock.
+//
+// Once the wallet has stopped, it returns ErrWalletShuttingDown, since the
+// goroutine that locks and unlocks it has returned.  So do the other methods
+// that go through that goroutine, instead of blocking forever.
 func (w *Wallet) Unlock(passphrase []byte, lock <-chan time.Time) error {
 	err := make(chan error, 1)
-	w.unlockRequests <- unlockRequest{
+	select {
+	case w.unlockRequests <- unlockRequest{
 		passphrase: passphrase,
 		lockAfter:  lock,
 		err:        err,
+	}:
+	case <-w.quitChan():
+		return ErrWalletShuttingDown
 	}
 	return <-err
 }
 
-// Lock locks the wallet's address manager.
+// Lock locks the wallet's address manager.  It does nothing once the wallet
+// has stopped.
 func (w *Wallet) Lock() {
-	w.lockRequests <- struct{}{}
+	select {
+	case w.lockRequests <- struct{}{}:
+	case <-w.quitChan():
+	}
 }
 
-// Locked returns whether the account manager for a wallet is locked.
+// Locked returns whether the account manager for a wallet is locked.  A wallet
+// that has stopped counts as locked, since it can't be used.
 func (w *Wallet) Locked() bool {
-	return <-w.lockState
+	select {
+	case locked := <-w.lockState:
+		return locked
+	case <-w.quitChan():
+		return true
+	}
 }
 
 // holdUnlock prevents the wallet from being locked.  The heldUnlock object
@@ -1514,7 +1537,11 @@ func (w *Wallet) Locked() bool {
 // handling the locking mechanism.
 func (w *Wallet) holdUnlock() (heldUnlock, error) {
 	req := make(chan heldUnlock)
-	w.holdUnlockRequests <- req
+	select {
+	case w.holdUnlockRequests <- req:
+	case <-w.quitChan():
+		return nil, ErrWalletShuttingDown
+	}
 	hl, ok := <-req
 	if !ok {
 		// TODO(davec): This should be defined and exported from
@@ -1540,11 +1567,15 @@ func (c heldUnlock) release() {
 // before the password change.
 func (w *Wallet) ChangePrivatePassphrase(old, new []byte) error {
 	err := make(chan error, 1)
-	w.changePassphrase <- changePassphraseRequest{
+	select {
+	case w.changePassphrase <- changePassphraseRequest{
 		old:     old,
 		new:     new,
 		private: true,
 		err:     err,
+	}:
+	case <-w.quitChan():
+		return ErrWalletShuttingDown
 	}
 	return <-err
 }
@@ -1552,11 +1583,15 @@ func (w *Wallet) ChangePrivatePassphrase(old, new []byte) error {
 // ChangePublicPassphrase modifies the public passphrase of the wallet.
 func (w *Wallet) ChangePublicPassphrase(old, new []byte) error {
 	err := make(chan error, 1)
-	w.changePassphrase <- changePassphraseRequest{
+	select {
+	case w.changePassphrase <- changePassphraseRequest{
 		old:     old,
 		new:     new,
 		private: false,
 		err:     err,
+	}:
+	case <-w.quitChan():
+		return ErrWalletShuttingDown
 	}
 	return <-err
 }
@@ -1567,12 +1602,16 @@ func (w *Wallet) ChangePassphrases(publicOld, publicNew, privateOld,
 	privateNew []byte) error {
 
 	err := make(chan error, 1)
-	w.changePassphrases <- changePassphrasesRequest{
+	select {
+	case w.changePassphrases <- changePassphrasesRequest{
 		publicOld:  publicOld,
 		publicNew:  publicNew,
 		privateOld: privateOld,
 		privateNew: privateNew,
 		err:        err,
+	}:
+	case <-w.quitChan():
+		return ErrWalletShuttingDown
 	}
 	return <-err
 }

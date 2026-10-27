@@ -26,6 +26,12 @@ import (
 // again to connect after it failed to start.
 const chainRetryInterval = 5 * time.Second
 
+// grpcStopTimeout is how long the shutdown waits for the gRPC calls that
+// stopping the server cancelled to return.  By then the shutdown has released
+// the calls that wait on the wallet or the chain backend, so they return right
+// away, unless one waits on something else.
+const grpcStopTimeout = 10 * time.Second
+
 var (
 	cfg *config
 )
@@ -122,9 +128,48 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	}()
 
 	// Add interrupt handlers to shutdown the various process components
-	// before exiting.  Interrupt handlers run in LIFO order, so the chain
-	// backend (which should be closed last) is added first, followed by the
-	// wallet (which uses it), and then the RPC servers.
+	// before exiting.  Interrupt handlers run in LIFO order, so the ones
+	// added first run last.  The shutdown:
+	//
+	//  1. stops the chain backend from reconnecting,
+	//  2. stops the legacy RPC server,
+	//  3. starts stopping the gRPC server, which cancels its calls,
+	//  4. unloads the wallet, which stops its chain client,
+	//  5. stops the chain backend, and
+	//  6. waits for the gRPC calls, which the steps before released from
+	//     waiting on the wallet and the chain backend, and unloads a wallet
+	//     that one of them loaded meanwhile.
+	unloadWallet := func() {
+		err := loader.UnloadWallet()
+		if err != nil && err != wallet.ErrNotLoaded {
+			log.Errorf("Failed to close wallet: %v", err)
+		}
+	}
+	grpcStopped := make(chan struct{})
+	var grpcStopOnce sync.Once
+	stopGRPC := func() {
+		grpcStopOnce.Do(func() {
+			log.Warn("Stopping RPC server...")
+			go func() {
+				rpcs.Stop()
+				close(grpcStopped)
+			}()
+		})
+	}
+	if rpcs != nil {
+		interrupts.addInterruptHandler(func() {
+			stopGRPC()
+			select {
+			case <-grpcStopped:
+			case <-time.After(grpcStopTimeout):
+				log.Errorf("RPC calls still running %v after the "+
+					"RPC server stopped", grpcStopTimeout)
+			}
+			rpcserver.StopServices()
+			unloadWallet()
+			log.Info("RPC server shutdown")
+		})
+	}
 	interrupts.addInterruptHandler(func() {
 		log.Info("Stopping chain backend...")
 		stopReconnecting()
@@ -132,19 +177,9 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		<-chainDone
 		log.Info("Chain backend shutdown")
 	})
-	interrupts.addInterruptHandler(func() {
-		err := loader.UnloadWallet()
-		if err != nil && err != wallet.ErrNotLoaded {
-			log.Errorf("Failed to close wallet: %v", err)
-		}
-	})
+	interrupts.addInterruptHandler(unloadWallet)
 	if rpcs != nil {
-		interrupts.addInterruptHandler(func() {
-			log.Warn("Stopping RPC server...")
-			rpcs.Stop()
-			rpcserver.StopServices()
-			log.Info("RPC server shutdown")
-		})
+		interrupts.addInterruptHandler(stopGRPC)
 	}
 	if legacyRPCServer != nil {
 		interrupts.addInterruptHandler(func() {

@@ -109,13 +109,19 @@ func paymentRequestURL(uri string) (string, error) {
 
 // DownloadPaymentRequest downloads the payment request of a bitcoincash URI
 // with the JSON Payment Protocol, and with BIP70 when the merchant does not
-// offer the former or does not sign it with a key the client trusts.
-func (c *PaymentProtocolClient) DownloadPaymentRequest(uri string) (*PaymentRequest, error) {
-	pr, jppErr := c.DownloadJPPv2PaymentRequest(uri)
+// offer the former or does not sign it with a key the client trusts.  Like the
+// client's other methods, it gives up once ctx is done.
+func (c *PaymentProtocolClient) DownloadPaymentRequest(ctx context.Context,
+	uri string) (*PaymentRequest, error) {
+
+	pr, jppErr := c.DownloadJPPv2PaymentRequest(ctx, uri)
 	if jppErr == nil {
 		return pr, nil
 	}
-	pr, bip70Err := c.DownloadBip0070PaymentRequest(uri)
+	if ctx.Err() != nil {
+		return nil, jppErr
+	}
+	pr, bip70Err := c.DownloadBip0070PaymentRequest(ctx, uri)
 	if bip70Err != nil {
 		return nil, fmt.Errorf("JSON payment protocol: %v; BIP70: %v",
 			jppErr, bip70Err)
@@ -129,14 +135,16 @@ func (c *PaymentProtocolClient) DownloadPaymentRequest(uri string) (*PaymentRequ
 // The cert must chain to a certificate authority in the OS's certificate store, through
 // the intermediate certs the request includes. A PaymentRequest object with the relevant
 // data extracted is returned.
-func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(uri string) (*PaymentRequest, error) {
+func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Context,
+	uri string) (*PaymentRequest, error) {
+
 	endpoint, err := paymentRequestURL(uri)
 	if err != nil {
 		return nil, err
 	}
 
 	// Build GET request
-	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -331,9 +339,11 @@ type Payment struct {
 // PostPayment sends a payment response back to the merchant's server. Any errors
 // that are encountered in the process are returned along with an optional "memo"
 // that the merchant can include in the ACK.
-func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err error) {
+func (c *PaymentProtocolClient) PostPayment(ctx context.Context,
+	payment *Payment) (memo string, err error) {
+
 	if payment.Protocol == ProtocolJPPv2 {
-		return c.postJPPv2Payment(payment)
+		return c.postJPPv2Payment(ctx, payment)
 	}
 
 	// Build the payment protobuf object
@@ -367,7 +377,8 @@ func (c *PaymentProtocolClient) PostPayment(payment *Payment) (memo string, err 
 	}
 
 	// Build the POST request
-	request, err := http.NewRequest(http.MethodPost, payment.PaymentURL, bytes.NewReader(serializedPayment))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		payment.PaymentURL, bytes.NewReader(serializedPayment))
 	if err != nil {
 		return "", err
 	}

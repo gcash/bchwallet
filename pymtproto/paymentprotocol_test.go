@@ -2,6 +2,7 @@ package pymtproto
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -78,7 +79,7 @@ func TestPaymentProtocolClient_TestDownloadBip0070PaymentRequest(t *testing.T) {
 		},
 	)
 
-	pr, err := prClient.DownloadBip0070PaymentRequest(uri)
+	pr, err := prClient.DownloadBip0070PaymentRequest(context.Background(), uri)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +144,7 @@ func TestPaymentProtocolClient_PostPayment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	memo, err := prClient.PostPayment(&Payment{
+	memo, err := prClient.PostPayment(context.Background(), &Payment{
 		PaymentURL:   "https://test.bitpay.com/i/DTrd9XKyUh6LebPJFoEaTA",
 		MerchantData: []byte{},
 		RefundOutput: Output{

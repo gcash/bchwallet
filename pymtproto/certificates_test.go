@@ -1,6 +1,7 @@
 package pymtproto
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -182,7 +183,7 @@ func downloadPaymentRequest(t *testing.T, request []byte, params *chaincfg.Param
 	for _, root := range roots {
 		prClient.roots.AddCert(root.cert)
 	}
-	return prClient.DownloadBip0070PaymentRequest(
+	return prClient.DownloadBip0070PaymentRequest(context.Background(),
 		"bitcoincash:?r=https://merchant.example/i/1")
 }
 

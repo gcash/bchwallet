@@ -7,6 +7,7 @@ import (
 
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchwallet/chain"
+	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/wtxmgr"
 )
 
@@ -84,5 +85,58 @@ func TestPublishDuringStop(t *testing.T) {
 	})
 	if !errors.Is(err, ErrWalletShuttingDown) {
 		t.Fatalf("got %v, want %v", err, ErrWalletShuttingDown)
+	}
+}
+
+// TestCallsAfterStop ensures the methods that go through the wallet's own
+// goroutines return once the wallet has stopped, instead of blocking forever, as
+// a gRPC call after CloseWallet did, which then hung the shutdown that waited
+// for it.
+func TestCallsAfterStop(t *testing.T) {
+	w := newRegtestWallet(t)
+	w.Stop()
+	w.WaitForShutdown()
+
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{"Unlock", func() error {
+			return w.Unlock([]byte("world"), nil)
+		}},
+		{"holdUnlock", func() error {
+			_, err := w.holdUnlock()
+			return err
+		}},
+		{"ChangePrivatePassphrase", func() error {
+			return w.ChangePrivatePassphrase([]byte("world"), []byte("new"))
+		}},
+		{"ChangePublicPassphrase", func() error {
+			return w.ChangePublicPassphrase([]byte("hello"), []byte("new"))
+		}},
+		{"ChangePassphrases", func() error {
+			return w.ChangePassphrases([]byte("hello"), []byte("new"),
+				[]byte("world"), []byte("new"))
+		}},
+		{"CreateSimpleTx", func() error {
+			_, err := w.CreateSimpleTx(0, nil, 1,
+				txrules.DefaultRelayFeePerKb, true)
+			return err
+		}},
+	}
+	for _, c := range calls {
+		var err error
+		waitFor(t, c.name, func() { err = c.call() })
+		if !errors.Is(err, ErrWalletShuttingDown) {
+			t.Errorf("%s: got %v, want %v", c.name, err,
+				ErrWalletShuttingDown)
+		}
+	}
+
+	waitFor(t, "Lock", w.Lock)
+	var locked bool
+	waitFor(t, "Locked", func() { locked = w.Locked() })
+	if !locked {
+		t.Error("a stopped wallet reports itself unlocked")
 	}
 }

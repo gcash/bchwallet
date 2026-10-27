@@ -2,6 +2,7 @@ package pymtproto
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -112,8 +113,8 @@ func (c *PaymentProtocolClient) jppNetwork() string {
 // jppDo makes a JSON Payment Protocol request, with body as JSON of
 // contentType if it is not nil, and returns the response when its status is
 // 200.  The response's signature is not checked.
-func (c *PaymentProtocolClient) jppDo(method, rawURL, accept, contentType string,
-	body interface{}) (*jppResponse, error) {
+func (c *PaymentProtocolClient) jppDo(ctx context.Context, method, rawURL,
+	accept, contentType string, body interface{}) (*jppResponse, error) {
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -127,7 +128,7 @@ func (c *PaymentProtocolClient) jppDo(method, rawURL, accept, contentType string
 		}
 		reader = bytes.NewReader(b)
 	}
-	request, err := http.NewRequest(method, rawURL, reader)
+	request, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -222,15 +223,17 @@ func (c *PaymentProtocolClient) verifyJPPResponse(resp *jppResponse) (string, er
 // URI with BitPay's JSON Payment Protocol, version 2.  The merchant's
 // responses must be signed by a key that the client trusts for the
 // merchant's host and the client's network, such as BitPay's own.
-func (c *PaymentProtocolClient) DownloadJPPv2PaymentRequest(uri string) (*PaymentRequest, error) {
+func (c *PaymentProtocolClient) DownloadJPPv2PaymentRequest(ctx context.Context,
+	uri string) (*PaymentRequest, error) {
+
 	endpoint, err := paymentRequestURL(uri)
 	if err != nil {
 		return nil, err
 	}
 	network := c.jppNetwork()
 
-	resp, err := c.jppDo(http.MethodGet, endpoint, "application/payment-options",
-		"", nil)
+	resp, err := c.jppDo(ctx, http.MethodGet, endpoint,
+		"application/payment-options", "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +262,7 @@ func (c *PaymentProtocolClient) DownloadJPPv2PaymentRequest(uri string) (*Paymen
 	if paymentURL == "" {
 		paymentURL = endpoint
 	}
-	resp, err = c.jppDo(http.MethodPost, paymentURL, "",
+	resp, err = c.jppDo(ctx, http.MethodPost, paymentURL, "",
 		"application/payment-request",
 		map[string]string{"chain": jppChain, "currency": jppCurrency})
 	if err != nil {
@@ -324,7 +327,9 @@ func (c *PaymentProtocolClient) DownloadJPPv2PaymentRequest(uri string) (*Paymen
 // unsigned for it to verify them, and only once it accepts them signed, and
 // returns the merchant's memo.  The response to the signed transactions is
 // not checked beyond its status, as the merchant has them by then.
-func (c *PaymentProtocolClient) postJPPv2Payment(payment *Payment) (string, error) {
+func (c *PaymentProtocolClient) postJPPv2Payment(ctx context.Context,
+	payment *Payment) (string, error) {
+
 	unsigned := jppPayment{Chain: jppChain, Currency: jppCurrency}
 	signed := jppPayment{Chain: jppChain, Currency: jppCurrency}
 	for _, tx := range payment.Transactions {
@@ -352,16 +357,16 @@ func (c *PaymentProtocolClient) postJPPv2Payment(payment *Payment) (string, erro
 		})
 	}
 
-	resp, err := c.jppDo(http.MethodPost, payment.PaymentURL, "",
+	resp, err := c.jppDo(ctx, http.MethodPost, payment.PaymentURL, "",
 		"application/payment-verification", unsigned)
 	if err != nil {
-		return "", fmt.Errorf("merchant did not accept the payment: %v", err)
+		return "", fmt.Errorf("merchant did not accept the payment: %w", err)
 	}
 	if _, err := c.verifyJPPResponse(resp); err != nil {
 		return "", err
 	}
 
-	resp, err = c.jppDo(http.MethodPost, payment.PaymentURL, "",
+	resp, err = c.jppDo(ctx, http.MethodPost, payment.PaymentURL, "",
 		"application/payment", signed)
 	if err != nil {
 		return "", err

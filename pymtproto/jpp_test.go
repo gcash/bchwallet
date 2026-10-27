@@ -2,10 +2,12 @@ package pymtproto
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -235,7 +237,8 @@ func hexTx(t *testing.T, tx *wire.MsgTx) (string, int) {
 func TestJPPv2Payment(t *testing.T) {
 	m, client := newTestMerchant(t)
 
-	pr, err := client.DownloadPaymentRequest("bitcoincash:?r=" + m.url)
+	pr, err := client.DownloadPaymentRequest(context.Background(),
+		"bitcoincash:?r="+m.url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +255,7 @@ func TestJPPv2Payment(t *testing.T) {
 	}
 
 	tx := testSignedTx(t)
-	memo, err := client.PostPayment(&Payment{
+	memo, err := client.PostPayment(context.Background(), &Payment{
 		Protocol:     ProtocolJPPv2,
 		PaymentURL:   pr.PaymentURL,
 		Transactions: []*wire.MsgTx{tx},
@@ -314,7 +317,8 @@ func TestJPPv2RefusedRequests(t *testing.T) {
 	for _, test := range tests {
 		m, client := newTestMerchant(t)
 		test.change(m, client)
-		_, err := client.DownloadJPPv2PaymentRequest("bitcoincash:?r=" + m.url)
+		_, err := client.DownloadJPPv2PaymentRequest(context.Background(),
+			"bitcoincash:?r="+m.url)
 		if err == nil || !strings.Contains(err.Error(), test.reason) {
 			t.Errorf("%s: got %v, want an error with %q", test.name, err,
 				test.reason)
@@ -328,7 +332,7 @@ func TestJPPv2VerificationRefused(t *testing.T) {
 	m, client := newTestMerchant(t)
 	m.verifyStatus = http.StatusUnprocessableEntity
 
-	_, err := client.PostPayment(&Payment{
+	_, err := client.PostPayment(context.Background(), &Payment{
 		Protocol:     ProtocolJPPv2,
 		PaymentURL:   m.url,
 		Transactions: []*wire.MsgTx{testSignedTx(t)},
@@ -351,7 +355,7 @@ func TestPaymentRequestFallsBackToBIP70(t *testing.T) {
 	m.noJPP = true
 	uri := "bitcoincash:?r=" + m.url
 
-	_, err := client.DownloadPaymentRequest(uri)
+	_, err := client.DownloadPaymentRequest(context.Background(), uri)
 	if err == nil || !strings.Contains(err.Error(), "JSON payment protocol") ||
 		!strings.Contains(err.Error(), "BIP70") {
 
@@ -365,7 +369,7 @@ func TestPaymentRequestFallsBackToBIP70(t *testing.T) {
 	client.roots = x509.NewCertPool()
 	client.roots.AddCert(root.cert)
 
-	pr, err := client.DownloadPaymentRequest(uri)
+	pr, err := client.DownloadPaymentRequest(context.Background(), uri)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,5 +406,73 @@ func TestBitPayKeys(t *testing.T) {
 		if key.owner == "" || len(key.domains) == 0 || len(key.networks) == 0 {
 			t.Errorf("key %s is incomplete: %+v", identity, key)
 		}
+	}
+}
+
+// TestPaymentProtocolCancel ensures a request to a merchant that never answers
+// ends once its context is done, which is how stopping the gRPC server ends a
+// call that waits on a merchant.
+func TestPaymentProtocolCancel(t *testing.T) {
+	// A handler that doesn't read a POST's body doesn't see the client go
+	// away, so the server's Close waits for release.
+	release := make(chan struct{})
+	stuck := httptest.NewTLSServer(http.HandlerFunc(
+		func(_ http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}))
+	t.Cleanup(func() {
+		close(release)
+		stuck.Close()
+	})
+	client := NewPaymentProtocolClient(&chaincfg.MainNetParams, nil)
+	client.httpClient = stuck.Client()
+
+	calls := []struct {
+		name string
+		call func(ctx context.Context) error
+	}{
+		{"DownloadPaymentRequest", func(ctx context.Context) error {
+			_, err := client.DownloadPaymentRequest(ctx,
+				"bitcoincash:?r="+stuck.URL)
+			return err
+		}},
+		{"PostPayment with BIP70", func(ctx context.Context) error {
+			_, err := client.PostPayment(ctx, &Payment{
+				Protocol:     ProtocolBIP70,
+				PaymentURL:   stuck.URL,
+				Transactions: []*wire.MsgTx{testSignedTx(t)},
+				RefundOutput: Output{Address: testPayee(t), Amount: 1},
+			})
+			return err
+		}},
+		{"PostPayment with the JSON Payment Protocol",
+			func(ctx context.Context) error {
+				_, err := client.PostPayment(ctx, &Payment{
+					Protocol:     ProtocolJPPv2,
+					PaymentURL:   stuck.URL,
+					Transactions: []*wire.MsgTx{testSignedTx(t)},
+				})
+				return err
+			}},
+	}
+	for _, c := range calls {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(100*time.Millisecond, cancel)
+		done := make(chan error, 1)
+		go func() { done <- c.call(ctx) }()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("%s: got %v, want %v", c.name, err,
+					context.Canceled)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s did not end when its context was cancelled",
+				c.name)
+		}
+		cancel()
 	}
 }

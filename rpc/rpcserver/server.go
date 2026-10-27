@@ -961,6 +961,13 @@ func (s *walletServer) PublishTransaction(ctx context.Context, req *pb.PublishTr
 func (s *walletServer) Rescan(ctx context.Context, req *pb.RescanRequest) (
 	*pb.RescanResponse, error) {
 
+	// Without a chain client, nothing takes the job, and submitting it
+	// would wait until the wallet stops.
+	if s.wallet.ChainClient() == nil {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"chain client not available yet")
+	}
+
 	job, err := s.wallet.NewRescanJob()
 	if err != nil {
 		return nil, err
@@ -973,7 +980,7 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 	*pb.DownloadPaymentRequestResponse, error) {
 
 	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-	pr, err := client.DownloadPaymentRequest(req.Uri)
+	pr, err := client.DownloadPaymentRequest(ctx, req.Uri)
 	if err != nil {
 		return nil, err
 	}
@@ -1038,7 +1045,7 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 	}
 
 	client := pymtproto.NewPaymentProtocolClient(s.wallet.ChainParams(), s.wallet.GetProxyDialer())
-	ackMemo, err := client.PostPayment(payment)
+	ackMemo, err := client.PostPayment(ctx, payment)
 	if err != nil {
 		return nil, err
 	}
