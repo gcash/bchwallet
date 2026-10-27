@@ -212,12 +212,9 @@ func relevantAccounts(w *Wallet, m map[uint32]bchutil.Amount, txs []TransactionS
 }
 
 func (s *NotificationServer) notifyUnminedTransaction(dbtx walletdb.ReadTx, details *wtxmgr.TxDetails) {
-	// Sanity check: should not be currently coalescing a notification for
-	// mined transactions at the same time that an unmined tx is notified.
-	if s.currentTxNtfn != nil {
-		log.Errorf("Notifying unmined tx notification (%s) while creating notification for blocks",
-			details.Hash)
-	}
+	// This runs on the goroutine of a published transaction as well as on
+	// the chain notification goroutine, which coalesces the notification
+	// of mined transactions in currentTxNtfn, so it must not read that.
 
 	defer s.mu.Unlock()
 	s.mu.Lock()

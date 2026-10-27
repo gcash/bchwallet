@@ -35,6 +35,7 @@ import (
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/walletdb/migration"
 	"github.com/gcash/bchwallet/wtxmgr"
+	"github.com/gcash/neutrino/pushtx"
 )
 
 const (
@@ -3749,13 +3750,33 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 		}
 	}
 
-	return w.publishTransaction(tx)
+	txHash, err := w.publishTransaction(tx)
+	if err != nil && !isRejection(err) {
+		// The transaction stays recorded as unmined and goes out again
+		// after the next block or reconnection, so it counts as
+		// published: a caller that created it again would pay twice.
+		log.Warnf("Unable to broadcast transaction %v yet, which the "+
+			"wallet will retry: %v", tx.TxHash(), err)
+		txid := tx.TxHash()
+		return &txid, nil
+	}
+	return txHash, err
+}
+
+// isRejection returns whether err is the backend's rejection of a transaction:
+// the error a node answered with over RPC, or the rejection of every SPV peer
+// that answered.
+func isRejection(err error) bool {
+	var rpcErr *btcjson.RPCError
+	var broadcastErr *pushtx.BroadcastError
+	return errors.As(err, &rpcErr) || errors.As(err, &broadcastErr)
 }
 
 // publishTransaction attempts to send an unconfirmed transaction to the
-// wallet's current backend. In the event that sending the transaction fails for
-// whatever reason, it will be removed from the wallet's unconfirmed transaction
-// store.
+// wallet's current backend. In the event that the backend rejects the
+// transaction, it will be removed from the wallet's unconfirmed transaction
+// store; any other error, such as a backend that is stopping or can't be
+// reached, leaves it there to be broadcast again.
 func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	chainClient, err := w.requireChainClient()
 	if err != nil {
@@ -3771,6 +3792,11 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 		rpcTxConfirmed = rpcErr.Code == btcjson.ErrRPCTxAlreadyInChain
 	}
 
+	// The SPV backend reports the rejections of its peers as broadcast
+	// errors.
+	var broadcastErr *pushtx.BroadcastError
+	isBroadcastErr := errors.As(err, &broadcastErr)
+
 	txid := tx.TxHash()
 	switch {
 	case err == nil:
@@ -3781,6 +3807,11 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	//
 	// If the transaction is already in the mempool, we can just return now.
 	//
+	// This error is returned when the SPV backend's peers already have the
+	// transaction in their mempool.
+	case isBroadcastErr && broadcastErr.Code == pushtx.Mempool:
+		fallthrough
+
 	// This error is returned when broadcasting/sending a transaction to a
 	// btcd node that already has it in their mempool.
 	case strings.Contains(
@@ -3800,6 +3831,11 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	// confirmed store. We'll avoid returning an error as the broadcast was
 	// in a sense successful.
 	//
+	// This error is returned when the SPV backend's peers already have the
+	// transaction in a block.
+	case isBroadcastErr && broadcastErr.Code == pushtx.Confirmed:
+		fallthrough
+
 	// This error is returned when sending a transaction that has already
 	// confirmed to a btcd/bitcoind node over RPC.
 	case rpcTxConfirmed:
@@ -3834,7 +3870,7 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 	// remove it from the transaction store, as otherwise, we'll attempt to
 	// continually re-broadcast it, and the UTXO state of the wallet won't
 	// be accurate.
-	default:
+	case isRejection(err):
 		dbErr := walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 			txmgrNs := dbTx.ReadWriteBucket(wtxmgrNamespaceKey)
 			txRec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
@@ -3851,6 +3887,12 @@ func (w *Wallet) publishTransaction(tx *wire.MsgTx) (*chainhash.Hash, error) {
 				spew.Sdump(tx))
 		}
 
+		return nil, err
+
+	// Any other error, such as a backend that is stopping or can't be
+	// reached, says nothing of the transaction, which stays unmined to be
+	// broadcast again after the next block or reconnection.
+	default:
 		return nil, err
 	}
 }
