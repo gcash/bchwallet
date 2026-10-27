@@ -90,18 +90,17 @@ var subsystemLoggers = map[string]bchlog.Logger{
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
 // create roll files in the same directory.  It must be called before the
-// package-global log rotater variables are used.
-func initLogRotator(logFile string) {
+// package-global log rotater variables are used.  It returns an error rather
+// than exit, since the process may be an app that embeds the wallet.
+func initLogRotator(logFile string) error {
 	logDir, _ := filepath.Split(logFile)
 	err := os.MkdirAll(logDir, 0700)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create log directory: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 	r, err := rotator.New(logFile, 10*1024, false, 3)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create file rotator: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create file rotator: %v", err)
 	}
 
 	pr, pw := io.Pipe()
@@ -111,6 +110,7 @@ func initLogRotator(logFile string) {
 
 	logRotator = r
 	logRotatorPipe.Store(pw)
+	return nil
 }
 
 // closeLogRotator stops writing logs to the log file and closes it.  Logs are

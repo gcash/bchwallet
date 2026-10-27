@@ -48,11 +48,13 @@ var (
 var walletMain = boot.WalletMainContext
 
 func init() {
-	// The app that embeds the wallet keeps its own signal handling, and the
+	// The app that embeds the wallet keeps its own signal handling, the
 	// wallet is configured only by its config file, not by the command
-	// line of the app's process.
+	// line of the app's process, and it doesn't prompt on the app's
+	// console.
 	boot.HandleSignals = false
 	boot.Args = []string{}
+	boot.ConsolePrompts = false
 }
 
 // StartWallet is the function exposed to the mobile device to start the bchwallet.

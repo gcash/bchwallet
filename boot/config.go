@@ -294,6 +294,18 @@ func commandLineArgs() []string {
 	return []string{}
 }
 
+// ConsolePrompts controls whether the wallet may prompt on the console: for the
+// passphrases and seed of the wallet that --create creates, and for those that
+// an upgrade of the wallet opened at startup needs.  Programs that embed the
+// wallet, such as the mobile package, turn it off, so that these fail with an
+// error instead of reading the input of the host process.  It must be set
+// before WalletMain is called.
+var ConsolePrompts = true
+
+// errNothingToRun is returned by loadConfig when it has done all that the
+// config asks for, such as showing the version, and the wallet is not to run.
+var errNothingToRun = errors.New("nothing to run")
+
 // loadConfig initializes and parses the config using a config file and command
 // line options.
 //
@@ -350,7 +362,7 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	usageMessage := fmt.Sprintf("Use %s -h to show usage", appName)
 	if preCfg.ShowVersion {
 		fmt.Println(appName, "version", version())
-		os.Exit(0)
+		return nil, nil, errNothingToRun
 	}
 
 	// Load additional config from file.
@@ -434,15 +446,18 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	cfg.LogDir = cleanAndExpandPath(cfg.LogDir)
 	cfg.LogDir = filepath.Join(cfg.LogDir, activeNet.Name)
 
-	// Special show command to list supported subsystems and exit.
+	// Special show command to list supported subsystems and stop.
 	if cfg.DebugLevel == "show" {
 		fmt.Println("Supported subsystems", supportedSubsystems())
-		os.Exit(0)
+		return nil, nil, errNothingToRun
 	}
 
 	// Initialize log rotation.  After log rotation has been initialized, the
 	// logger variables may be used.
-	initLogRotator(filepath.Join(cfg.LogDir, defaultLogFilename))
+	if err := initLogRotator(filepath.Join(cfg.LogDir, defaultLogFilename)); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, nil, err
+	}
 
 	// Parse, validate, and set debug log level(s).
 	if err := parseAndSetDebugLevels(cfg.DebugLevel); err != nil {
@@ -452,20 +467,22 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	// Exit if you try to use a simulation wallet with a standard
+	// Fail if you try to use a simulation wallet with a standard
 	// data directory.
 	if !cfg.AppDataDir.ExplicitlySet() && !cfg.DataDir.ExplicitlySet() && cfg.CreateTemp {
-		fmt.Fprintln(os.Stderr, "Tried to create a temporary simulation "+
-			"wallet, but failed to specify data directory!")
-		os.Exit(0)
+		err := errors.New("tried to create a temporary simulation " +
+			"wallet, but failed to specify data directory")
+		fmt.Fprintln(os.Stderr, err)
+		return nil, nil, err
 	}
 
-	// Exit if you try to use a simulation wallet on anything other than
-	// simnet or testnet3.
+	// Fail if you try to use a simulation wallet on anything other than
+	// simnet.
 	if !cfg.SimNet && cfg.CreateTemp {
-		fmt.Fprintln(os.Stderr, "Tried to create a temporary simulation "+
-			"wallet for network other than simnet!")
-		os.Exit(0)
+		err := errors.New("tried to create a temporary simulation " +
+			"wallet for network other than simnet")
+		fmt.Fprintln(os.Stderr, err)
+		return nil, nil, err
 	}
 
 	// Ensure the wallet exists or create it when the create flag is set.
@@ -518,14 +535,22 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 			return nil, nil, err
 		}
 
+		// The wizard asks for the passphrases and seed on the console.
+		if !ConsolePrompts {
+			err := errors.New("--create asks for the passphrases and " +
+				"seed on the console, which is not available")
+			fmt.Fprintln(os.Stderr, err)
+			return nil, nil, err
+		}
+
 		// Perform the initial wallet creation wizard.
 		if err := createWallet(&cfg); err != nil {
 			fmt.Fprintln(os.Stderr, "Unable to create wallet:", err)
 			return nil, nil, err
 		}
 
-		// Created successfully, so exit now with success.
-		os.Exit(0)
+		// Created successfully, so stop now with success.
+		return nil, nil, errNothingToRun
 	} else if !dbFileExists && !cfg.NoInitialLoad {
 		keystorePath := filepath.Join(netDir, keystore.Filename)
 		keystoreExists, err := cfgutil.FileExists(keystorePath)

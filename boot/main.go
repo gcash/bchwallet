@@ -59,6 +59,9 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
 	tcfg, _, err := loadConfig(optionalConfigPath)
+	if errors.Is(err, errNothingToRun) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -245,7 +248,8 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	if !cfg.NoInitialLoad && !interrupts.stopRequested() {
 		// Load the wallet database.  It must have been created already
 		// or this will return an appropriate error.
-		_, err = loader.OpenExistingWallet([]byte(cfg.WalletPass), true)
+		_, err = loader.OpenExistingWallet([]byte(cfg.WalletPass),
+			ConsolePrompts)
 		if err != nil {
 			log.Error(err)
 			return err

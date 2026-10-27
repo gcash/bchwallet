@@ -28,6 +28,8 @@ This release lets an app run the wallet again in the same process and start it w
 - The wallet is configured only by its config file and leaves the app's signals alone: the command line of the app's process is no longer parsed.
 - A wallet that can't sync with its chain backend, because checking its birthday block or syncing to the chain fails, stops with that error, which `LastError` reports, also one that a client closed and opened again over gRPC. It panicked, which killed the app.
 - Each run of the wallet chooses its network from its own config, so a process that runs the wallet again with a config for another network, or for mainnet, no longer keeps the network of the earlier run.
+- The wallet no longer exits the app's process. A log directory it can't create, a misused `createtemp`, `debuglevel=show` or a finished `--create` end the run instead, with an error for the first two, which `LastError` reports.
+- The wallet doesn't prompt on the app's console. Opening a wallet whose upgrade needs its seed or private passphrase, or creating one with `--create`, fails with an error that says so, where a prompt failed on the app's empty input with a confusing error, or waited for input that would never come.
 
 ### SPV
 
@@ -66,7 +68,7 @@ This release lets an app run the wallet again in the same process and start it w
 ### Upgrade notes
 
 - The mobile package's `StopWallet` blocks until the wallet has shut down, so call it off an app's UI thread.
-- Programs that embed the wallet can use `boot.WalletMainContext`, which runs the wallet until its context is done, and set `boot.HandleSignals` and `boot.Args` to keep their own signal handling and command line.
+- Programs that embed the wallet can use `boot.WalletMainContext`, which runs the wallet until its context is done, and set `boot.HandleSignals` and `boot.Args` to keep their own signal handling and command line, and `boot.ConsolePrompts` to keep the wallet from prompting on the console. The daemon exits with status 1 for a misused `createtemp`, which exited with status 0.
 - In `rpcserver`, each server that `RegisterServices` registers services with has its own. `StartWalletService` and the new `StopWalletService` start and stop its wallet service, also for a wallet loaded again, without panicking. `StopServices(server)` drops the services and stops the consensus RPC client of `StartConsensusRPC`. Interceptors check that a service is ready with `ServiceReadyFor`, given the service implementation of the call; `ServiceReady` is deprecated.
 - `wallet.Loader` has `OnLoad` and `OnUnload`, which run a function for every wallet the loader loads and before every unload, unlike the one-shot `RunAfterLoad`, and `RestartWallet`, which stops and starts the loaded wallet while it holds the loader, so that the wallet can't be unloaded in between.
 - `wtxmgr.Credit` has a `TokenData` field and a `HasTokens` method, and `wallet.OutputSelectionPolicy` an `IncludeTokens` field that selects outputs carrying tokens too.
