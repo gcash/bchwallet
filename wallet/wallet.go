@@ -3840,13 +3840,34 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	return txHash, err
 }
 
-// isRejection returns whether err is the backend's rejection of a transaction:
-// the error a node answered with over RPC, or the rejection of every SPV peer
-// that answered.
+// isRejection returns whether err is the backend's rejection of a transaction,
+// which therefore can't be mined as it is: the rejection of every SPV peer that
+// answered, or a node's RPC error that rejects it, can't decode it, or finds
+// its inputs missing or spent.  Other RPC errors, such as that of a node that
+// is warming up or failed to process the transaction, say nothing of it.
 func isRejection(err error) bool {
-	var rpcErr *btcjson.RPCError
 	var broadcastErr *pushtx.BroadcastError
-	return errors.As(err, &rpcErr) || errors.As(err, &broadcastErr)
+	if errors.As(err, &broadcastErr) {
+		return true
+	}
+	var rpcErr *btcjson.RPCError
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	switch rpcErr.Code {
+	case btcjson.ErrRPCTxRejected, btcjson.ErrRPCDeserialization:
+		return true
+
+	// bchd also answers with this code when it fails to process the
+	// transaction, so it only rejects one whose inputs are missing or
+	// spent: an orphan to bchd, missing inputs to BCHN.
+	case btcjson.ErrRPCTxError:
+		msg := strings.ToLower(rpcErr.Message)
+		return strings.Contains(msg, "orphan transaction") ||
+			strings.Contains(msg, "missing inputs") ||
+			strings.Contains(msg, "missingorspent")
+	}
+	return false
 }
 
 // publishTransaction attempts to send an unconfirmed transaction to the

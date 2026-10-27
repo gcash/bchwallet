@@ -67,6 +67,43 @@ var broadcastErrors = []struct {
 	},
 	wantErr: true,
 }, {
+	name: "an orphan to bchd",
+	err: &btcjson.RPCError{
+		Code: btcjson.ErrRPCTxError,
+		Message: "TX rejected: orphan transaction 01 references " +
+			"outputs of unknown or fully-spent transaction 02",
+	},
+	wantErr: true,
+}, {
+	name: "inputs spent to BCHN",
+	err: &btcjson.RPCError{
+		Code:    btcjson.ErrRPCTxError,
+		Message: "bad-txns-inputs-missingorspent",
+	},
+	wantErr: true,
+}, {
+	name: "undecodable to the node",
+	err: &btcjson.RPCError{
+		Code:    btcjson.ErrRPCDeserialization,
+		Message: "TX decode failed: unexpected EOF",
+	},
+	wantErr: true,
+}, {
+	// These codes don't say anything of the transaction.
+	name: "node failed to process it",
+	err: &btcjson.RPCError{
+		Code:    btcjson.ErrRPCTxError,
+		Message: "TX rejected: database is not open",
+	},
+	kept: true,
+}, {
+	name: "node warming up",
+	err: &btcjson.RPCError{
+		Code:    btcjson.ErrRPCInWarmup,
+		Message: "Loading block index...",
+	},
+	kept: true,
+}, {
 	// These reasons don't say what happened, so the codes must.
 	name: "in the SPV peers' mempools",
 	err: &pushtx.BroadcastError{
