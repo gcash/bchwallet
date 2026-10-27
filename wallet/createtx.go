@@ -192,8 +192,12 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
+	// The block stamp of the chain backend has no time, which the upgrades
+	// that activate by time need, so the flags are those of the block the
+	// wallet is synced to.
+	syncedTo := w.Manager.SyncedTo()
 	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues,
-		tx.PrevTokens, scriptFlags(w.chainParams, bs))
+		tx.PrevTokens, scriptFlags(w.chainParams, &syncedTo))
 	if err != nil {
 		return nil, err
 	}
