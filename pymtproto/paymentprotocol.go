@@ -272,9 +272,25 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Contex
 		// address. This is kind of lame as we should be able to pay any script but
 		// our gRPC API currently only works with addresses for convenience so we wont
 		// be able to pay arbitrary scripts right now anyway.
-		_, addrs, _, err := txscript.ExtractPkScriptAddrs(out.Script, c.params)
+		class, addrs, _, err := txscript.ExtractPkScriptAddrs(out.Script, c.params)
 		if err != nil {
 			return nil, err
+		}
+
+		// Only a script that pays one address by its hash is that
+		// address's.  Other scripts have no address, such as OP_RETURN
+		// outputs, or addresses that pay something else, such as the
+		// public keys of a bare multisig script.
+		switch class {
+		case txscript.PubKeyHashTy, txscript.ScriptHashTy,
+			txscript.ScriptHash32Ty:
+		default:
+			return nil, fmt.Errorf("payment request output pays a %v "+
+				"script, not an address", class)
+		}
+		if len(addrs) != 1 {
+			return nil, fmt.Errorf("payment request output pays %d "+
+				"addresses, not one", len(addrs))
 		}
 		if out.Amount == nil {
 			return nil, errors.New("nil payment amount")

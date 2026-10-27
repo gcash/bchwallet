@@ -116,6 +116,16 @@ func signedPaymentRequest(t *testing.T, merchant *testCert, chain []*testCert,
 	if err != nil {
 		t.Fatal(err)
 	}
+	return signedPaymentRequestPaying(t, merchant, chain, network, script)
+}
+
+// signedPaymentRequestPaying is signedPaymentRequest for a request whose one
+// output pays script.
+func signedPaymentRequestPaying(t *testing.T, merchant *testCert,
+	chain []*testCert, network string, script []byte) []byte {
+
+	t.Helper()
+
 	amount := uint64(1000)
 	now := uint64(time.Now().Unix())
 	expires := now + 3600
@@ -296,6 +306,71 @@ func TestDownloadPaymentRequestCertificates(t *testing.T) {
 		case test.refusal == "" && pr.PayToName != test.payTo:
 			t.Errorf("%s: pay to name %q, want %q", test.name,
 				pr.PayToName, test.payTo)
+		}
+	}
+}
+
+// TestDownloadPaymentRequestScripts ensures a BIP70 payment request is accepted
+// only when each output pays one address by its hash, and that one whose
+// output has no address, or addresses that pay something else, is refused
+// rather than paid to the wrong address or crashing the client.
+func TestDownloadPaymentRequestScripts(t *testing.T) {
+	root := newTestCert(t, caTemplate(1, "Test Root CA"), newECDSAKey(t), nil)
+	merchant := newTestCert(t, merchantTemplate(2, "Example Store",
+		"store.example"), newECDSAKey(t), root)
+	pub := make([]byte, 33)
+	pub[0] = 0x02
+	pub[32] = 0x01
+
+	scriptHash, err := bchutil.NewAddressScriptHashFromHash(make([]byte, 20),
+		&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2sh, err := txscript.PayToAddrScript(scriptHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opReturn, err := txscript.NullDataScript([]byte("memo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	multisig, err := txscript.NewScriptBuilder().AddOp(txscript.OP_1).
+		AddData(pub).AddOp(txscript.OP_1).AddOp(txscript.OP_CHECKMULTISIG).
+		Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payToPubKey, err := txscript.NewScriptBuilder().AddData(pub).
+		AddOp(txscript.OP_CHECKSIG).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		script []byte
+		ok     bool
+	}{
+		{"pay to script hash", p2sh, true},
+		{"OP_RETURN", opReturn, false},
+		{"bare multisig", multisig, false},
+		{"pay to public key", payToPubKey, false},
+	}
+	for _, test := range tests {
+		request := signedPaymentRequestPaying(t, merchant,
+			[]*testCert{merchant}, "", test.script)
+		pr, err := downloadPaymentRequest(t, request,
+			&chaincfg.MainNetParams, root)
+		switch {
+		case test.ok && err != nil:
+			t.Errorf("%s: %v", test.name, err)
+		case test.ok && pr.Outputs[0].Address.EncodeAddress() !=
+			scriptHash.EncodeAddress():
+			t.Errorf("%s: pays %v", test.name, pr.Outputs[0].Address)
+		case !test.ok && err == nil:
+			t.Errorf("%s: payment request accepted, paying %v",
+				test.name, pr.Outputs[0].Address)
 		}
 	}
 }
