@@ -340,7 +340,11 @@ func (s *walletServer) NextAddress(ctx context.Context, req *pb.NextAddressReque
 		return nil, translateError(err)
 	}
 
-	return &pb.NextAddressResponse{Address: addr.EncodeAddress()}, nil
+	address, err := encodeAddress(addr, req.TokenAware)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.NextAddressResponse{Address: address}, nil
 }
 
 func (s *walletServer) CurrentAddress(ctx context.Context, req *pb.CurrentAddressRequest) (
@@ -351,7 +355,25 @@ func (s *walletServer) CurrentAddress(ctx context.Context, req *pb.CurrentAddres
 		return nil, translateError(err)
 	}
 
-	return &pb.CurrentAddressResponse{Address: addr.EncodeAddress()}, nil
+	address, err := encodeAddress(addr, req.TokenAware)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CurrentAddressResponse{Address: address}, nil
+}
+
+// encodeAddress returns the string encoding of addr, in its token-aware form if
+// tokenAware is true.
+func encodeAddress(addr bchutil.Address, tokenAware bool) (string, error) {
+	if !tokenAware {
+		return addr.EncodeAddress(), nil
+	}
+	t, ok := addr.(bchutil.TokenAwareAddress)
+	if !ok {
+		return "", status.Errorf(codes.Internal,
+			"address %v has no token-aware form", addr)
+	}
+	return t.EncodeCashAddress(true), nil
 }
 
 func (s *walletServer) ImportPrivateKey(ctx context.Context, req *pb.ImportPrivateKeyRequest) (
@@ -407,6 +429,17 @@ func (s *walletServer) Balance(ctx context.Context, req *pb.BalanceRequest) (
 		ImmatureReward: int64(bals.ImmatureReward),
 	}
 	return resp, nil
+}
+
+func (s *walletServer) TokenBalances(ctx context.Context, req *pb.TokenBalancesRequest) (
+	*pb.TokenBalancesResponse, error) {
+
+	bals, err := s.wallet.TokenBalances(req.AccountNumber,
+		req.RequiredConfirmations)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &pb.TokenBalancesResponse{Balances: marshalTokenBalances(bals)}, nil
 }
 
 // confirmed checks whether a transaction at height txHeight has met minconf
@@ -961,8 +994,15 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
 	*pb.ValidateAddressResponse, error) {
 
-	_, err := decodeAddress(req.Address, s.wallet.ChainParams())
-	return &pb.ValidateAddressResponse{Valid: err == nil}, nil
+	addr, err := decodeAddress(req.Address, s.wallet.ChainParams())
+	if err != nil {
+		return &pb.ValidateAddressResponse{}, nil
+	}
+	t, ok := addr.(bchutil.TokenAwareAddress)
+	return &pb.ValidateAddressResponse{
+		Valid:      true,
+		TokenAware: ok && t.IsTokenAware(),
+	}, nil
 }
 
 func marshalTransactionInputs(v []wallet.TransactionSummaryInput) []*pb.TransactionDetails_Input {
@@ -973,6 +1013,7 @@ func marshalTransactionInputs(v []wallet.TransactionSummaryInput) []*pb.Transact
 			Index:           input.Index,
 			PreviousAccount: input.PreviousAccount,
 			PreviousAmount:  int64(input.PreviousAmount),
+			PreviousToken:   marshalTokenData(&input.PreviousToken),
 		}
 	}
 	return inputs
@@ -992,9 +1033,65 @@ func marshalTransactionOutputs(v []wallet.TransactionSummaryOutput) []*pb.Transa
 			Internal: output.Internal,
 			Address:  address,
 			Amount:   int64(output.Amount.ToUnit(bchutil.AmountSatoshi)),
+			Token:    marshalTokenData(&output.Token),
 		}
 	}
 	return outputs
+}
+
+// marshalTokenData returns the tokens an output carries, or nil if it carries
+// none.  The category is in the byte order of transaction IDs.
+func marshalTokenData(token *wire.TokenData) *pb.TokenData {
+	if token.IsEmpty() {
+		return nil
+	}
+	tokenData := &pb.TokenData{
+		Category:   chainhash.Hash(token.CategoryID).String(),
+		HasNft:     token.HasNFT(),
+		Capability: marshalCapability(token.GetCapability()),
+		Commitment: token.Commitment,
+	}
+	if token.HasAmount() {
+		tokenData.Amount = token.Amount
+	}
+	return tokenData
+}
+
+// marshalTokenBalances returns the token balances with their categories in the
+// byte order of transaction IDs.
+func marshalTokenBalances(v []wallet.TokenBalance) []*pb.TokenBalancesResponse_Balance {
+	balances := make([]*pb.TokenBalancesResponse_Balance, len(v))
+	for i := range v {
+		bal := &v[i]
+		nfts := make([]*pb.TokenBalancesResponse_NFT, len(bal.NFTs))
+		for j := range bal.NFTs {
+			nft := &bal.NFTs[j]
+			nfts[j] = &pb.TokenBalancesResponse_NFT{
+				TransactionHash: nft.OutPoint.Hash[:],
+				OutputIndex:     nft.OutPoint.Index,
+				Capability:      marshalCapability(nft.Capability),
+				Commitment:      nft.Commitment,
+			}
+		}
+		balances[i] = &pb.TokenBalancesResponse_Balance{
+			Category: bal.Category.String(),
+			Amount:   bal.Amount,
+			Nfts:     nfts,
+		}
+	}
+	return balances
+}
+
+// marshalCapability returns the capability of an NFT.
+func marshalCapability(capability byte) pb.TokenData_Capability {
+	switch capability {
+	case wire.MUTABLE:
+		return pb.TokenData_MUTABLE
+	case wire.MINTING:
+		return pb.TokenData_MINTING
+	default:
+		return pb.TokenData_NONE
+	}
 }
 
 func marshalTransactionDetails(v []wallet.TransactionSummary) []*pb.TransactionDetails {

@@ -1679,6 +1679,95 @@ func (w *Wallet) CalculateAccountBalances(account uint32, confirms int32) (Balan
 	return bals, err
 }
 
+// TokenBalance holds the tokens of one category in an account's unspent
+// outputs: the sum of their fungible amounts and their NFTs.  The category's
+// String is in the byte order of transaction IDs.
+type TokenBalance struct {
+	Category chainhash.Hash
+	Amount   uint64
+	NFTs     []TokenNFT
+}
+
+// TokenNFT is an NFT in an unspent output.
+type TokenNFT struct {
+	OutPoint   wire.OutPoint
+	Capability byte
+	Commitment []byte
+}
+
+// TokenBalances returns the tokens in the account's unspent outputs that have
+// at least confirms confirmations, by category, sorted by category.  The NFTs of
+// a category are sorted by outpoint.
+func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, error) {
+	byCategory := make(map[chainhash.Hash]*TokenBalance)
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
+		txmgrNs := tx.ReadBucket(wtxmgrNamespaceKey)
+
+		syncBlock := w.Manager.SyncedTo()
+
+		unspent, err := w.TxStore.UnspentOutputs(txmgrNs)
+		if err != nil {
+			return err
+		}
+		for i := range unspent {
+			output := &unspent[i]
+			if !output.HasTokens() ||
+				!confirmed(confirms, output.Height, syncBlock.Height) {
+				continue
+			}
+
+			var outputAcct uint32
+			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
+				output.PkScript, w.chainParams)
+			if err == nil && len(addrs) > 0 {
+				_, outputAcct, err = w.Manager.AddrAccount(addrmgrNs, addrs[0])
+			}
+			if err != nil || outputAcct != account {
+				continue
+			}
+
+			token := &output.TokenData
+			bal := byCategory[token.CategoryID]
+			if bal == nil {
+				bal = &TokenBalance{Category: token.CategoryID}
+				byCategory[token.CategoryID] = bal
+			}
+			if token.HasAmount() {
+				bal.Amount += token.Amount
+			}
+			if token.HasNFT() {
+				bal.NFTs = append(bal.NFTs, TokenNFT{
+					OutPoint:   output.OutPoint,
+					Capability: token.GetCapability(),
+					Commitment: token.Commitment,
+				})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	bals := make([]TokenBalance, 0, len(byCategory))
+	for _, bal := range byCategory {
+		nfts := bal.NFTs
+		sort.Slice(nfts, func(i, j int) bool {
+			a, b := &nfts[i].OutPoint, &nfts[j].OutPoint
+			if c := bytes.Compare(a.Hash[:], b.Hash[:]); c != 0 {
+				return c < 0
+			}
+			return a.Index < b.Index
+		})
+		bals = append(bals, *bal)
+	}
+	sort.Slice(bals, func(i, j int) bool {
+		return bals[i].Category.String() < bals[j].Category.String()
+	})
+	return bals, nil
+}
+
 // CurrentAddress gets the most recently requested Bitcoin payment address
 // from a wallet for a particular key-chain scope. This should never return
 // a used address because we maintain a buffer of unused addresses.

@@ -23,6 +23,7 @@ service WalletService {
 	rpc AccountNumber (AccountNumberRequest) returns (AccountNumberResponse);
 	rpc Accounts (AccountsRequest) returns (AccountsResponse);
 	rpc Balance (BalanceRequest) returns (BalanceResponse);
+	rpc TokenBalances (TokenBalancesRequest) returns (TokenBalancesResponse);
 	rpc CurrentAddress (CurrentAddressRequest) returns (CurrentAddressResponse);
 	rpc GetTransactions (GetTransactionsRequest) returns (GetTransactionsResponse);
 
@@ -67,6 +68,7 @@ message TransactionDetails {
 		uint32 index = 1;
 		uint32 previous_account = 2;
 		int64 previous_amount = 3;
+		TokenData previous_token = 4; // Unset if the spent output has no tokens.
 	}
 	message Output {
 		uint32 index = 1;
@@ -74,6 +76,7 @@ message TransactionDetails {
 		bool internal = 3;
 		string address = 4;
 		int64 amount = 5;
+		TokenData token = 6; // Unset if the output has no tokens.
 	}
 	bytes hash = 1;
 	bytes transaction = 2;
@@ -81,6 +84,20 @@ message TransactionDetails {
 	repeated Output credits = 4;
 	int64 fee = 5;
 	int64 timestamp = 6; // May be earlier than a block timestamp, but never later.
+}
+
+// The CashTokens an output carries.
+message TokenData {
+	enum Capability {
+		NONE = 0; // An immutable NFT.
+		MUTABLE = 1;
+		MINTING = 2;
+	}
+	string category = 1; // Hex, in the byte order of transaction IDs.
+	uint64 amount = 2; // Fungible amount, 0 if none.
+	bool has_nft = 3;
+	Capability capability = 4;
+	bytes commitment = 5;
 }
 
 message BlockDetails {
@@ -155,6 +172,7 @@ message NextAddressRequest {
 	     BIP0044_INTERNAL = 1;
 	}
 	Kind kind = 2;
+	bool token_aware = 3; // Return the token-aware form, for receiving tokens.
 }
 message NextAddressResponse {
 	string address = 1;
@@ -179,8 +197,28 @@ message BalanceResponse {
 	int64 immature_reward = 3;
 }
 
+message TokenBalancesRequest {
+	uint32 account_number = 1;
+	int32 required_confirmations = 2;
+}
+message TokenBalancesResponse {
+	message NFT {
+		bytes transaction_hash = 1;
+		uint32 output_index = 2;
+		TokenData.Capability capability = 3;
+		bytes commitment = 4;
+	}
+	message Balance {
+		string category = 1; // Hex, in the byte order of transaction IDs.
+		uint64 amount = 2; // Fungible amount.
+		repeated NFT nfts = 3;
+	}
+	repeated Balance balances = 1; // Sorted by category.
+}
+
 message CurrentAddressRequest {
 	uint32 account = 1;
+	bool token_aware = 2; // Return the token-aware form, for receiving tokens.
 }
 message CurrentAddressResponse {
 	string address = 1;
@@ -397,6 +435,7 @@ message ValidateAddressRequest {
 }
 message ValidateAddressResponse {
 	bool valid = 1;
+	bool token_aware = 2; // The address is in its token-aware form.
 }
 
 message GenerateMnemonicSeedRequest {

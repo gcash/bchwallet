@@ -48,7 +48,11 @@ func newNotificationServer(wallet *Wallet) *NotificationServer {
 	}
 }
 
-func lookupInputAccount(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails, deb wtxmgr.DebitRecord) uint32 {
+// lookupInput returns the account of the output a debit spends and the tokens
+// that output carries.
+func lookupInput(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
+	deb wtxmgr.DebitRecord) (uint32, wire.TokenData) {
+
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 
@@ -58,11 +62,11 @@ func lookupInputAccount(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetai
 	prev, err := w.TxStore.TxDetails(txmgrNs, &prevOP.Hash)
 	if err != nil {
 		log.Errorf("Cannot query previous transaction details for %v: %v", prevOP.Hash, err)
-		return 0
+		return 0, wire.TokenData{}
 	}
 	if prev == nil {
 		log.Errorf("Missing previous transaction %v", prevOP.Hash)
-		return 0
+		return 0, wire.TokenData{}
 	}
 	prevOut := prev.MsgTx.TxOut[prevOP.Index]
 	_, addrs, _, err := txscript.ExtractPkScriptAddrs(prevOut.PkScript, w.chainParams)
@@ -74,7 +78,7 @@ func lookupInputAccount(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetai
 		log.Errorf("Cannot fetch account for previous output %v: %v", prevOP, err)
 		inputAcct = 0
 	}
-	return inputAcct
+	return inputAcct, prevOut.TokenData
 }
 
 func lookupOutputChain(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
@@ -120,10 +124,12 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 	if len(details.Debits) != 0 {
 		inputs = make([]TransactionSummaryInput, len(details.Debits))
 		for i, d := range details.Debits {
+			account, token := lookupInput(dbtx, w, details, d)
 			inputs[i] = TransactionSummaryInput{
 				Index:           d.Index,
-				PreviousAccount: lookupInputAccount(dbtx, w, details, d),
+				PreviousAccount: account,
 				PreviousAmount:  d.Amount,
+				PreviousToken:   token,
 			}
 		}
 	}
@@ -148,6 +154,7 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 			Internal: internal,
 			Address:  outputAddress,
 			Amount:   bchutil.Amount(details.MsgTx.TxOut[i].Value),
+			Token:    details.MsgTx.TxOut[i].TokenData,
 		}
 		outputs = append(outputs, output)
 	}
@@ -380,22 +387,26 @@ type TransactionSummary struct {
 // TransactionSummaryInput describes a transaction input that is relevant to the
 // wallet.  The Index field marks the transaction input index of the transaction
 // (not included here).  The PreviousAccount and PreviousAmount fields describe
-// how much this input debits from a wallet account.
+// how much this input debits from a wallet account, and PreviousToken the
+// tokens of the output it spends, if any.
 type TransactionSummaryInput struct {
 	Index           uint32
 	PreviousAccount uint32
 	PreviousAmount  bchutil.Amount
+	PreviousToken   wire.TokenData
 }
 
 // TransactionSummaryOutput describes wallet properties of a transaction output
 // controlled by the wallet.  The Index field marks the transaction output index
-// of the transaction (not included here).
+// of the transaction (not included here).  Token holds the tokens the output
+// carries, if any.
 type TransactionSummaryOutput struct {
 	Index    uint32
 	Account  uint32
 	Internal bool
 	Address  bchutil.Address
 	Amount   bchutil.Amount
+	Token    wire.TokenData
 }
 
 // AccountBalance associates a total (zero confirmation) balance with an

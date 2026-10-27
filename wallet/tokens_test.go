@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
@@ -69,33 +70,52 @@ func walletScript(t *testing.T, w *Wallet) []byte {
 	return script
 }
 
-// addCredit records a mined transaction paying out to the wallet and returns
-// the outpoint of that output.
-func addCredit(t *testing.T, w *Wallet, out *wire.TxOut) wire.OutPoint {
+// testBlock is the block the tests' transactions are mined in.
+var testBlock = &wtxmgr.BlockMeta{
+	Block: wtxmgr.Block{Hash: chainhash.Hash{1}, Height: 1},
+	Time:  time.Unix(1700000000, 0),
+}
+
+// insertTx records tx, mined in block, or unmined if block is nil, with its
+// outputs at the credit indexes as the wallet's.
+func insertTx(t *testing.T, w *Wallet, tx *wire.MsgTx, block *wtxmgr.BlockMeta,
+	credits ...uint32) *wtxmgr.TxRecord {
+
 	t.Helper()
 
-	rec, err := wtxmgr.NewTxRecordFromMsgTx(&wire.MsgTx{
-		Version: wire.TxVersion,
-		TxIn:    []*wire.TxIn{{}},
-		TxOut:   []*wire.TxOut{out},
-	}, time.Now())
+	rec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
 	if err != nil {
 		t.Fatal(err)
-	}
-	block := &wtxmgr.BlockMeta{
-		Block: wtxmgr.Block{Hash: chainhash.Hash{1}, Height: 1},
-		Time:  time.Now(),
 	}
 	err = walletdb.Update(w.db, func(dbtx walletdb.ReadWriteTx) error {
 		ns := dbtx.ReadWriteBucket(wtxmgrNamespaceKey)
 		if err := w.TxStore.InsertTx(ns, rec, block); err != nil {
 			return err
 		}
-		return w.TxStore.AddCredit(ns, rec, block, 0, false)
+		for _, index := range credits {
+			err := w.TxStore.AddCredit(ns, rec, block, index, false)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return rec
+}
+
+// addCredit records a mined transaction paying out to the wallet and returns
+// the outpoint of that output.
+func addCredit(t *testing.T, w *Wallet, out *wire.TxOut) wire.OutPoint {
+	t.Helper()
+
+	rec := insertTx(t, w, &wire.MsgTx{
+		Version: wire.TxVersion,
+		TxIn:    []*wire.TxIn{{}},
+		TxOut:   []*wire.TxOut{out},
+	}, testBlock, 0)
 	return wire.OutPoint{Hash: rec.Hash, Index: 0}
 }
 
@@ -369,5 +389,178 @@ func TestPublishTransactionTokenRules(t *testing.T) {
 	}
 	if !recorded(t, w, good) {
 		t.Fatal("didn't record a valid transaction")
+	}
+}
+
+// setSyncedTo marks the wallet synced to the block at height, so outputs mined
+// up to it have confirmations.
+func setSyncedTo(t *testing.T, w *Wallet, height int32) {
+	t.Helper()
+
+	err := walletdb.Update(w.db, func(dbtx walletdb.ReadWriteTx) error {
+		ns := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
+		return w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
+			Height:    height,
+			Hash:      chainhash.Hash{byte(height)},
+			Timestamp: time.Now(),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// tokensEqual returns whether a and b hold the same tokens.
+func tokensEqual(a, b *wire.TokenData) bool {
+	return a.CategoryID == b.CategoryID && a.Amount == b.Amount &&
+		a.BitField == b.BitField && bytes.Equal(a.Commitment, b.Commitment)
+}
+
+// tokenBalancesEqual returns whether a and b are the same balances.
+func tokenBalancesEqual(a, b []TokenBalance) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Category != b[i].Category || a[i].Amount != b[i].Amount ||
+			len(a[i].NFTs) != len(b[i].NFTs) {
+			return false
+		}
+		for j := range a[i].NFTs {
+			x, y := &a[i].NFTs[j], &b[i].NFTs[j]
+			if x.OutPoint != y.OutPoint || x.Capability != y.Capability ||
+				!bytes.Equal(x.Commitment, y.Commitment) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// TestTokenBalances checks that TokenBalances sums the fungible amounts and
+// lists the NFTs in the account's unspent outputs with the required
+// confirmations, by category.
+func TestTokenBalances(t *testing.T) {
+	w := newRegtestWallet(t)
+	setSyncedTo(t, w, testBlock.Height)
+	script := walletScript(t, w)
+
+	// The bytes of a sort after b's, and in transaction ID order before.
+	a := [32]byte{0: 2, 31: 1}
+	b := [32]byte{0: 1, 31: 2}
+	fungible := func(category [32]byte, amount uint64) wire.TokenData {
+		return wire.TokenData{CategoryID: category, Amount: amount,
+			BitField: wire.HAS_AMOUNT}
+	}
+	addCredit(t, w, wire.NewTxOut(1000, script, fungible(a, 100)))
+	addCredit(t, w, wire.NewTxOut(1001, script, fungible(a, 200)))
+	nfts := []TokenNFT{
+		{
+			OutPoint: addCredit(t, w, wire.NewTxOut(1002, script,
+				wire.TokenData{
+					CategoryID: b,
+					Commitment: []byte("nft"),
+					BitField: wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH |
+						wire.MUTABLE,
+				})),
+			Capability: wire.MUTABLE,
+			Commitment: []byte("nft"),
+		},
+		{
+			OutPoint: addCredit(t, w, wire.NewTxOut(1003, script,
+				wire.TokenData{
+					CategoryID: b,
+					Amount:     5,
+					BitField:   wire.HAS_AMOUNT | wire.HAS_NFT,
+				})),
+			Capability: wire.NONE,
+		},
+	}
+	if bytes.Compare(nfts[0].OutPoint.Hash[:], nfts[1].OutPoint.Hash[:]) > 0 {
+		nfts[0], nfts[1] = nfts[1], nfts[0]
+	}
+	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+
+	// An unmined transaction, with an input of its own, as the store
+	// drops unmined transactions that spend what a mined one does.
+	unminedInput := wire.OutPoint{Hash: chainhash.Hash{7}, Index: 7}
+	insertTx(t, w, spendTx([]wire.OutPoint{unminedInput},
+		wire.NewTxOut(1004, script, fungible(a, 7))), nil, 0)
+
+	// Tokens of another account.
+	account, err := w.NextAccount(waddrmgr.KeyScopeBIP0044, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := w.NewAddress(account, waddrmgr.KeyScopeBIP0044)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addCredit(t, w, wire.NewTxOut(1005, otherScript, fungible(a, 1000)))
+
+	tests := []struct {
+		confirms int32
+		want     []TokenBalance
+	}{
+		{
+			confirms: 1,
+			want: []TokenBalance{
+				{Category: a, Amount: 300},
+				{Category: b, Amount: 5, NFTs: nfts},
+			},
+		},
+		{
+			confirms: 0,
+			want: []TokenBalance{
+				{Category: a, Amount: 307},
+				{Category: b, Amount: 5, NFTs: nfts},
+			},
+		},
+	}
+	for _, test := range tests {
+		got, err := w.TokenBalances(0, test.confirms)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tokenBalancesEqual(got, test.want) {
+			t.Errorf("%d confirmations: got %+v, want %+v",
+				test.confirms, got, test.want)
+		}
+	}
+}
+
+// TestTxSummaryTokens checks that a transaction summary carries the tokens of
+// the wallet's outputs and of the outputs its inputs spend.
+func TestTxSummaryTokens(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	received := addCredit(t, w, wire.NewTxOut(1000, script, testToken))
+	rec := insertTx(t, w, spendTx([]wire.OutPoint{received},
+		wire.NewTxOut(900, script, testToken)), testBlock, 0)
+
+	var summary TransactionSummary
+	err := walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		ns := dbtx.ReadBucket(wtxmgrNamespaceKey)
+		details, err := w.TxStore.TxDetails(ns, &rec.Hash)
+		if err != nil {
+			return err
+		}
+		summary = makeTxSummary(dbtx, w, details)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.MyInputs) != 1 ||
+		!tokensEqual(&summary.MyInputs[0].PreviousToken, &testToken) {
+		t.Errorf("inputs: got %+v", summary.MyInputs)
+	}
+	if len(summary.MyOutputs) != 1 ||
+		!tokensEqual(&summary.MyOutputs[0].Token, &testToken) {
+		t.Errorf("outputs: got %+v", summary.MyOutputs)
 	}
 }
