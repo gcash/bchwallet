@@ -899,3 +899,29 @@ func TestSignTransactionNFTBurn(t *testing.T) {
 		}
 	}
 }
+
+// TestBalancesUnconfirmed checks that the unconfirmed balance, which
+// getunconfirmedbalance returns, counts only the outputs without confirmations
+// that the wallet would spend, and not confirmed outputs with tokens, which the
+// total less the spendable balance does.
+func TestBalancesUnconfirmed(t *testing.T) {
+	w := newRegtestWallet(t)
+	setSyncedTo(t, w, testBlock.Height)
+	script := walletScript(t, w)
+	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	addCredit(t, w, wire.NewTxOut(1000, script, testToken))
+	unminedInput := wire.OutPoint{Hash: chainhash.Hash{7}, Index: 7}
+	insertTx(t, w, spendTx([]wire.OutPoint{unminedInput},
+		wire.NewTxOut(7000, script, wire.TokenData{})), nil, 0)
+
+	bals, err := w.CalculateAccountBalances(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bals.Total != 108000 || bals.Spendable != 100000 ||
+		bals.Unconfirmed != 7000 {
+
+		t.Errorf("got %+v, want a total of 108000, 100000 spendable and "+
+			"7000 unconfirmed", bals)
+	}
+}

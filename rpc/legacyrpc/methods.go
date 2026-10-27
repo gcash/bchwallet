@@ -601,7 +601,9 @@ func getUnconfirmedBalance(icmd interface{}, w *wallet.Wallet) (interface{}, err
 		return nil, err
 	}
 
-	return (bals.Total - bals.Spendable).ToBCH(), nil
+	// Not Total - Spendable, which also counts outputs with tokens and
+	// immature coinbase rewards, however many confirmations they have.
+	return bals.Unconfirmed.ToBCH(), nil
 }
 
 // importPrivKey handles an importprivkey request by parsing
