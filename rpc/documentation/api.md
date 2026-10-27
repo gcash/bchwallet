@@ -1,6 +1,6 @@
 # RPC API Specification
 
-Version: 2.0.1
+Version: 2.1.0
 =======
 
 **Note:** This document assumes the reader is familiar with gRPC concepts.
@@ -263,6 +263,7 @@ The service provides the following methods:
 - [`AccountNumber`](#accountnumber)
 - [`Accounts`](#accounts)
 - [`Balance`](#balance)
+- [`TokenBalances`](#tokenbalances)
 - [`CurrentAddress`](#currentaddress)
 - [`GetTransactions`](#gettransactions)
 - [`ChangePassphrase`](#changepassphrase)
@@ -418,7 +419,8 @@ and unspendable immature coinbase balances.
 - `int64 spendable`: The spendable balance, given some number of required
   confirmations, counted in Satoshis.  This equals the total balance when the
   required number of confirmations is zero and there are no immature coinbase
-  outputs.
+  outputs or outputs that carry CashTokens, whose value the wallet does not
+  spend.
 
 - `int64 immature_reward`: The total value of all immature coinbase outputs,
   counted in Satoshis.
@@ -436,6 +438,51 @@ and unspendable immature coinbase balances.
 
 ___
 
+#### `TokenBalances`
+
+The `TokenBalances` method returns the CashTokens in an account's unspent
+outputs, by category: the sum of their fungible amounts, and their NFTs.
+
+**Request:** `TokenBalancesRequest`
+
+- `uint32 account_number`: The account number to query.
+
+- `int32 required_confirmations`: The number of confirmations an output needs
+  for its tokens to count.
+
+**Response:** `TokenBalancesResponse`
+
+- `repeated Balance balances`: The tokens of each category, sorted by category.
+
+  **Nested message:** `Balance`
+
+  - `string category`: The category, in hex, in the byte order of transaction
+    IDs.
+
+  - `uint64 amount`: The fungible amount, including that of outputs that hold
+    it with an NFT, all of which `CreateTransaction` can send.
+
+  - `repeated NFT nfts`: The NFTs, sorted by outpoint.
+
+    **Nested message:** `NFT`
+
+    - `bytes transaction_hash`: The hash of the transaction of the output that
+      holds the NFT, as `CreateTransaction` takes it to send the NFT.
+
+    - `uint32 output_index`: The index of that output.
+
+    - `TokenData.Capability capability`: The NFT's capability.
+
+    - `bytes commitment`: The NFT's commitment.
+
+**Expected errors:**
+
+- `Aborted`: The wallet database is closed.
+
+**Stability:** Unstable
+
+___
+
 #### `CurrentAddress`
 
 The `CurrentAddress` method generates the last unused external address in the account.
@@ -443,6 +490,9 @@ The `CurrentAddress` method generates the last unused external address in the ac
 **Request:** `CurrentAddressRequest`
 
 - `uint32 account`: The number of the account to derive the next address for.
+
+- `bool token_aware`: Return the address in its token-aware form, which a
+  sender of CashTokens needs.
 
 **Response:** `CurrentAddressResponse`
 
@@ -643,6 +693,9 @@ wallet.
   - `BIP0044_INTERNAL`: The request specifies to generate the next address for
     the account's BIP0044 internal key chain.
 
+- `bool token_aware`: Return the address in its token-aware form, which a
+  sender of CashTokens needs.
+
 **Response:** `NextAddressResponse`
 
 - `string address`: The payment address string.
@@ -790,10 +843,32 @@ passed into `SignTransaction`
    **Nested message:** `Output`
   
     - `string address`: The address for this output to pay, for the wallet's
-      network. A public key is not an address.
+      network. A public key is not an address. An output that sends tokens
+      needs the address in its token-aware form.
   
     - `int64 amount`: The amount to pay in satoshis, at least the dust limit
-      (546 satoshis to a P2PKH address).
+      (546 satoshis to a P2PKH address). 0 for an output with tokens pays its
+      dust limit, which its tokens raise.
+
+    - `TokenOutput token`: The CashTokens the output sends, or unset to send
+      none.
+
+      **Nested message:** `TokenOutput`
+
+      - `string category`: The category, in hex, in the byte order of
+        transaction IDs.
+
+      - `uint64 amount`: The fungible amount to send, or 0 for none.
+
+      - `bytes nft_transaction_hash`, `uint32 nft_output_index`: The outpoint
+        of the account's output that holds the NFT to send, as `TokenBalances`
+        lists it, or unset to send no NFT.  The NFT is sent as it is.
+
+  The account's outputs that hold the tokens are spent: those holding the NFTs
+  to send, and for the fungible amounts they don't cover, those holding only
+  fungible tokens, largest first, and then those holding them with an NFT,
+  which goes back to the wallet as it is.  The tokens left over go back to the
+  wallet too.
 
 - `int32 required_confirmations`: The minimum number of block confirmations
   needed to consider including an output in the return set.  This may not be
@@ -822,6 +897,11 @@ passed into `SignTransaction`
 
 - `InvalidArgument`: The fee rate is below the minimum relay fee, or the fee
   would be above 0.1 BCH.
+
+- `InvalidArgument`: An output's tokens can't be sent as asked: its address is
+  not token-aware, its category is not valid, its NFT is not one of the
+  account's or is sent twice, the account has too few tokens of the category,
+  or its amount is below its dust limit.
 
 - `Aborted`: The wallet database is closed.
 
@@ -899,7 +979,17 @@ transaction using a wallet private keys.
   input that is missing an input script.
 
 - `repeated int64 input_values`: The value (in satoshis) of each input. This is
-  needed to sign the transaction using the bitcoin cash signing algorithm.
+  needed to sign the transaction using the bitcoin cash signing algorithm.  The
+  wallet uses the values, scripts and CashTokens of the outputs it has records
+  of instead, since its signatures cover the tokens of the outputs they spend.
+
+- `bool allow_token_burn`: Sign even if the transaction would burn tokens of the
+  wallet's outputs it spends: fungible tokens of a category that its outputs
+  carry fewer of, an immutable NFT that none of them carries with its
+  commitment, a mutable NFT that leaves no NFT of its category, or the
+  capability of a minting NFT.  NFTs are told apart by their commitments, so
+  another input's NFT, or one that a minting NFT mints, doesn't stand in for
+  one of the wallet's.
 
 **Response:** `SignTransactionResponse`
 
@@ -915,6 +1005,9 @@ transaction using a wallet private keys.
 - `Aborted`: The wallet database is closed.
 
 - `InvalidArgument`: The private passphrase is incorrect.
+
+- `FailedPrecondition`: The transaction would burn tokens, and
+  `allow_token_burn` is not set.
 
 **Stability:** Unstable: It is unclear if the request should include an account,
   and only secrets of that account are used when creating input scripts.  It's
@@ -1012,7 +1105,10 @@ the merchant has accepted the payment, the wallet records its transactions as
 
 - `string memo`: A memo for a BIP70 merchant.
 
-- `PaymentProtocol protocol`: The `protocol` of the payment request.
+- `PaymentProtocol protocol`: The `protocol` of the payment request.  A client
+  that predates this field sends `BIP70`, its zero value, so the wallet uses the
+  JSON Payment Protocol for a payment URL whose payment request it returned with
+  that protocol, until the request expires.
 
 **Response:** `PostPaymentResponse`
 
@@ -1044,6 +1140,9 @@ implementing it.
 **Response:** `ValidateAddressResponse`
 
 - `bool valid`: Whether or not the address is valid.
+
+- `bool token_aware`: Whether the address is in its token-aware form, which a
+  sender of CashTokens needs.
 
 **Expected errors:**
 
@@ -1242,6 +1341,10 @@ transaction was seen.
 
   - `int64 previous_amount`: The previous output value.
 
+  - `TokenData previous_token`: The CashTokens of the previous output, or unset
+    if it has none.  The `TokenData` message is documented
+    [here](#tokendata).
+
 - `repeated Output credits`: Properties for every output controlled by the wallet.
 
   **Nested message:** `Output`
@@ -1260,6 +1363,9 @@ transaction was seen.
     
   - `int64 amount`: The amount sent to this output.
 
+  - `TokenData token`: The CashTokens the output carries, or unset if it has
+    none.
+
 - `int64 fee`: The transaction fee, if calculable.  The fee is only calculable
   when every previous output spent by this transaction is also recorded by
   wallet.  Otherwise, this field is zero.
@@ -1270,3 +1376,29 @@ transaction was seen.
 **Stability**: Unstable: Since the caller is expected to decode the serialized
   transaction, and would have access to every output script, the output
   properties could be changed to only include outputs controlled by the wallet.
+
+___
+
+#### `TokenData`
+
+The `TokenData` message reports the CashTokens an output carries.
+
+- `string category`: The category, in hex, in the byte order of transaction IDs.
+
+- `uint64 amount`: The fungible amount, or 0 if the output carries none.
+
+- `bool has_nft`: Whether the output carries an NFT.
+
+- `Capability capability`: The NFT's capability, if it carries one.
+
+  **Nested enum:** `Capability`
+
+  - `NONE`: An immutable NFT.
+
+  - `MUTABLE`: An NFT whose commitment can change.
+
+  - `MINTING`: An NFT that can mint NFTs of its category.
+
+- `bytes commitment`: The NFT's commitment.
+
+**Stability**: Unstable

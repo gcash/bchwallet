@@ -276,18 +276,6 @@ func networkParams(cfg *config) (*netparams.Params, error) {
 	return params, nil
 }
 
-// loadConfig initializes and parses the config using a config file and command
-// line options.
-//
-// The configuration proceeds as follows:
-//  1. Start with a default config with sane settings
-//  2. Pre-parse the command line to check for an alternative config file
-//  3. Load configuration file overwriting defaults with any specified options
-//  4. Parse CLI options and overwrite/add any specified options
-//
-// The above results in bchwallet functioning properly without any config
-// settings while still allowing the user to override settings with config files
-// and command line options.  Command line options always take precedence.
 // Args are the command line arguments, without the program name, that
 // loadConfig parses after the config file.  When nil, the arguments the process
 // was started with are used.  Programs that embed the wallet, such as the
@@ -306,6 +294,18 @@ func commandLineArgs() []string {
 	return []string{}
 }
 
+// loadConfig initializes and parses the config using a config file and command
+// line options.
+//
+// The configuration proceeds as follows:
+//  1. Start with a default config with sane settings
+//  2. Pre-parse the command line to check for an alternative config file
+//  3. Load configuration file overwriting defaults with any specified options
+//  4. Parse CLI options and overwrite/add any specified options
+//
+// The above results in bchwallet functioning properly without any config
+// settings while still allowing the user to override settings with config files
+// and command line options.  Command line options always take precedence.
 func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 	// Default config.
 	cfg := config{
