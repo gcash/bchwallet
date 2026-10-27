@@ -50,6 +50,7 @@ type AuthoredTx struct {
 	Tx              *wire.MsgTx
 	PrevScripts     [][]byte
 	PrevInputValues []bchutil.Amount
+	PrevTokens      []wire.TokenData // may be nil if no input spends tokens
 	TotalInput      bchutil.Amount
 	ChangeIndex     int // negative if no change
 }
@@ -171,7 +172,22 @@ type SecretsSource interface {
 // Previous output scripts being redeemed by each input are passed in prevPkScripts
 // and the slice length must match the number of inputs.  Private keys and redeem
 // scripts are looked up using a SecretsSource based on the previous output script.
+// It doesn't know the tokens of the outputs the inputs spend, so its signature
+// for an input that spends tokens is invalid; AddAllInputScriptsWithTokens
+// signs those.
 func AddAllInputScripts(tx *wire.MsgTx, prevPkScripts [][]byte, inputValues []bchutil.Amount,
+	secrets SecretsSource) error {
+
+	return AddAllInputScriptsWithTokens(tx, prevPkScripts, inputValues, nil,
+		secrets)
+}
+
+// AddAllInputScriptsWithTokens is AddAllInputScripts with the tokens of the
+// outputs the inputs spend, which the signatures of inputs that spend tokens
+// must cover.  prevTokens holds them in input order, or is nil if no input
+// spends tokens.
+func AddAllInputScriptsWithTokens(tx *wire.MsgTx, prevPkScripts [][]byte,
+	inputValues []bchutil.Amount, prevTokens []wire.TokenData,
 	secrets SecretsSource) error {
 
 	inputs := tx.TxIn
@@ -181,6 +197,25 @@ func AddAllInputScripts(tx *wire.MsgTx, prevPkScripts [][]byte, inputValues []bc
 		return errors.New("tx.TxIn and prevPkScripts slices must " +
 			"have equal length")
 	}
+	if prevTokens != nil && len(inputs) != len(prevTokens) {
+		return errors.New("tx.TxIn and prevTokens slices must " +
+			"have equal length")
+	}
+
+	// The signature hashes, computed once for all inputs, include the
+	// outputs the inputs spend.
+	utxos := txscript.NewUtxoCache()
+	for i := range inputs {
+		prevOut := wire.TxOut{
+			Value:    int64(inputValues[i]),
+			PkScript: prevPkScripts[i],
+		}
+		if prevTokens != nil {
+			prevOut.TokenData = prevTokens[i]
+		}
+		utxos.AddEntry(i, prevOut)
+	}
+	sigHashes := txscript.NewTxSigHashes(tx).WithUtxos(tx, utxos)
 
 	for i := range inputs {
 		pkScript := prevPkScripts[i]
@@ -195,7 +230,8 @@ func AddAllInputScripts(tx *wire.MsgTx, prevPkScripts [][]byte, inputValues []bc
 		if err != nil {
 			return err
 		}
-		script, err := txscript.SignatureScript(tx, i, int64(inputValues[i].ToUnit(bchutil.AmountSatoshi)),
+		script, err := txscript.SignatureScriptWithSigHashes(tx, sigHashes, i,
+			int64(inputValues[i].ToUnit(bchutil.AmountSatoshi)),
 			pkScript, txscript.SigHashAll, privKey, compressed)
 		if err != nil {
 			return err
@@ -210,5 +246,6 @@ func AddAllInputScripts(tx *wire.MsgTx, prevPkScripts [][]byte, inputValues []bc
 // for each input of an authored transaction.  Private keys and redeem scripts
 // are looked up using a SecretsSource based on the previous output script.
 func (tx *AuthoredTx) AddAllInputScripts(secrets SecretsSource) error {
-	return AddAllInputScripts(tx.Tx, tx.PrevScripts, tx.PrevInputValues, secrets)
+	return AddAllInputScriptsWithTokens(tx.Tx, tx.PrevScripts,
+		tx.PrevInputValues, tx.PrevTokens, secrets)
 }

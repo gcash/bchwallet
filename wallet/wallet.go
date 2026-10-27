@@ -3301,6 +3301,11 @@ type SignatureError struct {
 // SignTransaction uses secrets of the wallet, as well as additional secrets
 // passed in by the caller, to create and add input signatures to a transaction.
 //
+// The signatures cover the outputs the transaction spends, with their tokens.
+// The wallet takes each from its own records when it has them, rather than
+// from inputValues and additionalPrevScripts, which can't carry tokens; an
+// output it doesn't have needs both.
+//
 // Transaction input script validation is used to confirm that all signatures
 // are valid.  For any invalid input, a SignatureError is added to the returns.
 // The final error return is reserved for unexpected or fatal errors, such as
@@ -3311,6 +3316,9 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 	additionalPrevScripts map[wire.OutPoint][]byte,
 	additionalKeysByAddress map[string]*bchutil.WIF,
 	p2shRedeemScriptsByAddress map[string][]byte) ([]SignatureError, error) {
+
+	syncedTo := w.Manager.SyncedTo()
+	flags := scriptFlags(w.chainParams, &syncedTo)
 
 	var signErrors []SignatureError
 	err := walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
@@ -3324,39 +3332,40 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			return errors.New("input amount not found for all inputs")
 		}
 
+		prevOuts := make([]*wire.TxOut, len(tx.TxIn))
+		utxoCache := txscript.NewUtxoCache()
+		haveAll := true
 		for i, txIn := range tx.TxIn {
-			var amount int64
-
-			// If we aren't looking them up, then we have an inputValue
-			// for each input.
-			if !lookupInputValues {
-				amount = inputValues[i]
+			prevOut, err := w.spentOutput(txmgrNs, &txIn.PreviousOutPoint)
+			if err != nil {
+				return err
 			}
-
-			prevOutScript, ok := additionalPrevScripts[txIn.PreviousOutPoint]
-			if !ok || lookupInputValues {
-				prevHash := &txIn.PreviousOutPoint.Hash
-				prevIndex := txIn.PreviousOutPoint.Index
-				txDetails, err := w.TxStore.TxDetails(txmgrNs, prevHash)
-				if err != nil {
-					return fmt.Errorf("cannot query previous transaction "+
-						"details: %v", err)
-				}
-				if txDetails == nil {
+			if prevOut == nil {
+				haveAll = false
+				prevOutScript, ok := additionalPrevScripts[txIn.PreviousOutPoint]
+				if !ok || lookupInputValues {
 					return fmt.Errorf("%v not found",
 						txIn.PreviousOutPoint)
 				}
-
-				// Only set the prevOutScript if it wasn't passed in explicitly.
-				if !ok {
-					prevOutScript = txDetails.MsgTx.TxOut[prevIndex].PkScript
-				}
-
-				// Only update the amount if we are looking up InputValues.
-				if lookupInputValues {
-					amount = txDetails.MsgTx.TxOut[prevIndex].Value
-				}
+				prevOut = wire.NewTxOut(inputValues[i], prevOutScript,
+					wire.TokenData{})
 			}
+			prevOuts[i] = prevOut
+			utxoCache.AddEntry(i, *prevOut)
+		}
+
+		// A SIGHASH_UTXOS signature covers every output the
+		// transaction spends.
+		if hashType&txscript.SigHashUTXO != 0 && !haveAll {
+			return errors.New("signing with SIGHASH_UTXOS needs every " +
+				"output the transaction spends, and the wallet " +
+				"doesn't have them all")
+		}
+		sigHashes := txscript.NewTxSigHashes(tx).WithUtxos(tx, utxoCache)
+
+		for i, txIn := range tx.TxIn {
+			prevOutScript := prevOuts[i].PkScript
+			amount := prevOuts[i].Value
 
 			// Set up our callbacks that we pass to txscript so it can
 			// look up the appropriate keys and scripts by address.
@@ -3418,9 +3427,10 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			if (hashType&txscript.SigHashSingle) !=
 				txscript.SigHashSingle || i < len(tx.TxOut) {
 
-				script, err := txscript.SignTxOutput(w.ChainParams(),
-					tx, i, amount, prevOutScript, hashType,
-					getKey, getScript, txIn.SignatureScript)
+				script, err := txscript.SignTxOutputWithSigHashes(
+					w.ChainParams(), tx, sigHashes, i, amount,
+					prevOutScript, hashType, getKey, getScript,
+					txIn.SignatureScript)
 				// Failure to sign isn't an error, it just means that
 				// the tx isn't complete.
 				if err != nil {
@@ -3436,7 +3446,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			// Either it was already signed or we just signed it.
 			// Find out if it is completely satisfied or still needs more.
 			vm, err := txscript.NewEngine(prevOutScript, tx, i,
-				txscript.StandardVerifyFlags, nil, nil, nil, amount)
+				flags, nil, nil, utxoCache, amount)
 			if err == nil {
 				err = vm.Execute()
 			}
@@ -3450,6 +3460,64 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 		return nil
 	})
 	return signErrors, err
+}
+
+// spentOutput returns the output op refers to from the wallet's records, or nil
+// if the wallet doesn't have the transaction that created it.
+func (w *Wallet) spentOutput(txmgrNs walletdb.ReadBucket,
+	op *wire.OutPoint) (*wire.TxOut, error) {
+
+	txDetails, err := w.TxStore.TxDetails(txmgrNs, &op.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("cannot query previous transaction "+
+			"details: %v", err)
+	}
+	if txDetails == nil {
+		return nil, nil
+	}
+	if op.Index >= uint32(len(txDetails.MsgTx.TxOut)) {
+		return nil, fmt.Errorf("%v not found", op)
+	}
+	return txDetails.MsgTx.TxOut[op.Index], nil
+}
+
+// checkTokenRules returns an error if tx breaks the token rules.  The rules
+// need every output tx spends, so the check is skipped if the wallet doesn't
+// have them all, and nodes check tx anyway.
+func (w *Wallet) checkTokenRules(tx *wire.MsgTx) error {
+	syncedTo := w.Manager.SyncedTo()
+	flags := scriptFlags(w.chainParams, &syncedTo)
+	if !flags.HasFlag(txscript.ScriptAllowCashTokens) {
+		return nil
+	}
+
+	utxoCache := txscript.NewUtxoCache()
+	haveAll := true
+	err := walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
+		for i, txIn := range tx.TxIn {
+			prevOut, err := w.spentOutput(txmgrNs, &txIn.PreviousOutPoint)
+			if err != nil {
+				return err
+			}
+			if prevOut == nil {
+				haveAll = false
+				return nil
+			}
+			utxoCache.AddEntry(i, *prevOut)
+		}
+		return nil
+	})
+	if err != nil || !haveAll {
+		return err
+	}
+
+	_, err = wire.RunCashTokensValidityAlgorithm(utxoCache, tx,
+		flags.HasFlag(txscript.ScriptAllowMay2026))
+	if err != nil {
+		return fmt.Errorf("transaction breaks the token rules: %v", err)
+	}
+	return nil
 }
 
 // PublishTransaction sends the transaction to the consensus RPC server so it
@@ -3484,6 +3552,14 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	if !w.interruptRecovery() {
 		return nil, ErrWalletShuttingDown
 	}
+
+	// Refuse a transaction that breaks the token rules before recording
+	// it, as a node's rejection may never reach an SPV wallet, which would
+	// then keep rebroadcasting the transaction and hold its inputs.
+	if err := w.checkTokenRules(tx); err != nil {
+		return nil, err
+	}
+
 	err = walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
 		return w.addRelevantTx(dbTx, txRec, nil)
 	})

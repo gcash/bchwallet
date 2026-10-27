@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/gcash/bchd/bchec"
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
@@ -156,6 +157,17 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
+	// The signatures and the checks cover the tokens of the outputs the
+	// inputs spend.
+	tokens := make(map[wire.OutPoint]wire.TokenData, len(eligible))
+	for i := range eligible {
+		tokens[eligible[i].OutPoint] = eligible[i].TokenData
+	}
+	tx.PrevTokens = make([]wire.TokenData, len(tx.Tx.TxIn))
+	for i, txIn := range tx.Tx.TxIn {
+		tx.PrevTokens[i] = tokens[txIn.PreviousOutPoint]
+	}
+
 	// Randomize change position, if change exists, before signing.  This
 	// doesn't affect the serialize size, so the change amount will still
 	// be valid.
@@ -176,7 +188,8 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
-	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues)
+	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues,
+		tx.PrevTokens, scriptFlags(w.chainParams, bs))
 	if err != nil {
 		return nil, err
 	}
@@ -342,15 +355,58 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 	return eligible, nil
 }
 
-// validateMsgTx verifies transaction input scripts for tx.  All previous output
-// scripts from outputs redeemed by the transaction, in the same order they are
-// spent, must be passed in the prevScripts slice.
-func validateMsgTx(tx *wire.MsgTx, prevScripts [][]byte, inputValues []bchutil.Amount) error {
-	hashCache := txscript.NewTxSigHashes(tx)
+// scriptFlags returns the script flags bchd's memory pool checks a transaction
+// against when the block after bs is next: the standard flags, with the rules
+// of each upgrade that is active.  The time of the block stands in for the
+// chain's median time past, which the wallet doesn't keep.
+func scriptFlags(params *chaincfg.Params, bs *waddrmgr.BlockStamp) txscript.ScriptFlags {
+	flags := txscript.StandardVerifyFlags
+	if bs.Height+1 > params.Upgrade9ForkHeight {
+		flags |= txscript.ScriptAllowCashTokens
+	}
+	if bs.Timestamp.Unix() >= int64(params.Upgrade11ActivationTime) {
+		flags |= txscript.ScriptAllowMay2025 |
+			txscript.ScriptAllowMay2025StandardOnly
+	}
+	if bs.Timestamp.Unix() >= int64(params.Upgrade12ActivationTime) {
+		flags |= txscript.ScriptAllowMay2026
+	}
+	return flags
+}
+
+// validateMsgTx verifies transaction input scripts for tx, and the token rules
+// if flags enable them.  The scripts, values and tokens of the outputs the
+// transaction spends, in the order they are spent, must be passed in
+// prevScripts, inputValues and prevTokens; prevTokens may be nil if no input
+// spends tokens.
+func validateMsgTx(tx *wire.MsgTx, prevScripts [][]byte, inputValues []bchutil.Amount,
+	prevTokens []wire.TokenData, flags txscript.ScriptFlags) error {
+
 	utxoCache := txscript.NewUtxoCache()
 	for i, prevScript := range prevScripts {
+		prevOut := wire.TxOut{
+			Value:    int64(inputValues[i]),
+			PkScript: prevScript,
+		}
+		if prevTokens != nil {
+			prevOut.TokenData = prevTokens[i]
+		}
+		utxoCache.AddEntry(i, prevOut)
+	}
+
+	hashCache := txscript.NewTxSigHashes(tx)
+	if flags.HasFlag(txscript.ScriptAllowCashTokens) {
+		_, err := wire.RunCashTokensValidityAlgorithm(utxoCache, tx,
+			flags.HasFlag(txscript.ScriptAllowMay2026))
+		if err != nil {
+			return fmt.Errorf("transaction breaks the token rules: %v",
+				err)
+		}
+		hashCache = hashCache.WithUtxos(tx, utxoCache)
+	}
+	for i, prevScript := range prevScripts {
 		vm, err := txscript.NewEngine(prevScript, tx, i,
-			txscript.StandardVerifyFlags, nil, hashCache, utxoCache, int64(inputValues[i]))
+			flags, nil, hashCache, utxoCache, int64(inputValues[i]))
 		if err != nil {
 			return fmt.Errorf("cannot create script engine: %s", err)
 		}
