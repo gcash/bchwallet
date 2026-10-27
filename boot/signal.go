@@ -22,19 +22,34 @@ var HandleSignals = true
 
 // interruptState coordinates the clean shutdown of one run of WalletMain.
 // Each run gets its own, so that a process can run the wallet again after it
-// shut down.
+// shut down.  A signal or a shutdown request only marks the run as stopping:
+// the run's goroutine runs the interrupt handlers once it is done starting
+// what it was starting, so that the shutdown never runs alongside the startup.
 type interruptState struct {
-	// signals receives SIGINT (Ctrl+C) and SIGTERM when HandleSignals is
+	// signals receives SIGINT (Ctrl+C) and SIGTERM when handleSignals is
 	// set.
 	signals chan os.Signal
 
+	// handleSignals is whether signals receives the signals, which is
+	// HandleSignals when the run started.
+	handleSignals bool
+
 	// addHandler is used to add an interrupt handler to the list of
 	// handlers to be invoked on shutdown.
+	//
+	//lint:ignore U1000 kept from when another goroutine ran the handlers.
 	addHandler chan func()
 
 	// simulate requests the shutdown from an internal component instead
 	// of a signal.
 	simulate chan struct{}
+
+	// requested is closed once the shutdown of the run is requested.
+	requested chan struct{}
+
+	// handlers are the interrupt handlers, which shutdown runs in LIFO
+	// order.  Only the run's goroutine uses them.
+	handlers []func()
 
 	// done is closed after all interrupt handlers have run.
 	done chan struct{}
@@ -52,16 +67,16 @@ var (
 // WalletMain, makes it the current one and starts its handler.
 func newInterruptState() *interruptState {
 	s := &interruptState{
-		signals:    make(chan os.Signal, 1),
-		addHandler: make(chan func()),
-		simulate:   make(chan struct{}, 1),
-		done:       make(chan struct{}),
+		signals:       make(chan os.Signal, 1),
+		handleSignals: HandleSignals,
+		simulate:      make(chan struct{}, 1),
+		requested:     make(chan struct{}),
+		done:          make(chan struct{}),
 	}
-	handleSignals := HandleSignals
-	if handleSignals {
+	if s.handleSignals {
 		signal.Notify(s.signals, signals...)
 	}
-	go s.mainInterruptHandler(handleSignals)
+	go s.mainInterruptHandler()
 
 	interruptMtx.Lock()
 	interrupts = s
@@ -88,57 +103,62 @@ func (s *interruptState) request() {
 	}
 }
 
-// shutdown requests the shutdown of this run, unless it already happened, and
-// waits for its interrupt handlers to finish.
-func (s *interruptState) shutdown() {
-	s.request()
-	<-s.done
+// stopRequested returns whether the shutdown of this run was requested.
+func (s *interruptState) stopRequested() bool {
+	select {
+	case <-s.requested:
+		return true
+	default:
+		return false
+	}
 }
 
-// mainInterruptHandler listens for SIGINT (Ctrl+C) signals and shutdown
-// requests and invokes the registered interruptCallbacks accordingly.  It also
-// listens for callback registration.  It must be run as a goroutine.
-func (s *interruptState) mainInterruptHandler(handleSignals bool) {
-	// interruptCallbacks is a list of callbacks to invoke when a
-	// SIGINT (Ctrl+C) is received.
-	var interruptCallbacks []func()
-	invokeCallbacks := func() {
-		if handleSignals {
-			signal.Stop(s.signals)
-		}
-
-		// run handlers in LIFO order.
-		for i := range interruptCallbacks {
-			idx := len(interruptCallbacks) - 1 - i
-			interruptCallbacks[idx]()
-		}
-		close(s.done)
+// shutdown requests the shutdown of this run, unless it was requested
+// already, and runs its interrupt handlers in LIFO order, unless they ran
+// already.  Only the run's goroutine calls it, once it is done starting what
+// it was starting.
+func (s *interruptState) shutdown() {
+	select {
+	case <-s.done:
+		return
+	default:
 	}
 
-	for {
-		select {
-		case sig := <-s.signals:
-			log.Infof("Received signal (%s).  Shutting down...", sig)
-			invokeCallbacks()
-			return
-		case <-s.simulate:
-			log.Info("Received shutdown request.  Shutting down...")
-			invokeCallbacks()
-			return
-
-		case handler := <-s.addHandler:
-			interruptCallbacks = append(interruptCallbacks, handler)
-		}
+	s.request()
+	<-s.requested
+	for i := len(s.handlers) - 1; i >= 0; i-- {
+		s.handlers[i]()
 	}
+	s.handlers = nil
+	close(s.done)
+}
+
+// mainInterruptHandler waits for SIGINT (Ctrl+C) or a shutdown request, and
+// marks the run as stopping, which makes the run's goroutine shut it down.  It
+// must be run as a goroutine.
+func (s *interruptState) mainInterruptHandler() {
+	select {
+	case sig := <-s.signals:
+		log.Infof("Received signal (%s).  Shutting down...", sig)
+	case <-s.simulate:
+		log.Info("Received shutdown request.  Shutting down...")
+	}
+
+	// Let another signal end the process, should the shutdown hang.
+	if s.handleSignals {
+		signal.Stop(s.signals)
+	}
+	close(s.requested)
 }
 
 // addInterruptHandler adds a handler to call when a SIGINT (Ctrl+C) is
-// received or a shutdown is requested.  A handler added after the shutdown
-// has already run is called right away.
+// received or a shutdown is requested.  Only the run's goroutine calls it.  A
+// handler added after the shutdown has already run is called right away.
 func (s *interruptState) addInterruptHandler(handler func()) {
 	select {
-	case s.addHandler <- handler:
 	case <-s.done:
 		handler()
+	default:
+		s.handlers = append(s.handlers, handler)
 	}
 }

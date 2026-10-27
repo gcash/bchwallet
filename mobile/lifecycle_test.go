@@ -167,3 +167,60 @@ func TestRestartInProcess(t *testing.T) {
 		}
 	}
 }
+
+// TestStopRightAfterStart starts and stops the wallet at once, before it is
+// done starting, which hung its shutdown, and checks that it then still opens
+// its wallet, whose database a stop during the startup must not leave open.
+func TestStopRightAfterStart(t *testing.T) {
+	dir := t.TempDir()
+	rpcAddr := freeAddr(t)
+
+	conn, err := grpc.NewClient(rpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	loader := pb.NewWalletLoaderServiceClient(conn)
+	walletSvc := pb.NewWalletServiceClient(conn)
+
+	StartWallet(writeTestConfig(t, dir, rpcAddr, true))
+	stopAndCheck(t)
+
+	// Create a wallet for the runs below to open as they start.
+	StartWallet(writeTestConfig(t, dir, rpcAddr, true))
+	var mnemonic string
+	retry(t, "GenerateMnemonicSeed", func(ctx context.Context) error {
+		resp, err := loader.GenerateMnemonicSeed(ctx,
+			&pb.GenerateMnemonicSeedRequest{BitSize: 128})
+		if err == nil {
+			mnemonic = resp.Mnemonic
+		}
+		return err
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx = metadata.AppendToOutgoingContext(ctx, "AuthenticationToken", testAuthToken)
+	_, err = loader.CreateWallet(ctx, &pb.CreateWalletRequest{
+		PrivatePassphrase: []byte("LETMEIN"),
+		MnemonicSeed:      mnemonic,
+		WalletBirthday:    time.Now().Unix(),
+	})
+	cancel()
+	if err != nil {
+		t.Fatalf("CreateWallet: %v", err)
+	}
+	stopAndCheck(t)
+
+	cfgPath := writeTestConfig(t, dir, rpcAddr, false)
+	for i := 0; i < 3; i++ {
+		StartWallet(cfgPath)
+		stopAndCheck(t)
+	}
+
+	StartWallet(cfgPath)
+	retry(t, "CurrentAddress after the stops", func(ctx context.Context) error {
+		_, err := walletSvc.CurrentAddress(ctx, &pb.CurrentAddressRequest{})
+		return err
+	})
+	stopAndCheck(t)
+}

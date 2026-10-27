@@ -44,6 +44,10 @@ func WalletMain(optionalConfigPath *string) error {
 // closed.  A process that embeds the wallet can therefore call it again to run
 // the wallet again.
 func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
+	// Close the log file when the run ends, also when the config fails to
+	// load after loadConfig opened the file.
+	defer closeLogRotator()
+
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
 	tcfg, _, err := loadConfig(optionalConfigPath)
@@ -51,18 +55,19 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		return err
 	}
 	cfg = tcfg
-	defer closeLogRotator()
 
-	// Shut down when ctx is done, and run the interrupt handlers added so
-	// far whenever this function returns, also on an error, so that
-	// nothing started here outlives it.
+	// Shut down when ctx is done.  This goroutine runs the interrupt
+	// handlers added below when this function returns, also on an error,
+	// so that nothing started here outlives it.  A shutdown requested while
+	// it starts something waits until that has started, so that the
+	// shutdown never runs alongside the startup.
 	interrupts := newInterruptState()
 	defer interrupts.shutdown()
 	go func() {
 		select {
 		case <-ctx.Done():
 			interrupts.request()
-		case <-interrupts.done:
+		case <-interrupts.requested:
 		}
 	}()
 
@@ -84,6 +89,10 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		}()
 	}
 
+	if interrupts.stopRequested() {
+		return stopped.get()
+	}
+
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 	loader := wallet.NewLoader(activeNet.Params, dbDir, true, 250)
 
@@ -101,6 +110,10 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	chainStopping := make(chan struct{})
 	chainQuit := make(chan struct{})
 	chainDone := make(chan struct{})
+	var chainStoppingOnce sync.Once
+	stopReconnecting := func() {
+		chainStoppingOnce.Do(func() { close(chainStopping) })
+	}
 	go func() {
 		defer close(chainDone)
 		rpcClientConnectLoop(legacyRPCServer, loader, chainStopping,
@@ -113,6 +126,7 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 	// wallet (which uses it), and then the RPC servers.
 	interrupts.addInterruptHandler(func() {
 		log.Info("Stopping chain backend...")
+		stopReconnecting()
 		close(chainQuit)
 		<-chainDone
 		log.Info("Chain backend shutdown")
@@ -141,16 +155,14 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 			select {
 			case <-legacyRPCServer.RequestProcessShutdown():
 				interrupts.request()
-			case <-interrupts.done:
+			case <-interrupts.requested:
 			}
 		}()
 	}
 
 	// Run first on shutdown, so that the chain backend does not reconnect
 	// when the wallet stops its client.
-	interrupts.addInterruptHandler(func() {
-		close(chainStopping)
-	})
+	interrupts.addInterruptHandler(stopReconnecting)
 
 	var proxyDialer proxy.Dialer
 	if cfg.Proxy != "" {
@@ -182,7 +194,7 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		})
 	})
 
-	if !cfg.NoInitialLoad {
+	if !cfg.NoInitialLoad && !interrupts.stopRequested() {
 		// Load the wallet database.  It must have been created already
 		// or this will return an appropriate error.
 		_, err = loader.OpenExistingWallet([]byte(cfg.WalletPass), true)
@@ -192,7 +204,8 @@ func WalletMainContext(ctx context.Context, optionalConfigPath *string) error {
 		}
 	}
 
-	<-interrupts.done
+	<-interrupts.requested
+	interrupts.shutdown()
 	log.Info("Shutdown complete")
 	return stopped.get()
 }
