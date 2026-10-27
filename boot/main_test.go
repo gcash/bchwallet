@@ -170,3 +170,19 @@ func TestWalletMainContextStopEarly(t *testing.T) {
 	cancel()
 	waitRun(t, done, addr, 30*time.Second)
 }
+
+// TestWalletMainContextUnreachableBchd ensures that a run with a bchd RPC chain
+// backend stops while bchd can't be reached, which hung its shutdown, since
+// the client tried to connect forever.
+func TestWalletMainContextUnreachableBchd(t *testing.T) {
+	path, addr := runConfig(t, "rpcconnect=127.0.0.1:1\nnoclienttls=1\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startRun(t, ctx, path)
+	waitListening(t, addr)
+
+	// Let the chain backend try to connect.
+	time.Sleep(time.Second)
+	cancel()
+	waitRun(t, done, addr, 15*time.Second)
+}

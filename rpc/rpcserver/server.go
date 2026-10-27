@@ -1470,6 +1470,12 @@ func (s *loaderServer) StartConsensusRPC(ctx context.Context, req *pb.StartConse
 
 	err = rpcClient.Start()
 	if err != nil {
+		// Stop the client, which otherwise reconnects on its own when
+		// Start connected and then disconnected it, as for another
+		// network.
+		rpcClient.Stop()
+		rpcClient.WaitForShutdown()
+
 		if err == rpcclient.ErrInvalidAuth {
 			return nil, status.Errorf(codes.InvalidArgument,
 				"Invalid RPC credentials: %v", err)

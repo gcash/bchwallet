@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
 	"github.com/gcash/bchwallet/rpc/rpcserver"
@@ -245,14 +246,22 @@ func (s *stopError) get() error {
 //
 // Once stopping is closed the loop no longer reconnects, and it returns after
 // the chain client has shut down and, in SPV mode, the neutrino chain service
-// has stopped and its database is closed.  When quit is closed it stops the
-// chain client itself, for when no loaded wallet stopped it.
+// has stopped and its database is closed.  It doesn't wait for a connection
+// to a bchd RPC server that is being attempted.  When quit is closed it stops
+// the chain client itself, for when no loaded wallet stopped it.
 func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Loader,
 	stopping, quit <-chan struct{}) {
 
-	var certs []byte
+	var rpcConfig *chainRPCConfig
 	if !cfg.UseSPV {
-		certs = readCAFile()
+		rpcConfig = &chainRPCConfig{
+			params:     activeNet.Params,
+			connect:    cfg.RPCConnect,
+			user:       cfg.BchdUsername,
+			pass:       cfg.BchdPassword,
+			certs:      readCAFile(),
+			disableTLS: cfg.DisableClientTLS,
+		}
 	}
 
 	for {
@@ -265,10 +274,17 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		if cfg.UseSPV {
 			chainClient, stopBackend, err = startNeutrino()
 		} else {
-			chainClient, err = startChainRPC(certs)
-			if err != nil {
+			var rpcClient *chain.RPCClient
+			rpcClient, err = startChainRPCUnlessStopping(rpcConfig, stopping)
+			switch {
+			case err != nil:
 				err = fmt.Errorf("unable to open connection to "+
 					"consensus RPC server: %v", err)
+			case rpcClient == nil:
+				// The wallet is shutting down.
+				return
+			default:
+				chainClient = rpcClient
 			}
 		}
 		if err != nil {
@@ -416,19 +432,68 @@ func readCAFile() []byte {
 	return certs
 }
 
+// chainRPCConfig holds the RPC options of a run's config that starting a
+// client for a bchd server needs.  They are copied before a start, since a
+// connection attempt that the run stops waiting for can outlive it, and must
+// then not read the config of another run in the process.
+type chainRPCConfig struct {
+	params     *chaincfg.Params
+	connect    string
+	user       string
+	pass       string
+	certs      []byte
+	disableTLS bool
+}
+
 // startChainRPC opens a RPC client connection to a bchd server for blockchain
-// services.  This function uses the RPC options from the global config and
-// there is no recovery in case the server is not available or if there is an
-// authentication error.  Instead, all requests to the client will simply error.
-func startChainRPC(certs []byte) (*chain.RPCClient, error) {
-	log.Infof("Attempting RPC client connection to %v", cfg.RPCConnect)
-	rpcc, err := chain.NewRPCClient(activeNet.Params, cfg.RPCConnect,
-		cfg.BchdUsername, cfg.BchdPassword, certs, cfg.DisableClientTLS, 0)
+// services.  It makes one connection attempt, so that it returns while the
+// server is unreachable, and rpcClientConnectLoop tries again.  A client that
+// fails to start is stopped, since it would otherwise reconnect on its own
+// after its start connected and then disconnected it, as for another network.
+func startChainRPC(c *chainRPCConfig) (*chain.RPCClient, error) {
+	log.Infof("Attempting RPC client connection to %v", c.connect)
+	rpcc, err := chain.NewRPCClient(c.params, c.connect, c.user, c.pass,
+		c.certs, c.disableTLS, 1)
 	if err != nil {
 		return nil, err
 	}
-	err = rpcc.Start()
-	return rpcc, err
+	if err := rpcc.Start(); err != nil {
+		rpcc.Stop()
+		rpcc.WaitForShutdown()
+		return nil, err
+	}
+	return rpcc, nil
+}
+
+// startChainRPCUnlessStopping starts a client like startChainRPC, but returns
+// a nil client and no error as soon as stopping is closed, without waiting for
+// a connection attempt in progress, whose client is stopped once the attempt
+// ends.
+func startChainRPCUnlessStopping(c *chainRPCConfig, stopping <-chan struct{}) (
+	*chain.RPCClient, error) {
+
+	type started struct {
+		client *chain.RPCClient
+		err    error
+	}
+	result := make(chan started, 1)
+	go func() {
+		client, err := startChainRPC(c)
+		result <- started{client, err}
+	}()
+
+	select {
+	case r := <-result:
+		return r.client, r.err
+	case <-stopping:
+		go func() {
+			if r := <-result; r.client != nil {
+				r.client.Stop()
+				r.client.WaitForShutdown()
+			}
+		}()
+		return nil, nil
+	}
 }
 
 // buildNeutrinoDNSResolver returns a custom DNS resolver designed for use with
