@@ -344,11 +344,14 @@ func sendsTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint) bool {
 
 // spendTokens returns the outputs of eligible that a transaction with outputs
 // spends for their tokens, and the outputs that return the tokens left over to
-// changeScript, a category each.  The NFT an output sends is the one held by
-// the outpoint at the output's index in nfts, which spendTokens copies into the
-// output, and the fungible tokens that the NFTs' outputs don't provide come
-// from outputs without NFTs, largest first.  An output with tokens and no value
-// gets its dust threshold.
+// changeScript: the fungible tokens of each category in one output, and each
+// NFT spent only for the fungible tokens held with it in one of its own, as it
+// is.  The NFT an output sends is the one held by the outpoint at the output's
+// index in nfts, which spendTokens copies into the output.  The fungible
+// tokens that the sent NFTs' outputs don't provide come from outputs without
+// NFTs, largest first, and then from the other outputs with NFTs, so that all
+// the fungible tokens TokenBalances counts can be sent.  An output with tokens
+// and no value gets its dust threshold.
 func spendTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 	eligible []wtxmgr.Credit, changeScript []byte) ([]wtxmgr.Credit,
 	[]*wire.TxOut, error) {
@@ -405,30 +408,44 @@ func spendTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 		}
 	}
 
-	var fungible []*wtxmgr.Credit
+	// The fungible tokens still needed come from the outputs that hold
+	// only fungible tokens, and then from those that hold them with an NFT,
+	// which goes back to the wallet in an output of its own.
+	var fungible, withNFT []*wtxmgr.Credit
 	for _, credit := range byOutPoint {
-		if !credit.TokenData.HasNFT() && credit.TokenData.HasAmount() &&
-			need[credit.TokenData.CategoryID] > 0 {
+		if !credit.TokenData.HasAmount() ||
+			need[credit.TokenData.CategoryID] == 0 {
 
+			continue
+		}
+		if credit.TokenData.HasNFT() {
+			withNFT = append(withNFT, credit)
+		} else {
 			fungible = append(fungible, credit)
 		}
 	}
-	sort.Slice(fungible, func(i, j int) bool {
-		a, b := fungible[i], fungible[j]
-		if a.TokenData.Amount != b.TokenData.Amount {
-			return a.TokenData.Amount > b.TokenData.Amount
-		}
-		opA, opB := a.OutPoint, b.OutPoint
-		if c := bytes.Compare(opA.Hash[:], opB.Hash[:]); c != 0 {
-			return c < 0
-		}
-		return opA.Index < opB.Index
-	})
+	sortLargestTokens(fungible)
+	sortLargestTokens(withNFT)
 	for _, credit := range fungible {
 		category := chainhash.Hash(credit.TokenData.CategoryID)
 		if have[category] < need[category] {
 			spent = append(spent, *credit)
 			have[category] += credit.TokenData.Amount
+		}
+	}
+	var nftChange []*wire.TxOut
+	for _, credit := range withNFT {
+		category := chainhash.Hash(credit.TokenData.CategoryID)
+		if have[category] < need[category] {
+			spent = append(spent, *credit)
+			have[category] += credit.TokenData.Amount
+			nftChange = append(nftChange, wire.NewTxOut(0, changeScript,
+				wire.TokenData{
+					CategoryID: credit.TokenData.CategoryID,
+					Commitment: credit.TokenData.Commitment,
+					BitField: credit.TokenData.BitField &^
+						wire.HAS_AMOUNT,
+				}))
 		}
 	}
 
@@ -460,6 +477,7 @@ func spendTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 				}))
 		}
 	}
+	change = append(change, nftChange...)
 
 	for _, out := range append(outputs[:len(outputs):len(outputs)], change...) {
 		if out.TokenData.IsEmpty() {
@@ -477,6 +495,22 @@ func spendTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 		}
 	}
 	return spent, change, nil
+}
+
+// sortLargestTokens sorts credits by their fungible tokens, largest first, and
+// then by outpoint, so that the order doesn't depend on the map they came from.
+func sortLargestTokens(credits []*wtxmgr.Credit) {
+	sort.Slice(credits, func(i, j int) bool {
+		a, b := credits[i], credits[j]
+		if a.TokenData.Amount != b.TokenData.Amount {
+			return a.TokenData.Amount > b.TokenData.Amount
+		}
+		opA, opB := a.OutPoint, b.OutPoint
+		if c := bytes.Compare(opA.Hash[:], opB.Hash[:]); c != 0 {
+			return c < 0
+		}
+		return opA.Index < opB.Index
+	})
 }
 
 // withInputs returns an input source that spends the credits, and then the

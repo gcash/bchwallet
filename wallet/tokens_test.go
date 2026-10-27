@@ -900,6 +900,55 @@ func TestSignTransactionNFTBurn(t *testing.T) {
 	}
 }
 
+// TestCreateUnsignedTokensHeldWithNFT checks that CreateUnsignedTx sends the
+// fungible tokens that the account only holds with an NFT, as TokenBalances
+// counts them, and returns the NFT to the wallet as it is.
+func TestCreateUnsignedTokensHeldWithNFT(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	category := testToken.CategoryID
+	nftOut := wire.NewTxOut(1000, script, wire.TokenData{
+		CategoryID: category,
+		Amount:     5,
+		Commitment: []byte("nft"),
+		BitField: wire.HAS_AMOUNT | wire.HAS_NFT |
+			wire.HAS_COMMITMENT_LENGTH,
+	})
+	bchOut := wire.NewTxOut(100000, script, wire.TokenData{})
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		addCredit(t, w, nftOut): nftOut,
+		addCredit(t, w, bchOut): bchOut,
+	}
+
+	tx, err := w.CreateUnsignedTx(0, []*wire.TxOut{
+		wire.NewTxOut(0, script, wire.TokenData{CategoryID: category,
+			Amount: 3, BitField: wire.HAS_AMOUNT}),
+	}, nil, 1, txrules.DefaultRelayFeePerKb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nftBack := wire.TokenData{
+		CategoryID: category,
+		Commitment: []byte("nft"),
+		BitField:   wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH,
+	}
+	var gotNFT bool
+	var amounts []uint64
+	for _, out := range tx.Tx.TxOut {
+		gotNFT = gotNFT || tokensEqual(&out.TokenData, &nftBack)
+		if out.TokenData.HasAmount() {
+			amounts = append(amounts, out.TokenData.Amount)
+		}
+	}
+	sort.Slice(amounts, func(i, j int) bool { return amounts[i] < amounts[j] })
+	if !gotNFT || fmt.Sprint(amounts) != "[2 3]" {
+		t.Errorf("NFT returned %v, outputs with %v tokens; want 3 sent and "+
+			"2 back", gotNFT, amounts)
+	}
+	signAndVerify(t, w, tx.Tx, spentBy(t, tx.Tx, prevOuts))
+}
+
 // TestBalancesUnconfirmed checks that the unconfirmed balance, which
 // getunconfirmedbalance returns, counts only the outputs without confirmations
 // that the wallet would spend, and not confirmed outputs with tokens, which the
