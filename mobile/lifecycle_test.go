@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gcash/bchwallet/boot"
 	pb "github.com/gcash/bchwallet/rpc/walletrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -223,4 +224,63 @@ func TestStopRightAfterStart(t *testing.T) {
 		return err
 	})
 	stopAndCheck(t)
+}
+
+// TestStopWhileStartWaits ensures that a StopWallet that comes while a
+// StartWallet waits for the previous run to shut down keeps the wallet
+// stopped, since stopping it was asked for last.
+func TestStopWhileStartWaits(t *testing.T) {
+	cancelled := make(chan struct{}, 1)
+	release := make(chan struct{})
+	walletMain = func(ctx context.Context, _ *string) error {
+		<-ctx.Done()
+		select {
+		case cancelled <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	}
+	waits := make(chan struct{}, 3)
+	wait := waitStopped
+	waitStopped = func(done <-chan struct{}) bool {
+		waits <- struct{}{}
+		return wait(done)
+	}
+	defer func() {
+		walletMain = boot.WalletMainContext
+		waitStopped = wait
+	}()
+
+	StartWallet("")
+	firstStop := make(chan struct{})
+	go func() {
+		StopWallet()
+		close(firstStop)
+	}()
+	<-cancelled
+
+	// The first StopWallet and then StartWallet wait for the run to shut
+	// down, and a second StopWallet comes meanwhile.
+	started := make(chan struct{})
+	go func() {
+		StartWallet("")
+		close(started)
+	}()
+	<-waits
+	<-waits
+	secondStop := make(chan struct{})
+	go func() {
+		StopWallet()
+		close(secondStop)
+	}()
+	<-waits
+
+	close(release)
+	<-firstStop
+	<-started
+	<-secondStop
+	if IsRunning() {
+		t.Fatal("the wallet runs after the last StopWallet returned")
+	}
 }

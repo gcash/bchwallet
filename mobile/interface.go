@@ -38,7 +38,14 @@ var (
 
 	// startErr is why StartWallet last failed to start the wallet.
 	startErr error
+
+	// stops counts the calls of StopWallet, so that a StartWallet that waits
+	// for a run to shut down can tell that a StopWallet came after it.
+	stops uint64
 )
+
+// walletMain runs the wallet until ctx is done.  Tests replace it.
+var walletMain = boot.WalletMainContext
 
 func init() {
 	// The app that embeds the wallet keeps its own signal handling, and the
@@ -60,11 +67,13 @@ func init() {
 //
 // StartWallet returns right away and the wallet keeps running in the background until StopWallet
 // is called. It does nothing while the wallet is running. If the wallet is still shutting down,
-// it first waits for the shutdown to complete. Use LastError to find out why a run ended.
+// it first waits for the shutdown to complete, and doesn't start the wallet if StopWallet is called
+// meanwhile, since stopping it was asked for last. Use LastError to find out why a run ended.
 func StartWallet(configPath string) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
+	stopsBefore := stops
 	for current != nil && !isClosed(current.done) {
 		r := current
 		if !r.stopRequested {
@@ -78,13 +87,17 @@ func StartWallet(configPath string) {
 			startErr = errors.New("the previous wallet has not shut down")
 			return
 		}
+		if stops != stopsBefore {
+			// StopWallet was called after this call, while it waited.
+			return
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &walletRun{cancel: cancel, done: make(chan struct{})}
 	current, startErr = r, nil
 	go func() {
-		r.err = boot.WalletMainContext(ctx, &configPath)
+		r.err = walletMain(ctx, &configPath)
 		close(r.done)
 	}()
 }
@@ -94,6 +107,7 @@ func StartWallet(configPath string) {
 // wallet can then be started again with StartWallet.
 func StopWallet() {
 	mtx.Lock()
+	stops++
 	r := current
 	if r != nil {
 		r.stopRequested = true
@@ -144,7 +158,8 @@ func isClosed(done <-chan struct{}) bool {
 }
 
 // waitStopped waits for done to be closed, for at most stopTimeout, and returns whether it was.
-func waitStopped(done <-chan struct{}) bool {
+// Tests replace it to see who waits.
+var waitStopped = func(done <-chan struct{}) bool {
 	select {
 	case <-done:
 		return true
