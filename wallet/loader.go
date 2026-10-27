@@ -262,6 +262,24 @@ func (l *Loader) LoadedWallet() (*Wallet, bool) {
 	return w, w != nil
 }
 
+// RestartWallet stops the loaded wallet and starts it again, as a chain backend
+// that reconnects needs, if w is still the loaded wallet, and returns whether
+// it was.  It holds the loader meanwhile, so that the wallet can't be unloaded
+// between its stop and its start, which would start it again on its closed
+// database.
+func (l *Loader) RestartWallet(w *Wallet) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.wallet != w {
+		return false
+	}
+	w.Stop()
+	w.WaitForShutdown()
+	w.Start()
+	return true
+}
+
 // UnloadWallet stops the loaded wallet, if any, and closes the wallet database.
 // This returns ErrNotLoaded if the wallet has not been loaded with
 // CreateNewWallet or LoadExistingWallet.  The Loader may be reused if this

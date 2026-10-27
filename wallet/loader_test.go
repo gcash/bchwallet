@@ -61,3 +61,35 @@ func TestLoaderHooks(t *testing.T) {
 		}
 	}
 }
+
+// TestLoaderRestartWallet checks that RestartWallet restarts the loaded
+// wallet, and leaves a wallet that was unloaded meanwhile stopped, rather than
+// starting it again on its closed database, as the chain backend did when its
+// client dropped just as the shutdown unloaded the wallet.
+func TestLoaderRestartWallet(t *testing.T) {
+	seed, err := hdkeychain.GenerateSeed(hdkeychain.MinSeedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader := NewLoader(&chaincfg.RegressionNetParams, t.TempDir(), true, 250)
+	t.Cleanup(func() { _ = loader.UnloadWallet() })
+
+	w, err := loader.CreateNewWallet([]byte("hello"), []byte("world"), seed,
+		time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loader.RestartWallet(w) || w.ShuttingDown() {
+		t.Fatal("the loaded wallet wasn't restarted")
+	}
+
+	if err := loader.UnloadWallet(); err != nil {
+		t.Fatal(err)
+	}
+	if loader.RestartWallet(w) {
+		t.Fatal("restarted a wallet that was unloaded")
+	}
+	if !w.ShuttingDown() {
+		t.Fatal("the unloaded wallet runs again")
+	}
+}

@@ -433,9 +433,9 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 
 			// TODO: Rework the wallet so changing the RPC client
 			// does not require stopping and restarting everything.
-			loadedWallet.Stop()
-			loadedWallet.WaitForShutdown()
-			loadedWallet.Start()
+			// The loader restarts it unless it was unloaded
+			// meanwhile, as by the shutdown.
+			loader.RestartWallet(loadedWallet)
 		}
 	}
 }
