@@ -2606,9 +2606,11 @@ type SignTransactionRequest struct {
 	// Values must be provided for each input in order to sign using
 	// the bitcoin cash signing algorithm.
 	InputValues []int64 `protobuf:"varint,4,rep,packed,name=input_values,json=inputValues,proto3" json:"input_values,omitempty"`
-	// Sign even if the transaction's outputs carry fewer fungible tokens
-	// or NFTs of a category than the wallet's outputs it spends, which
-	// burns the difference.
+	// Sign even if the transaction would burn tokens of the wallet's
+	// outputs it spends: fungible tokens of a category that its outputs
+	// carry fewer of, an immutable NFT that none of them carries with its
+	// commitment, a mutable NFT that leaves no NFT of its category, or
+	// the capability of a minting NFT.
 	AllowTokenBurn       bool     `protobuf:"varint,5,opt,name=allow_token_burn,json=allowTokenBurn,proto3" json:"allow_token_burn,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`

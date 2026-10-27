@@ -818,3 +818,84 @@ func TestSignTransactionTokenBurn(t *testing.T) {
 		}
 	}
 }
+
+// TestSignTransactionNFTBurn checks that SignTransaction tells NFTs apart by
+// their commitments and capabilities rather than counting them, so that
+// another input's NFT, or one a minting NFT mints, doesn't stand in for one of
+// the wallet's, and that it signs what burns none of them, such as changing a
+// mutable NFT or minting new ones.
+func TestSignTransactionNFTBurn(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	nft := func(capability byte, commitment string) wire.TokenData {
+		token := wire.TokenData{
+			CategoryID: testToken.CategoryID,
+			BitField:   wire.HAS_NFT | capability,
+		}
+		if commitment != "" {
+			token.Commitment = []byte(commitment)
+			token.BitField |= wire.HAS_COMMITMENT_LENGTH
+		}
+		return token
+	}
+	out := func(token wire.TokenData) *wire.TxOut {
+		return wire.NewTxOut(900, script, token)
+	}
+	immutable := addCredit(t, w, wire.NewTxOut(1000, script,
+		nft(wire.NONE, "mine")))
+	mutable := addCredit(t, w, wire.NewTxOut(1000, script,
+		nft(wire.MUTABLE, "draft")))
+	minting := addCredit(t, w, wire.NewTxOut(1000, script,
+		nft(wire.MINTING, "")))
+	foreign := wire.OutPoint{Hash: chainhash.Hash{9}, Index: 1}
+
+	tests := []struct {
+		name  string
+		ops   []wire.OutPoint
+		outs  []*wire.TxOut
+		burns bool
+	}{
+		{"another input's NFT instead of the wallet's",
+			[]wire.OutPoint{immutable, foreign},
+			[]*wire.TxOut{out(nft(wire.NONE, "theirs"))}, true},
+		{"a minted NFT instead of the wallet's",
+			[]wire.OutPoint{minting, immutable},
+			[]*wire.TxOut{out(nft(wire.MINTING, "")),
+				out(nft(wire.NONE, "new"))}, true},
+		{"minting NFT made immutable",
+			[]wire.OutPoint{minting},
+			[]*wire.TxOut{out(nft(wire.NONE, ""))}, true},
+		{"mutable NFT dropped",
+			[]wire.OutPoint{immutable, mutable},
+			[]*wire.TxOut{out(nft(wire.NONE, "mine"))}, true},
+		{"mutable NFT changed",
+			[]wire.OutPoint{mutable},
+			[]*wire.TxOut{out(nft(wire.MUTABLE, "edited"))}, false},
+		{"mutable NFT made immutable",
+			[]wire.OutPoint{immutable, mutable},
+			[]*wire.TxOut{out(nft(wire.NONE, "mine")),
+				out(nft(wire.NONE, "final"))}, false},
+		{"NFTs minted",
+			[]wire.OutPoint{minting, immutable},
+			[]*wire.TxOut{out(nft(wire.MINTING, "")),
+				out(nft(wire.NONE, "mine")), out(nft(wire.NONE, "new"))},
+			false},
+	}
+	for _, test := range tests {
+		tx := spendTx(test.ops, test.outs...)
+		values := make([]int64, len(test.ops))
+		prevScripts := make(map[wire.OutPoint][]byte)
+		for i, op := range test.ops {
+			values[i] = 1000
+			if op == foreign {
+				prevScripts[op] = script
+			}
+		}
+		_, err := w.SignTransaction(tx, values, txscript.SigHashAll,
+			prevScripts, nil, nil, false)
+		if errors.Is(err, ErrTokenBurn) != test.burns {
+			t.Errorf("%s: got %v, want a burn %v", test.name, err,
+				test.burns)
+		}
+	}
+}

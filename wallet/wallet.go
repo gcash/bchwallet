@@ -3445,8 +3445,9 @@ var ErrTokenBurn = errors.New("the transaction would burn tokens")
 // The wallet takes each from its own records when it has them, rather than
 // from inputValues and additionalPrevScripts, which can't carry tokens; an
 // output it doesn't have needs both.  Unless allowTokenBurn is true, it refuses
-// to sign a transaction whose outputs carry fewer fungible tokens, or NFTs, of
-// a category than the outputs it spends that it has records of.
+// to sign a transaction that would burn tokens of the outputs it spends that it
+// has records of, as burnedTokens describes: fungible tokens its outputs carry
+// fewer of, an NFT its outputs don't carry on, or a minting capability.
 //
 // Transaction input script validation is used to confirm that all signatures
 // are valid.  For any invalid input, a SignatureError is added to the returns.
@@ -3629,14 +3630,22 @@ func (w *Wallet) spentOutput(txmgrNs walletdb.ReadBucket,
 	return txDetails.MsgTx.TxOut[op.Index], nil
 }
 
-// burnedTokens returns a category of tokens that tx would burn, one that its
-// outputs carry fewer fungible tokens or NFTs of than prevOuts, the outputs it
-// spends, or nil if there is none.  With several, it returns the first in the
-// byte order of transaction IDs.
+// burnedTokens returns a category of tokens that tx would burn of prevOuts, the
+// outputs it spends, or nil if there is none.  It burns tokens of a category
+// when its outputs carry fewer fungible tokens of it than prevOuts, or don't
+// carry on an NFT of it that prevOuts hold: an immutable NFT must come out with
+// the same commitment, a mutable one may come out changed or immutable, and a
+// minting NFT must come out as a minting NFT, since its capability can't be
+// had back.  NFTs are told apart by their commitments, not just counted, so
+// another input's NFT, or one that a minting NFT mints, doesn't stand in for
+// one of prevOuts.  With several, it returns the first in the byte order of
+// transaction IDs.
 func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
 	type held struct {
-		amount uint64
-		nfts   int
+		amount    uint64
+		minting   int
+		mutable   int
+		immutable map[string]int // By commitment.
 	}
 	count := func(outs []*wire.TxOut) map[chainhash.Hash]*held {
 		byCategory := make(map[chainhash.Hash]*held)
@@ -3647,24 +3656,46 @@ func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
 			}
 			h := byCategory[token.CategoryID]
 			if h == nil {
-				h = &held{}
+				h = &held{immutable: make(map[string]int)}
 				byCategory[token.CategoryID] = h
 			}
 			if token.HasAmount() {
 				h.amount += token.Amount
 			}
-			if token.HasNFT() {
-				h.nfts++
+			switch {
+			case token.IsMintingNFT():
+				h.minting++
+			case token.IsMutableNFT():
+				h.mutable++
+			case token.IsImmutableNFT():
+				h.immutable[string(token.Commitment)]++
 			}
 		}
 		return byCategory
+	}
+	burns := func(s, k *held) bool {
+		if k == nil || k.amount < s.amount || k.minting < s.minting {
+			return true
+		}
+		for commitment, n := range s.immutable {
+			if k.immutable[commitment] < n {
+				return true
+			}
+		}
+
+		// What a mutable NFT spent becomes can be a mutable NFT or one of
+		// the immutable NFTs left over once those spent are matched.
+		left := k.mutable
+		for commitment, n := range k.immutable {
+			left += n - s.immutable[commitment]
+		}
+		return left < s.mutable
 	}
 
 	spent, kept := count(prevOuts), count(tx.TxOut)
 	var burned []chainhash.Hash
 	for category, s := range spent {
-		k := kept[category]
-		if k == nil || k.amount < s.amount || k.nfts < s.nfts {
+		if burns(s, kept[category]) {
 			burned = append(burned, category)
 		}
 	}

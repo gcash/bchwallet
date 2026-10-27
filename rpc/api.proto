@@ -342,9 +342,11 @@ message SignTransactionRequest {
 	// the bitcoin cash signing algorithm.
 	repeated int64 input_values = 4;
 
-	// Sign even if the transaction's outputs carry fewer fungible tokens
-	// or NFTs of a category than the wallet's outputs it spends, which
-	// burns the difference.
+	// Sign even if the transaction would burn tokens of the wallet's
+	// outputs it spends: fungible tokens of a category that its outputs
+	// carry fewer of, an immutable NFT that none of them carries with its
+	// commitment, a mutable NFT that leaves no NFT of its category, or
+	// the capability of a minting NFT.
 	bool allow_token_burn = 5;
 }
 message SignTransactionResponse {
