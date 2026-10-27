@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gcash/bchwallet/internal/cfgutil"
 )
 
 // TestStopWith ensures that a fatal wallet error stops the run, and that the
@@ -185,4 +187,33 @@ func TestWalletMainContextUnreachableBchd(t *testing.T) {
 	time.Sleep(time.Second)
 	cancel()
 	waitRun(t, done, addr, 15*time.Second)
+}
+
+// TestStartRPCServersListenerFailure ensures that when the listeners of the
+// legacy RPC server can't be created, nothing is left serving, since no
+// interrupt handler would stop it and it would outlive the run.
+func TestStartRPCServersListenerFailure(t *testing.T) {
+	dir := t.TempDir()
+	addr := freeAddr(t)
+	cfg = &config{
+		ExperimentalRPCListeners: []string{addr},
+		DisableServerTLS:         true,
+		Username:                 "user",
+		Password:                 "pass",
+		// Not an IP address, which makeListeners can't listen on.
+		LegacyRPCListeners: []string{"localhost:1"},
+		RPCCert:            cfgutil.NewExplicitString(filepath.Join(dir, "rpc.cert")),
+		RPCKey:             cfgutil.NewExplicitString(filepath.Join(dir, "rpc.key")),
+	}
+
+	grpcServer, legacyServer, err := startRPCServers(nil)
+	if err == nil || grpcServer != nil || legacyServer != nil {
+		t.Fatalf("got %v, %v, %v, want an error and no servers",
+			grpcServer, legacyServer, err)
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("the gRPC address is still in use: %v", err)
+	}
+	_ = l.Close()
 }

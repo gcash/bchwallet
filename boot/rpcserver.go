@@ -146,14 +146,33 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		return tls.Listen(net, laddr, tlsConfig)
 	}
 
+	// Create the listeners of both servers before starting either, so that
+	// nothing has started when one fails: no interrupt handler would stop
+	// it, and it would outlive the run in a process that runs the wallet
+	// again.
+	var grpcListeners, legacyListeners []net.Listener
 	if len(cfg.ExperimentalRPCListeners) != 0 {
-		listeners := makeListeners(cfg.ExperimentalRPCListeners, net.Listen)
-		if len(listeners) == 0 {
+		grpcListeners = makeListeners(cfg.ExperimentalRPCListeners, net.Listen)
+		if len(grpcListeners) == 0 {
 			err := errors.New("failed to create listeners for RPC server")
 			return nil, nil, err
 		}
-		// Stop waits for the handlers to return, so that the services
-		// can be reset for another run of the wallet in this process.
+	}
+	if cfg.Username == "" || cfg.Password == "" {
+		log.Info("Legacy RPC server disabled (requires username and password)")
+	} else if len(cfg.LegacyRPCListeners) != 0 {
+		legacyListeners = makeListeners(cfg.LegacyRPCListeners, legacyListen)
+		if len(legacyListeners) == 0 {
+			closeListeners(grpcListeners)
+			err := errors.New("failed to create listeners for legacy RPC server")
+			return nil, nil, err
+		}
+	}
+
+	if len(grpcListeners) != 0 {
+		// Stop waits for the handlers to return, so that the shutdown
+		// can tell when no call uses the wallet or the services any
+		// more.
 		opts := []grpc.ServerOption{grpc.StreamInterceptor(interceptStreaming), grpc.UnaryInterceptor(interceptUnary),
 			grpc.WaitForHandlers(true)}
 		if !cfg.DisableServerTLS {
@@ -162,7 +181,7 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		}
 		server = grpc.NewServer(opts...)
 		rpcserver.RegisterServices(server)
-		for _, lis := range listeners {
+		for _, lis := range grpcListeners {
 			lis := lis
 			go func() {
 				log.Infof("Experimental RPC server listening on %s",
@@ -174,21 +193,14 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		}
 	}
 
-	if cfg.Username == "" || cfg.Password == "" {
-		log.Info("Legacy RPC server disabled (requires username and password)")
-	} else if len(cfg.LegacyRPCListeners) != 0 {
-		listeners := makeListeners(cfg.LegacyRPCListeners, legacyListen)
-		if len(listeners) == 0 {
-			err := errors.New("failed to create listeners for legacy RPC server")
-			return nil, nil, err
-		}
+	if len(legacyListeners) != 0 {
 		opts := legacyrpc.Options{
 			Username:            cfg.Username,
 			Password:            cfg.Password,
 			MaxPOSTClients:      cfg.LegacyRPCMaxClients,
 			MaxWebsocketClients: cfg.LegacyRPCMaxWebsockets,
 		}
-		legacyServer = legacyrpc.NewServer(&opts, walletLoader, listeners)
+		legacyServer = legacyrpc.NewServer(&opts, walletLoader, legacyListeners)
 	}
 
 	// Error when neither the GRPC nor legacy RPC servers can be started.
@@ -197,6 +209,15 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 	}
 
 	return server, legacyServer, nil
+}
+
+// closeListeners closes listeners that no server serves.
+func closeListeners(listeners []net.Listener) {
+	for _, l := range listeners {
+		if err := l.Close(); err != nil {
+			log.Warnf("Cannot close listener %s: %v", l.Addr(), err)
+		}
+	}
 }
 
 // serviceName returns the package.service segment from the full gRPC method
