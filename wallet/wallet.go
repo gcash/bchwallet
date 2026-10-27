@@ -2756,7 +2756,8 @@ func (s creditSlice) Swap(i, j int) {
 // transactions fitting the given criteria. The confirmations will be more than
 // minconf, less than maxconf and if addresses is populated only the addresses
 // contained within it will be considered.  If we know nothing about a
-// transaction an empty array will be returned.
+// transaction an empty array will be returned.  Outputs that carry CashTokens
+// are listed as not spendable.
 func (w *Wallet) ListUnspent(minconf, maxconf int32,
 	addresses map[string]struct{}) ([]*btcjson.ListUnspentResult, error) {
 
@@ -2863,6 +2864,14 @@ func (w *Wallet) ListUnspent(minconf, maxconf int32,
 					return err
 				}
 				spendable = true
+			}
+
+			// Outputs that carry tokens aren't spendable either: the
+			// wallet leaves them out of its spendable balance and of
+			// coin selection, and the result can't show the tokens, so
+			// a client that spent one for its value would burn them.
+			if output.HasTokens() {
+				spendable = false
 			}
 
 			result := &btcjson.ListUnspentResult{

@@ -925,3 +925,29 @@ func TestBalancesUnconfirmed(t *testing.T) {
 			"7000 unconfirmed", bals)
 	}
 }
+
+// TestListUnspentTokens checks that ListUnspent lists the outputs that carry
+// tokens as not spendable, so that a legacy client, which can't see their
+// tokens, doesn't spend them for their value.
+func TestListUnspentTokens(t *testing.T) {
+	w := newRegtestWallet(t)
+	setSyncedTo(t, w, testBlock.Height)
+	script := walletScript(t, w)
+	plain := addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	token := addCredit(t, w, wire.NewTxOut(1000, script, testToken))
+
+	results, err := w.ListUnspent(0, 9999999, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spendable := make(map[string]bool)
+	for _, result := range results {
+		spendable[result.TxID] = result.Spendable
+	}
+	if len(results) != 2 || !spendable[plain.Hash.String()] ||
+		spendable[token.Hash.String()] {
+
+		t.Errorf("got %d outputs, spendable %v; want the one without "+
+			"tokens spendable", len(results), spendable)
+	}
+}
