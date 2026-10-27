@@ -287,13 +287,13 @@ func (s *stopError) get() error {
 	return s.err
 }
 
-// startProfileServer serves the profiling handlers on port with a server and
-// mux of its own, so that each run of the wallet in a process has its own
-// server, which it closes when it stops.  The mux passes /debug/ to
-// http.DefaultServeMux, where importing net/http/pprof, as the bchwallet
-// command does, registers the profiling handlers.
-func startProfileServer(port string) *http.Server {
-	listenAddr := net.JoinHostPort("", port)
+// startProfileServer serves the profiling handlers at the address the profile
+// option gives, with a server and mux of its own, so that each run of the
+// wallet in a process has its own server, which it closes when it stops.  The
+// mux passes /debug/ to http.DefaultServeMux, where importing net/http/pprof,
+// as the bchwallet command does, registers the profiling handlers.
+func startProfileServer(profile string) *http.Server {
+	listenAddr := profileListenAddr(profile)
 	mux := http.NewServeMux()
 	mux.Handle("/debug/", http.DefaultServeMux)
 	mux.Handle("/", http.RedirectHandler("/debug/pprof", http.StatusSeeOther))
@@ -310,6 +310,17 @@ func startProfileServer(port string) *http.Server {
 		}
 	}()
 	return server
+}
+
+// profileListenAddr returns the address the profile server listens on for the
+// profile option: localhost for a port alone, since the profiling handlers
+// show the command line of the process, with any passwords given there, and
+// the host and port that the option gives otherwise.
+func profileListenAddr(profile string) string {
+	if _, _, err := net.SplitHostPort(profile); err == nil {
+		return profile
+	}
+	return net.JoinHostPort("127.0.0.1", profile)
 }
 
 // rpcClientConnectLoop continuously attempts a connection to the consensus RPC

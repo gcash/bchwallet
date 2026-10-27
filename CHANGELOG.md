@@ -39,6 +39,7 @@ This release lets an app run the wallet again in the same process and start it w
 
 ### New options
 
+- `profile` takes a host and port, `host:port`, as well as a port. A port alone now listens on localhost: the profile server shows the command line of the process, with any passwords given there, and listened on every interface. Each run of the wallet in a process has its own profile server, where the second run panicked.
 - `--testnet4` and `--chipnet` run the wallet on testnet4 and on chipnet, the test network that activates upgrades early. They use the default ports of testnet3, as bchd does, and keep their wallets in the `testnet4` and `chipnet` directories of the application data directory.
 
 ### RPC & gRPC

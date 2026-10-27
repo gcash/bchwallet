@@ -257,3 +257,21 @@ func TestProfileServerRestart(t *testing.T) {
 		}
 	}
 }
+
+// TestProfileListenAddr ensures that the profile server listens on localhost
+// when the profile option is a port, since its handlers show the command line
+// of the process, with any passwords given there, and where the option says
+// when it is a host and port.
+func TestProfileListenAddr(t *testing.T) {
+	for _, test := range []struct{ profile, want string }{
+		{"6062", "127.0.0.1:6062"},
+		{"0.0.0.0:6062", "0.0.0.0:6062"},
+		{"[::1]:6062", "[::1]:6062"},
+		{":6062", ":6062"},
+	} {
+		if got := profileListenAddr(test.profile); got != test.want {
+			t.Errorf("profile=%s: listens on %s, want %s", test.profile,
+				got, test.want)
+		}
+	}
+}
