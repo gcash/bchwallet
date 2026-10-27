@@ -125,6 +125,13 @@ type versionServer struct {
 type walletServer struct {
 	ready  uint32 // atomic
 	wallet atomic.Pointer[wallet.Wallet]
+
+	// jppRequests holds when each JSON Payment Protocol request that
+	// DownloadPaymentRequest returned expires, by its payment URL, so that
+	// PostPayment pays one with that protocol for a client that predates
+	// PostPaymentRequest's protocol field.  It is guarded by jppMtx.
+	jppMtx      sync.Mutex
+	jppRequests map[string]time.Time
 }
 
 // loaderServer provides RPC clients with the ability to load and close wallets,
@@ -1066,6 +1073,7 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 	protocol := pb.PaymentProtocol_BIP70
 	if pr.Protocol == pymtproto.ProtocolJPPv2 {
 		protocol = pb.PaymentProtocol_JSON_PAYMENT_PROTOCOL_V2
+		s.rememberJPPRequest(pr.PaymentURL, pr.Expires)
 	}
 	resp := &pb.DownloadPaymentRequestResponse{
 		PayToName:           pr.PayToName,
@@ -1095,7 +1103,15 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 		MerchantData: req.MerchantData,
 		Memo:         req.Memo,
 	}
-	switch req.Protocol {
+
+	// A client that predates the protocol field sends BIP70, its zero value,
+	// whatever the request, so the request downloaded for the payment URL
+	// decides when it was a JSON Payment Protocol one.
+	protocol := req.Protocol
+	if protocol == pb.PaymentProtocol_BIP70 && s.isJPPRequest(req.PaymentUrl) {
+		protocol = pb.PaymentProtocol_JSON_PAYMENT_PROTOCOL_V2
+	}
+	switch protocol {
 	case pb.PaymentProtocol_BIP70:
 		if req.RefundOutput == nil {
 			return nil, status.Errorf(codes.InvalidArgument, "no refund output")
@@ -1145,6 +1161,35 @@ func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentReque
 		Memo: ackMemo,
 	}
 	return resp, nil
+}
+
+// rememberJPPRequest remembers, until it expires, that the payment request
+// whose payments go to paymentURL uses the JSON Payment Protocol, and forgets
+// the requests that have expired.
+func (s *walletServer) rememberJPPRequest(paymentURL string, expires time.Time) {
+	s.jppMtx.Lock()
+	defer s.jppMtx.Unlock()
+
+	now := time.Now()
+	for u, exp := range s.jppRequests {
+		if !exp.After(now) {
+			delete(s.jppRequests, u)
+		}
+	}
+	if s.jppRequests == nil {
+		s.jppRequests = make(map[string]time.Time)
+	}
+	s.jppRequests[paymentURL] = expires
+}
+
+// isJPPRequest returns whether DownloadPaymentRequest returned a JSON Payment
+// Protocol request, which hasn't expired, whose payments go to paymentURL.
+func (s *walletServer) isJPPRequest(paymentURL string) bool {
+	s.jppMtx.Lock()
+	defer s.jppMtx.Unlock()
+
+	expires, ok := s.jppRequests[paymentURL]
+	return ok && expires.After(time.Now())
 }
 
 func (s *walletServer) ValidateAddress(ctx context.Context, req *pb.ValidateAddressRequest) (
