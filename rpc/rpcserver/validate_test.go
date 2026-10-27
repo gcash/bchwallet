@@ -131,14 +131,15 @@ func TestRequestOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outputs, err := requestOutputs([]*pb.CreateTransactionRequest_Output{
+	outputs, nfts, err := requestOutputs([]*pb.CreateTransactionRequest_Output{
 		{Address: a.cashAddr, Amount: 546},
 	}, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("output at the dust limit: %v", err)
 	}
 	if len(outputs) != 1 || outputs[0].Value != 546 ||
-		!bytes.Equal(outputs[0].PkScript, script) {
+		!bytes.Equal(outputs[0].PkScript, script) || len(nfts) != 1 ||
+		nfts[0] != nil {
 
 		t.Fatalf("got outputs %v, want 546 satoshis to %x", outputs, script)
 	}
@@ -163,7 +164,7 @@ func TestRequestOutputs(t *testing.T) {
 			{Address: a.testnetLeg, Amount: 1000}}},
 	}
 	for _, test := range invalid {
-		_, err := requestOutputs(test.outputs, &chaincfg.MainNetParams)
+		_, _, err := requestOutputs(test.outputs, &chaincfg.MainNetParams)
 		if status.Code(err) != codes.InvalidArgument {
 			t.Errorf("%s: got %v, want InvalidArgument", test.name, err)
 		}

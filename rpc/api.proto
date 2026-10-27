@@ -289,8 +289,19 @@ message FundTransactionResponse {
 
 message CreateTransactionRequest {
 	message Output {
-		string address = 1;
-		int64 amount = 2;
+		string address = 1; // Token-aware if the output sends tokens.
+		int64 amount = 2; // 0 for an output with tokens means its dust minimum.
+		TokenOutput token = 3; // Unset to send no tokens.
+	}
+	// The tokens an output sends.
+	message TokenOutput {
+		string category = 1; // Hex, in the byte order of transaction IDs.
+		uint64 amount = 2; // Fungible amount, 0 if none.
+
+		// The NFT to send, by the outpoint of the wallet's output that
+		// holds it, as TokenBalances lists it.  Unset to send none.
+		bytes nft_transaction_hash = 3;
+		uint32 nft_output_index = 4;
 	}
 	uint32 account = 1;
 	repeated Output outputs = 2;
@@ -330,6 +341,11 @@ message SignTransactionRequest {
 	// Values must be provided for each input in order to sign using
 	// the bitcoin cash signing algorithm.
 	repeated int64 input_values = 4;
+
+	// Sign even if the transaction's outputs carry fewer fungible tokens
+	// or NFTs of a category than the wallet's outputs it spends, which
+	// burns the difference.
+	bool allow_token_burn = 5;
 }
 message SignTransactionResponse {
 	bytes transaction = 1;

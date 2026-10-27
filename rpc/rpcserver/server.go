@@ -91,6 +91,13 @@ func errorCode(err error) codes.Code {
 		err = e.Err
 	}
 
+	switch {
+	case errors.Is(err, wallet.ErrTokenSend):
+		return codes.InvalidArgument
+	case errors.Is(err, wallet.ErrTokenBurn):
+		return codes.FailedPrecondition
+	}
+
 	switch err {
 	case wallet.ErrLoaded:
 		return codes.FailedPrecondition
@@ -569,30 +576,91 @@ func checkFee(fee bchutil.Amount) error {
 // pay addresses for the wallet's network amounts that nodes relay: at least
 // the dust limit and at most the money supply.
 func requestOutputs(outs []*pb.CreateTransactionRequest_Output,
-	params *chaincfg.Params) ([]*wire.TxOut, error) {
+	params *chaincfg.Params) ([]*wire.TxOut, []*wire.OutPoint, error) {
 
 	if len(outs) == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "no outputs")
+		return nil, nil, status.Errorf(codes.InvalidArgument, "no outputs")
 	}
 	outputs := make([]*wire.TxOut, 0, len(outs))
+	nfts := make([]*wire.OutPoint, 0, len(outs))
 	for _, out := range outs {
 		addr, err := decodeAddress(out.Address, params)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		script, err := txscript.PayToAddrScript(addr)
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument,
+			return nil, nil, status.Errorf(codes.InvalidArgument,
 				"invalid address %q: %v", out.Address, err)
 		}
 		txOut := wire.NewTxOut(out.Amount, script, wire.TokenData{})
-		if err := txrules.CheckOutput(txOut, txrules.DefaultRelayFeePerKb); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument,
+
+		// The wallet checks the dust of an output with tokens, once it
+		// knows the NFT the output sends.
+		var nft *wire.OutPoint
+		if out.Token != nil {
+			nft, err = requestTokens(out, addr, &txOut.TokenData)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else if err := txrules.CheckOutput(txOut, txrules.DefaultRelayFeePerKb); err != nil {
+			return nil, nil, status.Errorf(codes.InvalidArgument,
 				"output of %d satoshis to %s: %v", out.Amount, out.Address, err)
 		}
 		outputs = append(outputs, txOut)
+		nfts = append(nfts, nft)
 	}
-	return outputs, nil
+	return outputs, nfts, nil
+}
+
+// requestTokens sets token to the fungible tokens that an output of a
+// CreateTransaction request sends to addr, and returns the outpoint of the NFT
+// it sends, or nil.
+func requestTokens(out *pb.CreateTransactionRequest_Output,
+	addr bchutil.Address, token *wire.TokenData) (*wire.OutPoint, error) {
+
+	if t, ok := addr.(bchutil.TokenAwareAddress); !ok || !t.IsTokenAware() {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"tokens need a token-aware address, not %s", out.Address)
+	}
+	if out.Amount < 0 || out.Amount > bchutil.MaxSatoshi {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"output of %d satoshis to %s: out of range", out.Amount,
+			out.Address)
+	}
+	if len(out.Token.Category) != 2*chainhash.HashSize {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid token category %q", out.Token.Category)
+	}
+	category, err := chainhash.NewHashFromStr(out.Token.Category)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid token category %q: %v", out.Token.Category, err)
+	}
+	if out.Token.Amount > wire.MAX_FT_AMOUNT {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"token amount %d is more than can exist", out.Token.Amount)
+	}
+	token.CategoryID = *category
+	if out.Token.Amount > 0 {
+		token.Amount = out.Token.Amount
+		token.BitField = wire.HAS_AMOUNT
+	}
+
+	if len(out.Token.NftTransactionHash) == 0 {
+		if out.Token.Amount == 0 {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"the tokens of an output need a fungible amount or "+
+					"an NFT")
+		}
+		return nil, nil
+	}
+	hash, err := chainhash.NewHash(out.Token.NftTransactionHash)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid NFT transaction hash: %v", err)
+	}
+	return wire.NewOutPoint(hash, out.Token.NftOutputIndex), nil
 }
 
 // sweepOutput returns the output that sweeps total, spent by numInputs
@@ -631,14 +699,15 @@ func (s *walletServer) CreateTransaction(ctx context.Context, req *pb.CreateTran
 	if err != nil {
 		return nil, err
 	}
-	outputs, err := requestOutputs(req.Outputs, s.wallet.ChainParams())
+	outputs, nfts, err := requestOutputs(req.Outputs, s.wallet.ChainParams())
 	if err != nil {
 		return nil, err
 	}
 
-	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, req.RequiredConfirmations, rate)
+	authoredTx, err := s.wallet.CreateUnsignedTx(req.Account, outputs, nfts,
+		req.RequiredConfirmations, rate)
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 	var serializedTx bytes.Buffer
 	err = authoredTx.Tx.BchEncode(&serializedTx, wire.ProtocolVersion, wire.BaseEncoding)
@@ -839,7 +908,8 @@ func (s *walletServer) SignTransaction(ctx context.Context, req *pb.SignTransact
 		return nil, translateError(err)
 	}
 
-	invalidSigs, err := s.wallet.SignTransaction(&tx, req.InputValues, txscript.SigHashAll, nil, nil, nil)
+	invalidSigs, err := s.wallet.SignTransaction(&tx, req.InputValues,
+		txscript.SigHashAll, nil, nil, nil, req.AllowTokenBurn)
 	if err != nil {
 		return nil, translateError(err)
 	}

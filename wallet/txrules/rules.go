@@ -28,7 +28,18 @@ func GetDustThreshold(scriptSize int, relayFeePerKb bchutil.Amount) bchutil.Amou
 	// the largest possible (txsizes.RedeemP2PKHInputSize).
 	totalSize := 8 + wire.VarIntSerializeSize(uint64(scriptSize)) +
 		scriptSize + 148
+	return dustThreshold(totalSize, relayFeePerKb)
+}
 
+// OutputDustThreshold is GetDustThreshold for output, counting all of its
+// serialized size, its tokens included, as bchd does.
+func OutputDustThreshold(output *wire.TxOut, relayFeePerKb bchutil.Amount) bchutil.Amount {
+	return dustThreshold(output.SerializeSize()+148, relayFeePerKb)
+}
+
+// dustThreshold returns the dust threshold of an output whose serialized size,
+// plus that of an input that redeems it, is totalSize.
+func dustThreshold(totalSize int, relayFeePerKb bchutil.Amount) bchutil.Amount {
 	byteFee := relayFeePerKb / 1000
 	relayFee := bchutil.Amount(totalSize) * byteFee
 	return 3 * relayFee
@@ -55,8 +66,8 @@ func IsDustOutput(output *wire.TxOut, relayFeePerKb bchutil.Amount) bool {
 		return true
 	}
 
-	return IsDustAmount(bchutil.Amount(output.Value), len(output.PkScript),
-		relayFeePerKb)
+	return bchutil.Amount(output.Value) <
+		OutputDustThreshold(output, relayFeePerKb)
 }
 
 // Transaction rule violations

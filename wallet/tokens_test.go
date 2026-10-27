@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/gcash/bchutil/hdkeychain"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet/txauthor"
+	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/wtxmgr"
 )
@@ -196,7 +198,7 @@ func TestSignTransactionTokens(t *testing.T) {
 		tx := spendTx(ops, wire.NewTxOut(1000, script, testToken),
 			wire.NewTxOut(90000, script, wire.TokenData{}))
 		sigErrs, err := w.SignTransaction(tx, test.inputValues,
-			txscript.SigHashAll, test.prevScripts, nil, nil)
+			txscript.SigHashAll, test.prevScripts, nil, nil, false)
 		if err != nil || len(sigErrs) != 0 {
 			t.Errorf("%s: got %v, %v", test.name, sigErrs, err)
 			continue
@@ -242,7 +244,7 @@ func TestSignTransactionCheckTokens(t *testing.T) {
 	}
 
 	sigErrs, err := w.SignTransaction(tx, nil, txscript.SigHashSingle, nil,
-		nil, nil)
+		nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +266,7 @@ func TestSignTransactionSigHashUTXOs(t *testing.T) {
 
 	tx := spendTx(ops, wire.NewTxOut(1000, script, testToken),
 		wire.NewTxOut(90000, script, wire.TokenData{}))
-	sigErrs, err := w.SignTransaction(tx, nil, hashType, nil, nil, nil)
+	sigErrs, err := w.SignTransaction(tx, nil, hashType, nil, nil, nil, false)
 	if err != nil || len(sigErrs) != 0 {
 		t.Fatalf("got %v, %v", sigErrs, err)
 	}
@@ -279,7 +281,7 @@ func TestSignTransactionSigHashUTXOs(t *testing.T) {
 	tx = spendTx([]wire.OutPoint{ops[1], foreign},
 		wire.NewTxOut(90000, script, wire.TokenData{}))
 	_, err = w.SignTransaction(tx, []int64{100000, 5000}, hashType,
-		map[wire.OutPoint][]byte{foreign: script}, nil, nil)
+		map[wire.OutPoint][]byte{foreign: script}, nil, nil, false)
 	if err == nil {
 		t.Fatal("signed with SIGHASH_UTXOS without every output the " +
 			"transaction spends")
@@ -562,5 +564,257 @@ func TestTxSummaryTokens(t *testing.T) {
 	if len(summary.MyOutputs) != 1 ||
 		!tokensEqual(&summary.MyOutputs[0].Token, &testToken) {
 		t.Errorf("outputs: got %+v", summary.MyOutputs)
+	}
+}
+
+// spentBy returns the outputs of prevOuts that tx spends, in input order.
+func spentBy(t *testing.T, tx *wire.MsgTx,
+	prevOuts map[wire.OutPoint]*wire.TxOut) []*wire.TxOut {
+
+	t.Helper()
+
+	spent := make([]*wire.TxOut, len(tx.TxIn))
+	for i, txIn := range tx.TxIn {
+		spent[i] = prevOuts[txIn.PreviousOutPoint]
+		if spent[i] == nil {
+			t.Fatalf("input %d spends %v, which isn't the wallet's", i,
+				txIn.PreviousOutPoint)
+		}
+	}
+	return spent
+}
+
+// signAndVerify signs tx with the wallet, which must not refuse, and checks
+// its inputs with the token rules, given the outputs they spend.
+func signAndVerify(t *testing.T, w *Wallet, tx *wire.MsgTx,
+	spent []*wire.TxOut) {
+
+	t.Helper()
+
+	sigErrs, err := w.SignTransaction(tx, nil, txscript.SigHashAll, nil,
+		nil, nil, false)
+	if err != nil || len(sigErrs) != 0 {
+		t.Fatalf("signing: got %v, %v", sigErrs, err)
+	}
+	if err := verifyInputs(tx, spent, tokenFlags); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCreateUnsignedTokenTx checks that CreateUnsignedTx spends the account's
+// outputs with the fungible tokens an output sends, largest first, returns the
+// tokens left over as change, gives the outputs with tokens their dust
+// threshold, and creates a transaction that signs validly under the token
+// rules with enough fee.
+func TestCreateUnsignedTokenTx(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	category := testToken.CategoryID
+	fungible := func(amount uint64) wire.TokenData {
+		return wire.TokenData{CategoryID: category, Amount: amount,
+			BitField: wire.HAS_AMOUNT}
+	}
+	// The outputs with the tokens hold less than the dust thresholds of
+	// the two outputs with tokens, so BCH is spent too.
+	prevOuts := make(map[wire.OutPoint]*wire.TxOut)
+	for _, out := range []*wire.TxOut{
+		wire.NewTxOut(600, script, fungible(70)),
+		wire.NewTxOut(601, script, fungible(50)),
+		wire.NewTxOut(602, script, fungible(10)),
+		wire.NewTxOut(100000, script, wire.TokenData{}),
+	} {
+		prevOuts[addCredit(t, w, out)] = out
+	}
+
+	tx, err := w.CreateUnsignedTx(0, []*wire.TxOut{
+		wire.NewTxOut(0, script, fungible(100)),
+	}, nil, 1, txrules.DefaultRelayFeePerKb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spent := spentBy(t, tx.Tx, prevOuts)
+	var spentTokens []uint64
+	for _, out := range spent {
+		if !out.TokenData.IsEmpty() {
+			spentTokens = append(spentTokens, out.TokenData.Amount)
+		}
+	}
+	if len(spent) != 3 || fmt.Sprint(spentTokens) != "[70 50]" {
+		t.Errorf("spent %d outputs, with tokens %v; want the outputs with "+
+			"70 and 50 tokens, and one without", len(spent), spentTokens)
+	}
+
+	var sent []uint64
+	for _, out := range tx.Tx.TxOut {
+		if out.TokenData.IsEmpty() {
+			continue
+		}
+		sent = append(sent, out.TokenData.Amount)
+		threshold := txrules.OutputDustThreshold(out,
+			txrules.DefaultRelayFeePerKb)
+		if out.TokenData.CategoryID != category ||
+			out.Value != int64(threshold) {
+
+			t.Errorf("output of %d satoshis with %d tokens of %x; want "+
+				"%v", out.Value, out.TokenData.Amount,
+				out.TokenData.CategoryID, threshold)
+		}
+	}
+	sort.Slice(sent, func(i, j int) bool { return sent[i] < sent[j] })
+	if fmt.Sprint(sent) != "[20 100]" {
+		t.Errorf("outputs with %v tokens, want 100 sent and 20 back", sent)
+	}
+
+	signAndVerify(t, w, tx.Tx, spent)
+	var fee int64
+	for _, out := range spent {
+		fee += out.Value
+	}
+	for _, out := range tx.Tx.TxOut {
+		fee -= out.Value
+	}
+	minFee := txrules.FeeForSerializeSize(txrules.DefaultRelayFeePerKb,
+		tx.Tx.SerializeSize())
+	if bchutil.Amount(fee) < minFee {
+		t.Errorf("fee of %d satoshis, below the %v %d bytes need", fee,
+			minFee, tx.Tx.SerializeSize())
+	}
+}
+
+// TestCreateUnsignedNFTTx checks that CreateUnsignedTx sends the NFT an output
+// names as it is, and returns the fungible tokens its output also held.
+func TestCreateUnsignedNFTTx(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	category := testToken.CategoryID
+	nftOut := wire.NewTxOut(1000, script, wire.TokenData{
+		CategoryID: category,
+		Amount:     5,
+		Commitment: []byte("nft"),
+		BitField: wire.HAS_AMOUNT | wire.HAS_NFT |
+			wire.HAS_COMMITMENT_LENGTH | wire.MUTABLE,
+	})
+	bchOut := wire.NewTxOut(100000, script, wire.TokenData{})
+	nft := addCredit(t, w, nftOut)
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		nft:                     nftOut,
+		addCredit(t, w, bchOut): bchOut,
+	}
+
+	tx, err := w.CreateUnsignedTx(0, []*wire.TxOut{
+		wire.NewTxOut(0, script, wire.TokenData{CategoryID: category}),
+	}, []*wire.OutPoint{&nft}, 1, txrules.DefaultRelayFeePerKb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentNFT := wire.TokenData{
+		CategoryID: category,
+		Commitment: []byte("nft"),
+		BitField:   wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH | wire.MUTABLE,
+	}
+	change := wire.TokenData{CategoryID: category, Amount: 5,
+		BitField: wire.HAS_AMOUNT}
+	var gotNFT, gotChange bool
+	for _, out := range tx.Tx.TxOut {
+		gotNFT = gotNFT || tokensEqual(&out.TokenData, &sentNFT)
+		gotChange = gotChange || tokensEqual(&out.TokenData, &change)
+	}
+	if !gotNFT || !gotChange {
+		t.Errorf("NFT sent %v, 5 tokens returned %v", gotNFT, gotChange)
+	}
+	signAndVerify(t, w, tx.Tx, spentBy(t, tx.Tx, prevOuts))
+}
+
+// TestCreateUnsignedTokenErrors checks the token sends CreateUnsignedTx
+// refuses.
+func TestCreateUnsignedTokenErrors(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	category := testToken.CategoryID
+	fungible := addCredit(t, w, wire.NewTxOut(1000, script, testToken))
+	nft := addCredit(t, w, wire.NewTxOut(1001, script,
+		wire.TokenData{CategoryID: category, BitField: wire.HAS_NFT}))
+	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	unknown := wire.OutPoint{Hash: chainhash.Hash{9}}
+
+	send := func(value int64, token wire.TokenData) *wire.TxOut {
+		return wire.NewTxOut(value, script, token)
+	}
+	nftOnly := wire.TokenData{CategoryID: category}
+	tooMany := testToken
+	tooMany.Amount++
+	tests := []struct {
+		name    string
+		outputs []*wire.TxOut
+		nfts    []*wire.OutPoint
+	}{
+		{"unknown NFT", []*wire.TxOut{send(0, nftOnly)},
+			[]*wire.OutPoint{&unknown}},
+		{"not an NFT", []*wire.TxOut{send(0, nftOnly)},
+			[]*wire.OutPoint{&fungible}},
+		{"other category", []*wire.TxOut{
+			send(0, wire.TokenData{CategoryID: [32]byte{1}})},
+			[]*wire.OutPoint{&nft}},
+		{"NFT twice", []*wire.TxOut{send(0, nftOnly), send(0, nftOnly)},
+			[]*wire.OutPoint{&nft, &nft}},
+		{"too few tokens", []*wire.TxOut{send(0, tooMany)}, nil},
+		{"below dust", []*wire.TxOut{send(600, testToken)}, nil},
+	}
+	for _, test := range tests {
+		_, err := w.CreateUnsignedTx(0, test.outputs, test.nfts, 1,
+			txrules.DefaultRelayFeePerKb)
+		if !errors.Is(err, ErrTokenSend) {
+			t.Errorf("%s: got %v, want ErrTokenSend", test.name, err)
+		}
+	}
+}
+
+// TestSignTransactionTokenBurn checks that SignTransaction refuses to sign a
+// transaction that would burn tokens of the wallet's outputs it spends, unless
+// burns are allowed.
+func TestSignTransactionTokenBurn(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	nft := wire.TokenData{
+		CategoryID: testToken.CategoryID,
+		Commitment: []byte("nft"),
+		BitField:   wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH,
+	}
+	ops := []wire.OutPoint{
+		addCredit(t, w, wire.NewTxOut(1000, script, testToken)),
+		addCredit(t, w, wire.NewTxOut(1001, script, nft)),
+	}
+	fewer := testToken
+	fewer.Amount--
+
+	tests := []struct {
+		name  string
+		outs  []*wire.TxOut
+		burns bool
+	}{
+		{"keeps them", []*wire.TxOut{wire.NewTxOut(900, script, testToken),
+			wire.NewTxOut(900, script, nft)}, false},
+		{"fewer fungible", []*wire.TxOut{wire.NewTxOut(900, script, fewer),
+			wire.NewTxOut(900, script, nft)}, true},
+		{"no NFT", []*wire.TxOut{wire.NewTxOut(900, script, testToken)},
+			true},
+		{"no tokens", []*wire.TxOut{
+			wire.NewTxOut(1800, script, wire.TokenData{})}, true},
+	}
+	for _, test := range tests {
+		tx := spendTx(ops, test.outs...)
+		_, err := w.SignTransaction(tx, nil, txscript.SigHashAll, nil,
+			nil, nil, false)
+		if errors.Is(err, ErrTokenBurn) != test.burns {
+			t.Errorf("%s: got %v, want a burn %v", test.name, err,
+				test.burns)
+		}
+		_, err = w.SignTransaction(tx, nil, txscript.SigHashAll, nil, nil,
+			nil, true)
+		if err != nil {
+			t.Errorf("%s, with burns allowed: %v", test.name, err)
+		}
 	}
 }

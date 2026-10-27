@@ -1340,10 +1340,17 @@ func (w *Wallet) CreateSimpleTx(account uint32, outputs []*wire.TxOut,
 // automatically included, if necessary.  All transaction creation through this
 // function is serialized to prevent the creation of many transactions which
 // spend the same outputs.
+//
+// An output can send tokens: a fungible amount of a category, in its
+// TokenData, and the NFT held by the account's output at nfts[i], for output
+// i, if that isn't nil.  The account's outputs that hold the tokens are spent,
+// the tokens left over return to the wallet, and an output with tokens and no
+// value gets its dust threshold.  Errors with the tokens wrap ErrTokenSend.
 func (w *Wallet) CreateUnsignedTx(account uint32, outputs []*wire.TxOut,
-	minconf int32, satPerKb bchutil.Amount) (*txauthor.AuthoredTx, error) {
+	nfts []*wire.OutPoint, minconf int32, satPerKb bchutil.Amount) (
+	*txauthor.AuthoredTx, error) {
 
-	return w.createUnsigned(outputs, account, minconf, satPerKb)
+	return w.createUnsigned(outputs, nfts, account, minconf, satPerKb)
 }
 
 type (
@@ -3387,13 +3394,19 @@ type SignatureError struct {
 	Error      error
 }
 
+// ErrTokenBurn is wrapped by the error SignTransaction returns for a transaction
+// that would burn tokens of the outputs it spends, unless burns are allowed.
+var ErrTokenBurn = errors.New("the transaction would burn tokens")
+
 // SignTransaction uses secrets of the wallet, as well as additional secrets
 // passed in by the caller, to create and add input signatures to a transaction.
 //
 // The signatures cover the outputs the transaction spends, with their tokens.
 // The wallet takes each from its own records when it has them, rather than
 // from inputValues and additionalPrevScripts, which can't carry tokens; an
-// output it doesn't have needs both.
+// output it doesn't have needs both.  Unless allowTokenBurn is true, it refuses
+// to sign a transaction whose outputs carry fewer fungible tokens, or NFTs, of
+// a category than the outputs it spends that it has records of.
 //
 // Transaction input script validation is used to confirm that all signatures
 // are valid.  For any invalid input, a SignatureError is added to the returns.
@@ -3404,7 +3417,8 @@ type SignatureError struct {
 func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType txscript.SigHashType,
 	additionalPrevScripts map[wire.OutPoint][]byte,
 	additionalKeysByAddress map[string]*bchutil.WIF,
-	p2shRedeemScriptsByAddress map[string][]byte) ([]SignatureError, error) {
+	p2shRedeemScriptsByAddress map[string][]byte,
+	allowTokenBurn bool) ([]SignatureError, error) {
 
 	syncedTo := w.Manager.SyncedTo()
 	flags := scriptFlags(w.chainParams, &syncedTo)
@@ -3449,6 +3463,11 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 			return errors.New("signing with SIGHASH_UTXOS needs every " +
 				"output the transaction spends, and the wallet " +
 				"doesn't have them all")
+		}
+		if burned := burnedTokens(tx, prevOuts); burned != nil &&
+			!allowTokenBurn {
+
+			return fmt.Errorf("%w of category %v", ErrTokenBurn, *burned)
 		}
 		sigHashes := txscript.NewTxSigHashes(tx).WithUtxos(tx, utxoCache)
 
@@ -3568,6 +3587,54 @@ func (w *Wallet) spentOutput(txmgrNs walletdb.ReadBucket,
 		return nil, fmt.Errorf("%v not found", op)
 	}
 	return txDetails.MsgTx.TxOut[op.Index], nil
+}
+
+// burnedTokens returns a category of tokens that tx would burn, one that its
+// outputs carry fewer fungible tokens or NFTs of than prevOuts, the outputs it
+// spends, or nil if there is none.  With several, it returns the first in the
+// byte order of transaction IDs.
+func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
+	type held struct {
+		amount uint64
+		nfts   int
+	}
+	count := func(outs []*wire.TxOut) map[chainhash.Hash]*held {
+		byCategory := make(map[chainhash.Hash]*held)
+		for _, out := range outs {
+			token := &out.TokenData
+			if token.IsEmpty() {
+				continue
+			}
+			h := byCategory[token.CategoryID]
+			if h == nil {
+				h = &held{}
+				byCategory[token.CategoryID] = h
+			}
+			if token.HasAmount() {
+				h.amount += token.Amount
+			}
+			if token.HasNFT() {
+				h.nfts++
+			}
+		}
+		return byCategory
+	}
+
+	spent, kept := count(prevOuts), count(tx.TxOut)
+	var burned []chainhash.Hash
+	for category, s := range spent {
+		k := kept[category]
+		if k == nil || k.amount < s.amount || k.nfts < s.nfts {
+			burned = append(burned, category)
+		}
+	}
+	if len(burned) == 0 {
+		return nil
+	}
+	sort.Slice(burned, func(i, j int) bool {
+		return burned[i].String() < burned[j].String()
+	})
+	return &burned[0]
 }
 
 // checkTokenRules returns an error if tx breaks the token rules.  The rules

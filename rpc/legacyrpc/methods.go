@@ -1740,7 +1740,10 @@ func signRawTransaction(icmd interface{}, w *wallet.Wallet, chainClient *chain.R
 	// `complete' denotes that we successfully signed all outputs and that
 	// all scripts will run to completion. This is returned as part of the
 	// reply.
-	signErrs, err := w.SignTransaction(&tx, inputValues, hashType, inputs, keys, scripts)
+	// The legacy API has no way to allow burning tokens, so it never
+	// signs a transaction that would.
+	signErrs, err := w.SignTransaction(&tx, inputValues, hashType, inputs,
+		keys, scripts, false)
 	if err != nil {
 		return nil, err
 	}

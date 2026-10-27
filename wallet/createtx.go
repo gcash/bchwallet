@@ -6,16 +6,20 @@
 package wallet
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet/txauthor"
+	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/wtxmgr"
 )
@@ -227,8 +231,10 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 // UTXO set and minconf policy. An additional output may be added to return
 // change to the wallet.  An appropriate fee is included based on the wallet's
 // current relay fee.  The wallet must be unlocked to create the transaction.
-func (w *Wallet) createUnsigned(outputs []*wire.TxOut, account uint32,
-	minconf int32, feeSatPerKb bchutil.Amount) (tx *txauthor.AuthoredTx, err error) {
+// The outputs may carry tokens, as CreateUnsignedTx describes.
+func (w *Wallet) createUnsigned(outputs []*wire.TxOut, nfts []*wire.OutPoint,
+	account uint32, minconf int32, feeSatPerKb bchutil.Amount) (
+	tx *txauthor.AuthoredTx, err error) {
 
 	chainClient, err := w.requireChainClient()
 	if err != nil {
@@ -248,7 +254,6 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, account uint32,
 			return err
 		}
 
-		inputSource := makeInputSource(eligible)
 		changeSource := func() ([]byte, error) {
 			// Derive the change output script.  As a hack to allow
 			// spending from the imported account, change addresses
@@ -265,10 +270,39 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, account uint32,
 			}
 			return txscript.PayToAddrScript(changeAddr)
 		}
+
+		// Outputs that carry tokens spend the account's outputs that
+		// hold them, first, and the tokens left over return as change.
+		var tokenCredits []wtxmgr.Credit
+		if sendsTokens(outputs, nfts) {
+			tokenEligible, err := w.findEligibleTokenOutputs(dbtx,
+				account, minconf, bs)
+			if err != nil {
+				return err
+			}
+			changeScript, err := changeSource()
+			if err != nil {
+				return err
+			}
+			var tokenChange []*wire.TxOut
+			tokenCredits, tokenChange, err = spendTokens(outputs, nfts,
+				tokenEligible, changeScript)
+			if err != nil {
+				return err
+			}
+			outputs = append(outputs[:len(outputs):len(outputs)],
+				tokenChange...)
+		}
+
+		inputSource := withInputs(tokenCredits, makeInputSource(eligible))
 		tx, err = txauthor.NewUnsignedTransaction(outputs, feeSatPerKb,
 			inputSource, changeSource)
 		if err != nil {
 			return err
+		}
+		tx.PrevTokens = make([]wire.TokenData, len(tx.Tx.TxIn))
+		for i := range tokenCredits {
+			tx.PrevTokens[i] = tokenCredits[i].TokenData
 		}
 
 		// Randomize change position, if change exists, before signing.
@@ -293,7 +327,207 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, account uint32,
 	return tx, nil
 }
 
+// ErrTokenSend is wrapped by the errors CreateUnsignedTx returns for outputs
+// whose tokens the account can't send as asked.
+var ErrTokenSend = errors.New("cannot send the tokens")
+
+// sendsTokens returns whether any of outputs carries tokens, with the NFTs that
+// nfts names for them.
+func sendsTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint) bool {
+	for i, out := range outputs {
+		if !out.TokenData.IsEmpty() || (i < len(nfts) && nfts[i] != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// spendTokens returns the outputs of eligible that a transaction with outputs
+// spends for their tokens, and the outputs that return the tokens left over to
+// changeScript, a category each.  The NFT an output sends is the one held by
+// the outpoint at the output's index in nfts, which spendTokens copies into the
+// output, and the fungible tokens that the NFTs' outputs don't provide come
+// from outputs without NFTs, largest first.  An output with tokens and no value
+// gets its dust threshold.
+func spendTokens(outputs []*wire.TxOut, nfts []*wire.OutPoint,
+	eligible []wtxmgr.Credit, changeScript []byte) ([]wtxmgr.Credit,
+	[]*wire.TxOut, error) {
+
+	byOutPoint := make(map[wire.OutPoint]*wtxmgr.Credit, len(eligible))
+	for i := range eligible {
+		byOutPoint[eligible[i].OutPoint] = &eligible[i]
+	}
+
+	var spent []wtxmgr.Credit
+	have := make(map[chainhash.Hash]uint64)
+	need := make(map[chainhash.Hash]uint64)
+	for i, out := range outputs {
+		token := &out.TokenData
+		category := chainhash.Hash(token.CategoryID)
+		if i < len(nfts) && nfts[i] != nil {
+			op := *nfts[i]
+			credit, ok := byOutPoint[op]
+			switch {
+			case !ok:
+				return nil, nil, fmt.Errorf("%w: %v is not an "+
+					"unspent output of the account, or is sent "+
+					"twice", ErrTokenSend, op)
+			case !credit.TokenData.HasNFT():
+				return nil, nil, fmt.Errorf("%w: %v holds no NFT",
+					ErrTokenSend, op)
+			case credit.TokenData.CategoryID != token.CategoryID:
+				return nil, nil, fmt.Errorf("%w: the NFT at %v is "+
+					"of category %v, not %v", ErrTokenSend, op,
+					chainhash.Hash(credit.TokenData.CategoryID),
+					category)
+			}
+			delete(byOutPoint, op)
+			spent = append(spent, *credit)
+			if credit.TokenData.HasAmount() {
+				have[category] += credit.TokenData.Amount
+			}
+
+			// The output carries the NFT as it is, with the fungible
+			// amount it asks for.
+			token.BitField = credit.TokenData.BitField &^ wire.HAS_AMOUNT
+			if token.Amount > 0 {
+				token.BitField |= wire.HAS_AMOUNT
+			}
+			token.Commitment = credit.TokenData.Commitment
+		}
+		if token.HasAmount() {
+			if token.Amount > wire.MAX_FT_AMOUNT-need[category] {
+				return nil, nil, fmt.Errorf("%w: the outputs send "+
+					"more tokens of category %v than can exist",
+					ErrTokenSend, category)
+			}
+			need[category] += token.Amount
+		}
+	}
+
+	var fungible []*wtxmgr.Credit
+	for _, credit := range byOutPoint {
+		if !credit.TokenData.HasNFT() && credit.TokenData.HasAmount() &&
+			need[credit.TokenData.CategoryID] > 0 {
+
+			fungible = append(fungible, credit)
+		}
+	}
+	sort.Slice(fungible, func(i, j int) bool {
+		a, b := fungible[i], fungible[j]
+		if a.TokenData.Amount != b.TokenData.Amount {
+			return a.TokenData.Amount > b.TokenData.Amount
+		}
+		opA, opB := a.OutPoint, b.OutPoint
+		if c := bytes.Compare(opA.Hash[:], opB.Hash[:]); c != 0 {
+			return c < 0
+		}
+		return opA.Index < opB.Index
+	})
+	for _, credit := range fungible {
+		category := chainhash.Hash(credit.TokenData.CategoryID)
+		if have[category] < need[category] {
+			spent = append(spent, *credit)
+			have[category] += credit.TokenData.Amount
+		}
+	}
+
+	categories := make([]chainhash.Hash, 0, len(have)+len(need))
+	for category := range need {
+		categories = append(categories, category)
+	}
+	for category := range have {
+		if _, ok := need[category]; !ok {
+			categories = append(categories, category)
+		}
+	}
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].String() < categories[j].String()
+	})
+	var change []*wire.TxOut
+	for _, category := range categories {
+		if have[category] < need[category] {
+			return nil, nil, fmt.Errorf("%w: the account has %d tokens "+
+				"of category %v to send %d", ErrTokenSend,
+				have[category], category, need[category])
+		}
+		if left := have[category] - need[category]; left > 0 {
+			change = append(change, wire.NewTxOut(0, changeScript,
+				wire.TokenData{
+					CategoryID: category,
+					Amount:     left,
+					BitField:   wire.HAS_AMOUNT,
+				}))
+		}
+	}
+
+	for _, out := range append(outputs[:len(outputs):len(outputs)], change...) {
+		if out.TokenData.IsEmpty() {
+			continue
+		}
+		threshold := txrules.OutputDustThreshold(out,
+			txrules.DefaultRelayFeePerKb)
+		switch {
+		case out.Value == 0:
+			out.Value = int64(threshold)
+		case bchutil.Amount(out.Value) < threshold:
+			return nil, nil, fmt.Errorf("%w: an output with these "+
+				"tokens needs at least %v, not %v", ErrTokenSend,
+				threshold, bchutil.Amount(out.Value))
+		}
+	}
+	return spent, change, nil
+}
+
+// withInputs returns an input source that spends the credits, and then the
+// inputs of source for the value they don't cover.
+func withInputs(credits []wtxmgr.Credit,
+	source txauthor.InputSource) txauthor.InputSource {
+
+	if len(credits) == 0 {
+		return source
+	}
+	var total bchutil.Amount
+	inputs := make([]*wire.TxIn, len(credits))
+	values := make([]bchutil.Amount, len(credits))
+	scripts := make([][]byte, len(credits))
+	for i := range credits {
+		total += credits[i].Amount
+		inputs[i] = wire.NewTxIn(&credits[i].OutPoint, nil)
+		values[i] = credits[i].Amount
+		scripts[i] = credits[i].PkScript
+	}
+	return func(target bchutil.Amount) (bchutil.Amount, []*wire.TxIn,
+		[]bchutil.Amount, [][]byte, error) {
+
+		more, moreInputs, moreValues, moreScripts, err := source(target - total)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
+		return total + more,
+			append(inputs[:len(inputs):len(inputs)], moreInputs...),
+			append(values[:len(values):len(values)], moreValues...),
+			append(scripts[:len(scripts):len(scripts)], moreScripts...),
+			nil
+	}
+}
+
+// findEligibleOutputs returns the account's unspent outputs without tokens that
+// the wallet can spend with minconf confirmations at bs.
 func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minconf int32, bs *waddrmgr.BlockStamp) ([]wtxmgr.Credit, error) {
+	return w.eligibleOutputs(dbtx, account, minconf, bs, false)
+}
+
+// findEligibleTokenOutputs is findEligibleOutputs for the outputs that carry
+// tokens.
+func (w *Wallet) findEligibleTokenOutputs(dbtx walletdb.ReadTx, account uint32, minconf int32, bs *waddrmgr.BlockStamp) ([]wtxmgr.Credit, error) {
+	return w.eligibleOutputs(dbtx, account, minconf, bs, true)
+}
+
+// eligibleOutputs returns the account's unspent outputs that carry tokens if
+// tokens is true, else those without, that the wallet can spend with minconf
+// confirmations at bs.
+func (w *Wallet) eligibleOutputs(dbtx walletdb.ReadTx, account uint32, minconf int32, bs *waddrmgr.BlockStamp, tokens bool) ([]wtxmgr.Credit, error) {
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
 
@@ -329,10 +563,9 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 			continue
 		}
 
-		// Outputs carrying CashTokens are skipped, since the wallet
-		// creates outputs without tokens and spending them would burn
-		// their tokens.
-		if output.HasTokens() {
+		// Outputs carrying CashTokens are only spent to send their
+		// tokens, since spending them otherwise burns the tokens.
+		if output.HasTokens() != tokens {
 			continue
 		}
 

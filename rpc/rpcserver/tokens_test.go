@@ -3,14 +3,18 @@ package rpcserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	pb "github.com/gcash/bchwallet/rpc/walletrpc"
 	"github.com/gcash/bchwallet/wallet"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // addressChain is a chain backend that watches the addresses the wallet gives
@@ -141,5 +145,102 @@ func TestMarshalTokens(t *testing.T) {
 		!bytes.Equal(nft.Commitment, []byte{7}) {
 
 		t.Errorf("NFT: got %v", nft)
+	}
+}
+
+// TestRequestTokenOutputs checks that requestOutputs reads the tokens an output
+// sends, and refuses malformed tokens and tokens to an address that isn't
+// token-aware.
+func TestRequestTokenOutputs(t *testing.T) {
+	a := newTestAddresses(t)
+	category := "01" + strings.Repeat("00", 30) + "aa"
+	nftHash := chainhash.Hash{3}
+	token := func(category string, amount uint64) *pb.CreateTransactionRequest_TokenOutput {
+		return &pb.CreateTransactionRequest_TokenOutput{
+			Category: category,
+			Amount:   amount,
+		}
+	}
+
+	outputs, nfts, err := requestOutputs([]*pb.CreateTransactionRequest_Output{
+		{Address: a.tokenAware, Token: token(category, 5)},
+		{Address: a.tokenAware, Amount: 1000,
+			Token: &pb.CreateTransactionRequest_TokenOutput{
+				Category:           category,
+				NftTransactionHash: nftHash[:],
+				NftOutputIndex:     2,
+			}},
+	}, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [32]byte{0: 0xaa, 31: 0x01}
+	if len(outputs) != 2 || outputs[0].Value != 0 ||
+		outputs[0].TokenData.CategoryID != want ||
+		outputs[0].TokenData.Amount != 5 ||
+		outputs[0].TokenData.BitField != wire.HAS_AMOUNT || nfts[0] != nil {
+
+		t.Errorf("fungible output: got %+v, NFT %v", outputs[0], nfts[0])
+	}
+	if outputs[1].Value != 1000 || outputs[1].TokenData.CategoryID != want ||
+		!outputs[1].TokenData.IsEmpty() || nfts[1] == nil ||
+		*nfts[1] != (wire.OutPoint{Hash: nftHash, Index: 2}) {
+
+		t.Errorf("NFT output: got %+v, NFT %v", outputs[1], nfts[1])
+	}
+
+	invalid := []struct {
+		name string
+		out  *pb.CreateTransactionRequest_Output
+	}{
+		{"address that isn't token-aware",
+			&pb.CreateTransactionRequest_Output{Address: a.cashAddr,
+				Token: token(category, 5)}},
+		{"legacy address",
+			&pb.CreateTransactionRequest_Output{Address: a.legacy,
+				Token: token(category, 5)}},
+		{"short category",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Token: token("abcd", 5)}},
+		{"category that isn't hex",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Token: token(strings.Repeat("zz", 32), 5)}},
+		{"neither an amount nor an NFT",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Token: token(category, 0)}},
+		{"more tokens than can exist",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Token: token(category, wire.MAX_FT_AMOUNT+1)}},
+		{"short NFT hash",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Token: &pb.CreateTransactionRequest_TokenOutput{
+					Category:           category,
+					NftTransactionHash: nftHash[:31],
+				}}},
+		{"negative amount",
+			&pb.CreateTransactionRequest_Output{Address: a.tokenAware,
+				Amount: -1, Token: token(category, 5)}},
+	}
+	for _, test := range invalid {
+		_, _, err := requestOutputs(
+			[]*pb.CreateTransactionRequest_Output{test.out},
+			&chaincfg.MainNetParams)
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: got %v, want InvalidArgument", test.name, err)
+		}
+	}
+}
+
+// TestTokenErrorCodes checks the gRPC codes of the wallet's errors with
+// tokens: a send it refuses is an invalid argument, and a burn it won't sign
+// a failed precondition.
+func TestTokenErrorCodes(t *testing.T) {
+	send := fmt.Errorf("%w: too few tokens", wallet.ErrTokenSend)
+	if code := errorCode(send); code != codes.InvalidArgument {
+		t.Errorf("token send: got %v, want InvalidArgument", code)
+	}
+	burn := fmt.Errorf("%w of category 00", wallet.ErrTokenBurn)
+	if code := errorCode(burn); code != codes.FailedPrecondition {
+		t.Errorf("token burn: got %v, want FailedPrecondition", code)
 	}
 }
