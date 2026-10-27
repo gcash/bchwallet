@@ -1240,6 +1240,24 @@ func marshalTransactionOutputs(v []wallet.TransactionSummaryOutput) []*pb.Transa
 	return outputs
 }
 
+func marshalOtherOutputs(v []wallet.TransactionSummaryOtherOutput) []*pb.TransactionDetails_OtherOutput {
+	outputs := make([]*pb.TransactionDetails_OtherOutput, len(v))
+	for i := range v {
+		output := &v[i]
+		var address string
+		if output.Address != nil {
+			address = output.Address.String()
+		}
+		outputs[i] = &pb.TransactionDetails_OtherOutput{
+			Index:   output.Index,
+			Address: address,
+			Amount:  int64(output.Amount.ToUnit(bchutil.AmountSatoshi)),
+			Token:   marshalTokenData(&output.Token),
+		}
+	}
+	return outputs
+}
+
 // marshalTokenData returns the tokens an output carries, or nil if it carries
 // none.  The category is in the byte order of transaction IDs.
 func marshalTokenData(token *wire.TokenData) *pb.TokenData {
@@ -1300,12 +1318,13 @@ func marshalTransactionDetails(v []wallet.TransactionSummary) []*pb.TransactionD
 	for i := range v {
 		tx := &v[i]
 		txs[i] = &pb.TransactionDetails{
-			Hash:        tx.Hash[:],
-			Transaction: tx.Transaction,
-			Debits:      marshalTransactionInputs(tx.MyInputs),
-			Credits:     marshalTransactionOutputs(tx.MyOutputs),
-			Fee:         int64(tx.Fee),
-			Timestamp:   tx.Timestamp,
+			Hash:         tx.Hash[:],
+			Transaction:  tx.Transaction,
+			Debits:       marshalTransactionInputs(tx.MyInputs),
+			Credits:      marshalTransactionOutputs(tx.MyOutputs),
+			Fee:          int64(tx.Fee),
+			Timestamp:    tx.Timestamp,
+			OtherOutputs: marshalOtherOutputs(tx.OtherOutputs),
 		}
 	}
 	return txs

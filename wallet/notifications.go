@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
@@ -134,10 +135,17 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 		}
 	}
 	outputs := make([]TransactionSummaryOutput, 0, len(details.MsgTx.TxOut))
-	for i := range details.MsgTx.TxOut {
+	var others []TransactionSummaryOtherOutput
+	for i, txOut := range details.MsgTx.TxOut {
 		credIndex := len(outputs)
 		mine := len(details.Credits) > credIndex && details.Credits[credIndex].Index == uint32(i)
 		if !mine {
+			others = append(others, TransactionSummaryOtherOutput{
+				Index:   uint32(i),
+				Address: payeeAddress(txOut.PkScript, w.chainParams),
+				Amount:  bchutil.Amount(txOut.Value),
+				Token:   txOut.TokenData,
+			})
 			continue
 		}
 		acct, internal := lookupOutputChain(dbtx, w, details, details.Credits[credIndex])
@@ -159,12 +167,13 @@ func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) T
 		outputs = append(outputs, output)
 	}
 	return TransactionSummary{
-		Hash:        &details.Hash,
-		Transaction: serializedTx,
-		MyInputs:    inputs,
-		MyOutputs:   outputs,
-		Fee:         fee,
-		Timestamp:   details.Received.Unix(),
+		Hash:         &details.Hash,
+		Transaction:  serializedTx,
+		MyInputs:     inputs,
+		MyOutputs:    outputs,
+		OtherOutputs: others,
+		Fee:          fee,
+		Timestamp:    details.Received.Unix(),
 	}
 }
 
@@ -371,14 +380,17 @@ type Block struct {
 }
 
 // TransactionSummary contains a transaction relevant to the wallet and marks
-// which inputs and outputs were relevant.
+// which inputs and outputs were relevant.  OtherOutputs are the outputs that
+// don't pay the wallet: the payments of a transaction the wallet sends, or the
+// sender's other outputs of one it receives.
 type TransactionSummary struct {
-	Hash        *chainhash.Hash
-	Transaction []byte
-	MyInputs    []TransactionSummaryInput
-	MyOutputs   []TransactionSummaryOutput
-	Fee         bchutil.Amount
-	Timestamp   int64
+	Hash         *chainhash.Hash
+	Transaction  []byte
+	MyInputs     []TransactionSummaryInput
+	MyOutputs    []TransactionSummaryOutput
+	OtherOutputs []TransactionSummaryOtherOutput
+	Fee          bchutil.Amount
+	Timestamp    int64
 }
 
 // TransactionSummaryInput describes a transaction input that is relevant to the
@@ -404,6 +416,32 @@ type TransactionSummaryOutput struct {
 	Address  bchutil.Address
 	Amount   bchutil.Amount
 	Token    wire.TokenData
+}
+
+// TransactionSummaryOtherOutput describes a transaction output that doesn't pay
+// the wallet.  Address is the address the output pays by its hash, or nil for
+// any other script, such as OP_RETURN data, a bare multisig script or a public
+// key, which pay no single address.
+type TransactionSummaryOtherOutput struct {
+	Index   uint32
+	Address bchutil.Address
+	Amount  bchutil.Amount
+	Token   wire.TokenData
+}
+
+// payeeAddress returns the address that a script pays by its hash, or nil if
+// the script pays no single address that way.
+func payeeAddress(pkScript []byte, params *chaincfg.Params) bchutil.Address {
+	class, addrs, _, err := txscript.ExtractPkScriptAddrs(pkScript, params)
+	if err != nil || len(addrs) != 1 {
+		return nil
+	}
+	switch class {
+	case txscript.PubKeyHashTy, txscript.ScriptHashTy, txscript.ScriptHash32Ty:
+		return addrs[0]
+	default:
+		return nil
+	}
 }
 
 // AccountBalance associates a total (zero confirmation) balance with an

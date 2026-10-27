@@ -78,12 +78,21 @@ message TransactionDetails {
 		int64 amount = 5;
 		TokenData token = 6; // Unset if the output has no tokens.
 	}
+	message OtherOutput {
+		uint32 index = 1;
+		string address = 2; // Empty unless the output pays one address by its hash.
+		int64 amount = 3;
+		TokenData token = 4; // Unset if the output has no tokens.
+	}
 	bytes hash = 1;
 	bytes transaction = 2;
 	repeated Input debits = 3;
 	repeated Output credits = 4;
 	int64 fee = 5;
 	int64 timestamp = 6; // May be earlier than a block timestamp, but never later.
+	// The outputs that don't pay the wallet: the payments of a transaction the
+	// wallet sends, or the sender's other outputs of one it receives.
+	repeated OtherOutput other_outputs = 7;
 }
 
 // The CashTokens an output carries.

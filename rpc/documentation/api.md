@@ -1373,6 +1373,23 @@ transaction was seen.
 - `int64 timestamp`: The Unix time of the earliest time this transaction was
   seen.
 
+- `repeated OtherOutput other_outputs`: Properties for every output that does
+  not pay the wallet: the payments of a transaction the wallet sends, or the
+  sender's other outputs of one it receives.
+
+  **Nested message:** `OtherOutput`
+
+  - `uint32 index`: The transaction output index of the output being reported.
+
+  - `string address`: The address the output pays by its hash, or empty for any
+    other script, such as OP_RETURN data, a bare multisig script or a public
+    key, which pay no single address.
+
+  - `int64 amount`: The amount sent to this output.
+
+  - `TokenData token`: The CashTokens the output carries, or unset if it has
+    none.
+
 **Stability**: Unstable: Since the caller is expected to decode the serialized
   transaction, and would have access to every output script, the output
   properties could be changed to only include outputs controlled by the wallet.
