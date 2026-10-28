@@ -4,15 +4,16 @@ All notable user-visible changes to [bchwallet](https://github.com/gcash/bchwall
 
 bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in October 2018, at upstream commit 29ee944 ([btcsuite/btcwallet#551](https://github.com/btcsuite/btcwallet/pull/551)). The original btcwallet changelog (0.1.0 through 0.7.0) is preserved unchanged at the bottom of this file under **Legacy btcwallet changelog (pre-fork)**.
 
-## Unreleased
+## 0.13.2 (2026-10-27)
 
-This release lets an app run the wallet again in the same process and start it when targeting current Android, lets the wallet hold and send CashTokens and shows them in the gRPC API, pays BitPay invoices with the JSON Payment Protocol, and adds testnet4 and chipnet.
+This release moves to bchd 0.22.4, lets an app run the wallet again in the same process and start it when targeting current Android, lets the wallet hold and send CashTokens and shows them in the gRPC API, pays BitPay invoices with the JSON Payment Protocol, makes SPV wallets reconnect to their peer after a restart or a network change, and adds testnet4 and chipnet.
 
 ### Wallet
 
 - Outputs that carry CashTokens are only spent to send their tokens. They are left out of coin selection, `SweepAccount` and the spendable balance, so that paying BCH doesn't burn their tokens, and still count toward the total balance. The wallet spent them like any other output, and the network rejected each transaction that did, so `SweepAccount` failed for as long as the wallet held one.
 - The wallet's signatures cover the CashTokens of the outputs they spend, as the token rules require, and the transactions it creates, signs and publishes are checked with the token rules. `SignTransaction` takes the outputs a transaction spends from the wallet's records when it has them, since the caller's values and scripts can't carry tokens. It signed without the tokens, and checked its signatures without the token rules, so it passed invalid ones.
 - `SignTransaction` refuses to sign a transaction that would burn tokens of the wallet's outputs it spends, unless burns are allowed: fungible tokens of a category that its outputs carry fewer of, an immutable NFT that none of them carries with its commitment, a mutable NFT that leaves no NFT of its category, or the capability of a minting NFT. NFTs are told apart by their commitments, so another input's NFT, or one that a minting NFT mints, doesn't stand in for one of the wallet's. The legacy `signrawtransaction`, which can't allow burns, always refuses.
+- Signing an input that already carries signatures keeps a P2PKH or P2PK signature only if it is valid, and multisig signatures only if the network accepts their hash type, and signing a P2SH input again no longer makes an invalid script (bchd 0.22.4).
 - An unmined transaction is removed only when the network rejects it: an SPV peer's rejection, or a node's answer that rejects it, can't decode it, or finds its inputs missing or spent. A broadcast that failed for any other reason, such as a backend that is stopping, can't be reached or is warming up, removed a valid transaction, so the wallet could spend its inputs again in another. The wallet now keeps such a transaction and broadcasts it again after the next block or reconnection, and publishing it succeeds, also when the backend can't watch the transaction's outputs, since a caller that created it again would pay twice.
 - Stopping the wallet no longer hangs when a relevant transaction arrives, or one is published, just as it stops. Passing the transaction on to the recovery, whose handler had already returned, blocked forever, and the shutdown waited for it: the daemon did not exit, and in an app `StopWallet` gave up after 30 seconds, and the wallet could not be opened again until the app restarted.
 - Once the wallet has stopped, the methods that go through its own goroutines, such as `Unlock`, the passphrase changes and `CreateSimpleTx`, return `ErrWalletShuttingDown`, and `Locked` reports the wallet locked. They blocked forever, so a gRPC call such as `SignTransaction` after `CloseWallet` never returned.
@@ -36,6 +37,8 @@ This release lets an app run the wallet again in the same process and start it w
 - When the wallet shuts down, the neutrino ChainService is stopped and its database closed. They kept running until the process exited.
 - The block and filter header files are closed when the wallet stops, so each run of the wallet in the same process no longer leaves two file handles open, and a goroutine leak in the SPV backend's peers is fixed (latest neutrino).
 - The chain backend waits 5 seconds before trying again after it failed to start, instead of retrying right away, and no longer starts again while the wallet shuts down.
+- A restarted wallet connects to the peer it used last instead of first waiting minutes on addresses that can't be reached, a peer that can't be created no longer panics, and picking a peer no longer takes seconds when addresses have failed many times (latest neutrino and bchd 0.22.4).
+- A wallet that lost its peer to a network change connects to it again instead of waiting for peers until it's restarted, and a dial that gets no answer gives up after 30 seconds (latest neutrino and bchd 0.22.4).
 
 ### New options
 
@@ -63,7 +66,7 @@ This release lets an app run the wallet again in the same process and start it w
 
 ### Build & Packaging
 
-- Build with bchd c12e3d66, whose signing functions cover the CashTokens of the outputs that inputs spend, and neutrino f19c4d7.
+- Update to the bchd 0.22.4 libraries, whose signing functions cover the CashTokens of the outputs that inputs spend, and to the latest neutrino, bchutil and grpc.
 - Track `golang.org/x/mobile/cmd/gobind` as a go tool, which `gomobile bind` requires to bind the mobile package from the module.
 - The mobile README covers NDK r28 or newer, whose 64-bit libraries are aligned for the 16 KB pages Google Play requires, and how to check the alignment.
 
