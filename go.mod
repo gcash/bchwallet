@@ -6,11 +6,11 @@ require (
 	github.com/btcsuite/golangcrypto v0.0.0-20150304025918-53f62d9b43e8
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/davecgh/go-spew v1.1.1
-	github.com/gcash/bchd v0.22.4-0.20261028012448-b1b7702adb87
-	github.com/gcash/bchlog v0.0.0-20180913005452-b4f036f92fa6
-	github.com/gcash/bchutil v0.0.0-20261025065706-5d8b84f19a75
+	github.com/gcash/bchd v0.22.4
+	github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f
+	github.com/gcash/bchutil v0.0.0-20261028060706-e320ade87427
 	github.com/gcash/bchwallet/walletdb v1.0.0
-	github.com/gcash/neutrino v0.0.0-20261028013259-11280cb001d4
+	github.com/gcash/neutrino v0.0.0-20261028070248-03a185dda2b2
 	github.com/golang/protobuf v1.5.4
 	github.com/jarcoal/httpmock v1.0.8
 	github.com/jessevdk/go-flags v1.6.1
@@ -19,9 +19,9 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/term v0.47.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 )
 
 require (
@@ -39,7 +39,7 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	lukechampine.com/uint128 v1.3.0 // indirect
 )
