@@ -3,8 +3,12 @@ package wtxmgr
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
 )
 
@@ -187,4 +191,193 @@ func TestMigrationDropTransactionHistory(t *testing.T) {
 		t, beforeMigration, afterMigration, dropTransactionHistory,
 		false,
 	)
+}
+
+// TestMigrationMarkCreditsSpentByMinedTxs ensures that a credit that a mined
+// transaction spends is marked spent when the store kept it unspent, as it did
+// for a transaction recorded before its parent in their block, and that the
+// unmined transactions that spend it again are removed.
+func TestMigrationMarkCreditsSpentByMinedTxs(t *testing.T) {
+	t.Parallel()
+
+	fund := spendOutput(&chainhash.Hash{1}, 0, 1e8)
+	fundHash := fund.TxHash()
+	parent := spendOutput(&fundHash, 0, 4e7, 5e7)
+	parentHash := parent.TxHash()
+	spend := spendOutput(&parentHash, 1, 4e7)
+	spendHash := spend.TxHash()
+
+	// again spends the output of the parent that spend spends, and
+	// againChild spends the output of again.
+	again := spendOutput(&parentHash, 1, 3e7)
+	againHash := again.TxHash()
+	againChild := spendOutput(&againHash, 0, 2e7)
+
+	fundBlock := &BlockMeta{Block: Block{Hash: chainhash.Hash{100}, Height: 100}}
+	block := &BlockMeta{Block: Block{Hash: chainhash.Hash{101}, Height: 101}}
+
+	// insert records tx, mined in block or unmined if block is nil, with the
+	// outputs at the credit indexes as the wallet's.
+	insert := func(ns walletdb.ReadWriteBucket, s *Store, tx *wire.MsgTx,
+		block *BlockMeta, credits ...uint32) error {
+
+		rec, err := NewTxRecordFromMsgTx(tx, timeNow())
+		if err != nil {
+			return err
+		}
+		if err := s.InsertTx(ns, rec, block); err != nil {
+			return err
+		}
+		for _, index := range credits {
+			err := s.AddCredit(ns, rec, block, index, false)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// checkStore returns an error unless the store has the mined balance
+	// and the number of unmined transactions given.
+	checkStore := func(ns walletdb.ReadWriteBucket, s *Store,
+		balance bchutil.Amount, unmined int) error {
+
+		minedBalance, err := fetchMinedBalance(ns)
+		if err != nil {
+			return err
+		}
+		if minedBalance != balance {
+			return fmt.Errorf("mined balance %v, want %v",
+				minedBalance, balance)
+		}
+		txs, err := s.UnminedTxs(ns)
+		if err != nil {
+			return err
+		}
+		if len(txs) != unmined {
+			return fmt.Errorf("%d unmined transactions, want %d",
+				len(txs), unmined)
+		}
+		return nil
+	}
+
+	tests := []struct {
+		name string
+
+		// spendFirst is whether the store records the spend before its
+		// parent in their block.
+		spendFirst bool
+
+		// balance and unmined are the mined balance and the number of
+		// unmined transactions before the migration.
+		balance bchutil.Amount
+		unmined int
+	}{
+		{
+			name:       "spend recorded before its parent",
+			spendFirst: true,
+			balance:    13e7,
+			unmined:    2,
+		},
+		{
+			name:       "spend recorded after its parent",
+			spendFirst: false,
+			balance:    8e7,
+			unmined:    0,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			beforeMigration := func(ns walletdb.ReadWriteBucket,
+				s *Store) error {
+
+				if err := insert(ns, s, fund, fundBlock, 0); err != nil {
+					return err
+				}
+
+				// The wallet sent the parent and the spend, so
+				// it has them unmined until they're mined in
+				// one block.
+				if err := insert(ns, s, parent, nil, 0, 1); err != nil {
+					return err
+				}
+				if err := insert(ns, s, spend, nil, 0); err != nil {
+					return err
+				}
+				if test.spendFirst {
+					err := insert(ns, s, spend, block, 0)
+					if err != nil {
+						return err
+					}
+				}
+				if err := insert(ns, s, parent, block, 0, 1); err != nil {
+					return err
+				}
+				if !test.spendFirst {
+					err := insert(ns, s, spend, block, 0)
+					if err != nil {
+						return err
+					}
+				}
+
+				// A store that kept the parent's output unspent
+				// let the wallet spend it again.
+				if test.spendFirst {
+					err := insert(ns, s, again, nil, 0)
+					if err != nil {
+						return err
+					}
+					err = insert(ns, s, againChild, nil, 0)
+					if err != nil {
+						return err
+					}
+				}
+
+				return checkStore(ns, s, test.balance, test.unmined)
+			}
+
+			afterMigration := func(ns walletdb.ReadWriteBucket,
+				s *Store) error {
+
+				if err := checkStore(ns, s, 8e7, 0); err != nil {
+					return err
+				}
+
+				credits, err := s.UnspentOutputs(ns)
+				if err != nil {
+					return err
+				}
+				unspent := make(map[wire.OutPoint]bool)
+				for _, credit := range credits {
+					unspent[credit.OutPoint] = true
+				}
+				want := map[wire.OutPoint]bool{
+					{Hash: parentHash, Index: 0}: true,
+					{Hash: spendHash, Index: 0}:  true,
+				}
+				if !reflect.DeepEqual(unspent, want) {
+					return fmt.Errorf("unspent outputs %v, "+
+						"want %v", unspent, want)
+				}
+
+				details, err := s.TxDetails(ns, &spendHash)
+				if err != nil {
+					return err
+				}
+				wantDebits := []DebitRecord{{Amount: 5e7, Index: 0}}
+				if !reflect.DeepEqual(details.Debits, wantDebits) {
+					return fmt.Errorf("spend debits %v, want %v",
+						details.Debits, wantDebits)
+				}
+				return nil
+			}
+
+			applyMigration(
+				t, beforeMigration, afterMigration,
+				markCreditsSpentByMinedTxs, false,
+			)
+		})
+	}
 }

@@ -1,6 +1,7 @@
 package wtxmgr
 
 import (
+	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/walletdb/migration"
 )
@@ -17,6 +18,10 @@ var versions = []migration.Version{
 	{
 		Number:    2,
 		Migration: dropTransactionHistory,
+	},
+	{
+		Number:    3,
+		Migration: markCreditsSpentByMinedTxs,
 	},
 }
 
@@ -107,4 +112,100 @@ func dropTransactionHistory(ns walletdb.ReadWriteBucket) error {
 
 	// Finally, we'll insert a 0 value for our mined balance.
 	return putMinedBalance(ns, 0)
+}
+
+// markCreditsSpentByMinedTxs is a migration that marks spent the credits that
+// a mined transaction spends but that the store kept unspent, and removes the
+// unmined transactions that spend them again, along with the transactions
+// that spend their outputs. The wallet recorded the transactions of a block in
+// block order, and the store marks a credit spent only when it records the
+// spending transaction after the credit, so a transaction that the block
+// listed before its parent, as blocks that order their transactions by txid
+// can, left the parent's output unspent.
+func markCreditsSpentByMinedTxs(ns walletdb.ReadWriteBucket) error {
+	// spend is an input of a mined transaction that spends an unspent
+	// credit.
+	type spend struct {
+		rec        *TxRecord
+		block      Block
+		index      uint32
+		unspentKey []byte
+	}
+
+	// The transaction records are all read before the store is changed,
+	// since a bucket can't be changed while it is iterated.
+	var spends []spend
+	err := ns.NestedReadBucket(bucketTxRecords).ForEach(func(k, v []byte) error {
+		var block Block
+		if err := readRawTxRecordBlock(k, &block); err != nil {
+			return err
+		}
+		var txHash chainhash.Hash
+		copy(txHash[:], k[:chainhash.HashSize])
+		rec := new(TxRecord)
+		if err := readRawTxRecord(&txHash, v, rec); err != nil {
+			return err
+		}
+		for i, input := range rec.MsgTx.TxIn {
+			unspentKey, credKey := existsUnspent(
+				ns, &input.PreviousOutPoint,
+			)
+			if credKey == nil {
+				continue
+			}
+			spends = append(spends, spend{
+				rec:        rec,
+				block:      block,
+				index:      uint32(i),
+				unspentKey: unspentKey,
+			})
+		}
+		return nil
+	})
+	if err != nil || len(spends) == 0 {
+		return err
+	}
+
+	minedBalance, err := fetchMinedBalance(ns)
+	if err != nil {
+		return err
+	}
+
+	// removeDoubleSpends uses no field of the store.
+	var s Store
+	for _, sp := range spends {
+		credKey := existsRawUnspent(ns, sp.unspentKey)
+		if credKey == nil {
+			continue
+		}
+
+		log.Infof("Marking output %v spent by transaction %v mined in "+
+			"block %d", sp.rec.MsgTx.TxIn[sp.index].PreviousOutPoint,
+			sp.rec.Hash, sp.block.Height)
+
+		spender := indexedIncidence{
+			incidence: incidence{txHash: sp.rec.Hash, block: sp.block},
+			index:     sp.index,
+		}
+		amt, err := spendCredit(ns, credKey, &spender)
+		if err != nil {
+			return err
+		}
+		err = putDebit(
+			ns, &sp.rec.Hash, sp.index, amt, &sp.block, credKey,
+		)
+		if err != nil {
+			return err
+		}
+		if err := deleteRawUnspent(ns, sp.unspentKey); err != nil {
+			return err
+		}
+		minedBalance -= amt
+
+		if err := s.removeDoubleSpends(ns, sp.rec); err != nil {
+			return err
+		}
+	}
+
+	return putMinedBalance(ns, minedBalance)
 }
