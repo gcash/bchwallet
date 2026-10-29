@@ -142,15 +142,8 @@ func (w *Wallet) handleChainNotifications() {
 				if len(n.RelevantTxs) > 0 {
 					err = walletdb.Update(w.db, func(
 						tx walletdb.ReadWriteTx) error {
-						var err error
-						for _, rec := range n.RelevantTxs {
-							err = w.addRelevantTx(tx, rec,
-								n.Block)
-							if err != nil {
-								return err
-							}
-						}
-						return nil
+						return w.addBlockTxs(tx,
+							n.RelevantTxs, n.Block)
 					})
 				}
 				notificationName = "filtered block connected"
@@ -275,6 +268,52 @@ func (w *Wallet) disconnectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) 
 	w.NtfnServer.notifyDetachedBlock(&b.Hash)
 
 	return nil
+}
+
+// addBlockTxs records the relevant transactions of a block, each after the
+// ones among them whose outputs it spends. The transaction store marks a
+// credit spent only when it records the spending transaction after the
+// credit, and since the canonical transaction ordering upgrade, blocks order
+// their transactions by txid, which can list a transaction before its parent.
+func (w *Wallet) addBlockTxs(dbtx walletdb.ReadWriteTx,
+	recs []*wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
+
+	for _, rec := range sortParentsFirst(recs) {
+		if err := w.addRelevantTx(dbtx, rec, block); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sortParentsFirst returns the transaction records ordered so that each comes
+// after the ones among them whose outputs it spends, and otherwise as given.
+func sortParentsFirst(recs []*wtxmgr.TxRecord) []*wtxmgr.TxRecord {
+	byHash := make(map[chainhash.Hash]*wtxmgr.TxRecord, len(recs))
+	for _, rec := range recs {
+		byHash[rec.Hash] = rec
+	}
+
+	sorted := make([]*wtxmgr.TxRecord, 0, len(recs))
+	added := make(map[chainhash.Hash]bool, len(recs))
+	var add func(rec *wtxmgr.TxRecord)
+	add = func(rec *wtxmgr.TxRecord) {
+		if added[rec.Hash] {
+			return
+		}
+		added[rec.Hash] = true
+		for _, input := range rec.MsgTx.TxIn {
+			parent, ok := byHash[input.PreviousOutPoint.Hash]
+			if ok {
+				add(parent)
+			}
+		}
+		sorted = append(sorted, rec)
+	}
+	for _, rec := range recs {
+		add(rec)
+	}
+	return sorted
 }
 
 func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {

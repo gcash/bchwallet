@@ -9,8 +9,11 @@ import (
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/waddrmgr"
+	"github.com/gcash/bchwallet/walletdb"
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
+	"github.com/gcash/bchwallet/wtxmgr"
 )
 
 const (
@@ -306,5 +309,144 @@ func TestBirthdaySanityCheckHigherEstimate(t *testing.T) {
 	if !reflect.DeepEqual(birthdayStore.syncedTo, *birthdayBlock) {
 		t.Fatalf("expected syncedTo and birthday block to match: "+
 			"%v vs %v", birthdayStore.syncedTo, birthdayBlock)
+	}
+}
+
+// txRecord returns a record of tx, as a chain backend makes one.
+func txRecord(t *testing.T, tx *wire.MsgTx) *wtxmgr.TxRecord {
+	t.Helper()
+
+	rec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// TestSortParentsFirst checks that a chain of transactions listed child first
+// is sorted parents first, and that the other transactions keep their order.
+func TestSortParentsFirst(t *testing.T) {
+	a := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{1}}}, &wire.TxOut{})
+	b := spendTx([]wire.OutPoint{{Hash: a.TxHash()}}, &wire.TxOut{})
+	c := spendTx([]wire.OutPoint{{Hash: b.TxHash()}}, &wire.TxOut{})
+	x := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{2}}}, &wire.TxOut{})
+
+	var recs []*wtxmgr.TxRecord
+	for _, tx := range []*wire.MsgTx{c, x, b, a} {
+		recs = append(recs, txRecord(t, tx))
+	}
+
+	var got []chainhash.Hash
+	for _, rec := range sortParentsFirst(recs) {
+		got = append(got, rec.Hash)
+	}
+	want := []chainhash.Hash{a.TxHash(), b.TxHash(), c.TxHash(), x.TxHash()}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sorted %v, want %v", got, want)
+	}
+}
+
+// TestAddBlockTxsSpendBeforeParent checks that a transaction that spends an
+// output of another in the same block marks the output spent when the block
+// lists it first, as blocks that order their transactions by txid can.
+func TestAddBlockTxsSpendBeforeParent(t *testing.T) {
+	tests := []struct {
+		name string
+
+		// unmined is whether the wallet records the transactions as
+		// unmined before the block, as it does those it sends.
+		unmined bool
+	}{
+		{name: "sent by the wallet", unmined: true},
+		{name: "first seen in the block", unmined: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			w := newRegtestWallet(t)
+			script := walletScript(t, w)
+
+			funding := addCredit(t, w, &wire.TxOut{
+				Value: 100000, PkScript: script,
+			})
+			parent := spendTx([]wire.OutPoint{funding},
+				&wire.TxOut{Value: 10000, PkScript: script},
+				&wire.TxOut{Value: 89000, PkScript: script})
+			spend := spendTx(
+				[]wire.OutPoint{{Hash: parent.TxHash(), Index: 1}},
+				&wire.TxOut{Value: 88000, PkScript: script})
+			parentRec, spendRec := txRecord(t, parent), txRecord(t, spend)
+
+			if test.unmined {
+				err := walletdb.Update(w.db, func(
+					dbtx walletdb.ReadWriteTx) error {
+
+					err := w.addRelevantTx(dbtx, parentRec, nil)
+					if err != nil {
+						return err
+					}
+					return w.addRelevantTx(dbtx, spendRec, nil)
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			block := &wtxmgr.BlockMeta{
+				Block: wtxmgr.Block{Hash: chainhash.Hash{2}, Height: 2},
+				Time:  testBlock.Time.Add(defaultBlockInterval),
+			}
+			err := walletdb.Update(w.db, func(
+				dbtx walletdb.ReadWriteTx) error {
+
+				return w.addBlockTxs(dbtx, []*wtxmgr.TxRecord{
+					spendRec, parentRec,
+				}, block)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var (
+				credits []wtxmgr.Credit
+				unmined []*wire.MsgTx
+				balance bchutil.Amount
+			)
+			err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+				ns := dbtx.ReadBucket(wtxmgrNamespaceKey)
+				var err error
+				credits, err = w.TxStore.UnspentOutputs(ns)
+				if err != nil {
+					return err
+				}
+				unmined, err = w.TxStore.UnminedTxs(ns)
+				if err != nil {
+					return err
+				}
+				balance, err = w.TxStore.Balance(ns, 1, block.Height)
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := map[wire.OutPoint]bool{
+				{Hash: parent.TxHash(), Index: 0}: true,
+				{Hash: spend.TxHash(), Index: 0}:  true,
+			}
+			got := make(map[wire.OutPoint]bool)
+			for _, credit := range credits {
+				got[credit.OutPoint] = true
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("unspent outputs %v, want %v", got, want)
+			}
+			if len(unmined) != 0 {
+				t.Errorf("%d transactions left unmined", len(unmined))
+			}
+			if balance != 98000 {
+				t.Errorf("balance %v, want %v", balance,
+					bchutil.Amount(98000))
+			}
+		})
 	}
 }

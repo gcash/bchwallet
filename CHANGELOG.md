@@ -4,6 +4,14 @@ All notable user-visible changes to [bchwallet](https://github.com/gcash/bchwall
 
 bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in October 2018, at upstream commit 29ee944 ([btcsuite/btcwallet#551](https://github.com/btcsuite/btcwallet/pull/551)). The original btcwallet changelog (0.1.0 through 0.7.0) is preserved unchanged at the bottom of this file under **Legacy btcwallet changelog (pre-fork)**.
 
+## Unreleased
+
+This release keeps the wallet from spending an output again that a transaction in the same block already spent.
+
+### Wallet
+
+- A transaction that spends an output of another transaction in the same block marks that output spent, also when the block lists the spending transaction first. Since the canonical transaction ordering upgrade, blocks list their transactions by txid, so this happens to about half of such pairs. The wallet kept the output unspent: it counted it in the balance and could spend it again, in a transaction that never confirmed and that the wallet broadcast again after every rescan.
+
 ## 0.13.2 (2026-10-27)
 
 This release moves to bchd 0.22.4, lets an app run the wallet again in the same process and start it when targeting current Android, lets the wallet hold and send CashTokens and shows them in the gRPC API, pays BitPay invoices with the JSON Payment Protocol, makes SPV wallets reconnect to their peer after a restart or a network change, and adds testnet4 and chipnet.
