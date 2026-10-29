@@ -296,9 +296,9 @@ func (w *Wallet) addBlockTxs(dbtx walletdb.ReadWriteTx,
 // addNotifiedTx records a transaction that the chain backend reports if it is
 // the wallet's. A backend reports every transaction that pays an address or
 // spends an output it watches, which can be more than the wallet's: once the
-// wallet publishes a transaction, the backend also watches the addresses it
-// pays, the recipients' among them, and the outputs it pays them, so it
-// reports their later transactions too.
+// wallet publishes a transaction that spends none of its outputs, the backend
+// also watches the addresses it pays and the outputs it pays them, so it
+// reports their owners' later transactions too.
 func (w *Wallet) addNotifiedTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord,
 	block *wtxmgr.BlockMeta) error {
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
@@ -161,32 +162,97 @@ func TestPublishTransactionErrors(t *testing.T) {
 }
 
 // unwatchingChainClient is a chain backend that can't take requests to watch
-// addresses, as one that is stopping.
+// addresses, as one that is stopping, and counts them.
 type unwatchingChainClient struct {
 	brokenChainClient
+	requests int
 }
 
 func (c *unwatchingChainClient) NotifyReceived([]bchutil.Address) error {
+	c.requests++
 	return errors.New("the client has been shutdown")
 }
 
 // TestPublishTransactionNotifyError checks that a backend that can't watch the
 // outputs of a transaction the wallet has recorded doesn't make the publish
 // fail, since the wallet keeps the transaction and broadcasts it again, so a
-// caller that created it again would pay twice.
+// caller that created it again would pay twice.  The transaction spends none
+// of the wallet's outputs, so the backend is asked to watch its outputs.
 func TestPublishTransactionNotifyError(t *testing.T) {
 	w := newRegtestWallet(t)
 	script := walletScript(t, w)
-	op := addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
-	tx := spendTx([]wire.OutPoint{op},
+	tx := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{9}}},
 		wire.NewTxOut(90000, script, wire.TokenData{}))
-	w.chainClient = &unwatchingChainClient{}
+	backend := &unwatchingChainClient{}
+	w.chainClient = backend
 
 	if err := w.PublishTransaction(tx); err != nil {
 		t.Fatalf("got %v for a transaction the wallet keeps", err)
 	}
+	if backend.requests == 0 {
+		t.Fatal("the backend wasn't asked to watch the outputs")
+	}
 	if !recorded(t, w, tx) {
 		t.Fatal("the wallet didn't keep the transaction")
+	}
+}
+
+// watchingChainClient is a chain backend that keeps the addresses it is asked
+// to watch.
+type watchingChainClient struct {
+	brokenChainClient
+	watched []bchutil.Address
+}
+
+func (c *watchingChainClient) NotifyReceived(addrs []bchutil.Address) error {
+	c.watched = append(c.watched, addrs...)
+	return nil
+}
+
+// TestPublishTransactionWatches checks that publishing a transaction that
+// spends outputs of the wallet doesn't have the backend watch the addresses it
+// pays, as the backend reports it for the outputs it spends, and would report
+// the recipients' later transactions too, while a transaction that spends none
+// of them, such as another wallet's, has the addresses it pays watched, so that
+// the wallet sees it confirm.
+func TestPublishTransactionWatches(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	op := addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	payment := spendTx([]wire.OutPoint{op},
+		wire.NewTxOut(10000, otherScript, wire.TokenData{}),
+		wire.NewTxOut(89000, script, wire.TokenData{}))
+	others := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{9}}},
+		wire.NewTxOut(5000, otherScript, wire.TokenData{}))
+	backend := &watchingChainClient{}
+	w.chainClient = backend
+
+	if err := w.PublishTransaction(payment); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.watched) != 0 {
+		t.Errorf("publishing a payment of the wallet watched %v",
+			backend.watched)
+	}
+
+	if err := w.PublishTransaction(others); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.watched) != 1 ||
+		backend.watched[0].String() != someone.String() {
+
+		t.Errorf("publishing another wallet's transaction watched %v, "+
+			"want %v", backend.watched, someone)
 	}
 }
 

@@ -3807,7 +3807,15 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 		return nil, err
 	}
 
+	var spendsWalletOutputs bool
 	err = walletdb.Update(w.db, func(dbTx walletdb.ReadWriteTx) error {
+		spent, err := w.TxStore.PreviousPkScripts(
+			dbTx.ReadBucket(wtxmgrNamespaceKey), txRec, nil,
+		)
+		if err != nil {
+			return err
+		}
+		spendsWalletOutputs = len(spent) > 0
 		return w.addRelevantTx(dbTx, txRec, nil)
 	})
 	if err != nil {
@@ -3818,9 +3826,15 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	// on-chain. This is done outside of the database transaction to prevent
 	// backend interaction within it.
 	//
+	// A transaction that spends outputs of the wallet needs nothing more,
+	// as the backend watches those and reports the transaction that spends
+	// them. Watching the addresses it pays would also have the backend
+	// watch the outputs paying the recipients, and report the recipients'
+	// later transactions until the wallet restarts.
+	//
 	// NOTE: In some cases, it's possible that the transaction to be
 	// broadcast is not directly relevant to the user's wallet, e.g.,
-	// multisig. In either case, we'll still ask to be notified of when it
+	// multisig. In that case, we'll still ask to be notified of when it
 	// confirms to maintain consistency.
 	//
 	// The transaction is recorded by now, and goes out again after the next
@@ -3830,20 +3844,22 @@ func (w *Wallet) reliablyPublishTransaction(tx *wire.MsgTx) (*chainhash.Hash, er
 	//
 	// TODO(wilmer): import script as external if the address does not
 	// belong to the wallet to handle confs during restarts?
-	for _, txOut := range tx.TxOut {
-		_, addrs, _, err := txscript.ExtractPkScriptAddrs(
-			txOut.PkScript, w.chainParams,
-		)
-		if err != nil {
-			// Non-standard outputs can safely be skipped because
-			// they're not supported by the wallet.
-			continue
-		}
+	if !spendsWalletOutputs {
+		for _, txOut := range tx.TxOut {
+			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
+				txOut.PkScript, w.chainParams,
+			)
+			if err != nil {
+				// Non-standard outputs can safely be skipped
+				// because they're not supported by the wallet.
+				continue
+			}
 
-		if err := chainClient.NotifyReceived(addrs); err != nil {
-			log.Warnf("Unable to watch the outputs of transaction %v: %v",
-				tx.TxHash(), err)
-			break
+			if err := chainClient.NotifyReceived(addrs); err != nil {
+				log.Warnf("Unable to watch the outputs of "+
+					"transaction %v: %v", tx.TxHash(), err)
+				break
+			}
 		}
 	}
 
