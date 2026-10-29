@@ -381,3 +381,128 @@ func TestMigrationMarkCreditsSpentByMinedTxs(t *testing.T) {
 		})
 	}
 }
+
+// TestMigrationRemoveTxsOfOthers ensures that migrating a store removes the
+// mined and unmined transactions that neither pay nor spend the wallet, with
+// them in the records of their blocks, and keeps the wallet's.
+func TestMigrationRemoveTxsOfOthers(t *testing.T) {
+	t.Parallel()
+
+	fund := spendOutput(&chainhash.Hash{1}, 0, 1e8)
+	fundHash := fund.TxHash()
+	payment := spendOutput(&fundHash, 0, 3e7, 6e7)
+	paymentHash := payment.TxHash()
+
+	// others spends the output that the payment paid someone, in a block
+	// with a transaction paying the wallet, and othersLater spends its
+	// output in a block of its own.
+	others := spendOutput(&paymentHash, 0, 2e7)
+	othersHash := others.TxHash()
+	received := spendOutput(&chainhash.Hash{2}, 0, 1e7)
+	othersLater := spendOutput(&othersHash, 0, 1e7)
+	othersLaterHash := othersLater.TxHash()
+
+	// unminedOthers spends the output of othersLater and unminedChild its
+	// output, while unminedSpend spends the payment's change.
+	unminedOthers := spendOutput(&othersLaterHash, 0, 9e6)
+	unminedOthersHash := unminedOthers.TxHash()
+	unminedChild := spendOutput(&unminedOthersHash, 0, 8e6)
+	unminedSpend := spendOutput(&paymentHash, 1, 5e7)
+
+	block := func(height int32) *BlockMeta {
+		return &BlockMeta{Block: Block{
+			Hash:   chainhash.Hash{byte(height)},
+			Height: height,
+		}}
+	}
+	records := []struct {
+		tx      *wire.MsgTx
+		block   *BlockMeta
+		credits []uint32
+		kept    bool
+	}{
+		{fund, block(100), []uint32{0}, true},
+		{payment, block(101), []uint32{1}, true},
+		{others, block(102), nil, false},
+		{received, block(102), []uint32{0}, true},
+		{othersLater, block(103), nil, false},
+		{unminedOthers, nil, nil, false},
+		{unminedChild, nil, nil, false},
+		{unminedSpend, nil, nil, true},
+	}
+
+	beforeMigration := func(ns walletdb.ReadWriteBucket, s *Store) error {
+		for _, r := range records {
+			rec, err := NewTxRecordFromMsgTx(r.tx, timeNow())
+			if err != nil {
+				return err
+			}
+			if err := s.InsertTx(ns, rec, r.block); err != nil {
+				return err
+			}
+			for _, index := range r.credits {
+				err := s.AddCredit(ns, rec, r.block, index, false)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	afterMigration := func(ns walletdb.ReadWriteBucket, s *Store) error {
+		for i, r := range records {
+			hash := r.tx.TxHash()
+			details, err := s.TxDetails(ns, &hash)
+			if err != nil {
+				return err
+			}
+			if (details != nil) != r.kept {
+				return fmt.Errorf("record %d kept: %v, want %v", i,
+					details != nil, r.kept)
+			}
+		}
+
+		k, v := existsBlockRecord(ns, 102)
+		var rec blockRecord
+		if err := readRawBlockRecord(k, v, &rec); err != nil {
+			return err
+		}
+		want := []chainhash.Hash{received.TxHash()}
+		if !reflect.DeepEqual(rec.transactions, want) {
+			return fmt.Errorf("block 102 lists %v, want %v",
+				rec.transactions, want)
+		}
+		if _, v := existsBlockRecord(ns, 103); v != nil {
+			return errors.New("block 103 is still recorded")
+		}
+
+		var listed int
+		err := s.RangeTransactions(ns, 0, -1, func(
+			details []TxDetails) (bool, error) {
+
+			listed += len(details)
+			return false, nil
+		})
+		if err != nil {
+			return err
+		}
+		if listed != 4 {
+			return fmt.Errorf("%d transactions listed, want 4", listed)
+		}
+
+		minedBalance, err := fetchMinedBalance(ns)
+		if err != nil {
+			return err
+		}
+		if minedBalance != 7e7 {
+			return fmt.Errorf("mined balance %v, want %v",
+				minedBalance, bchutil.Amount(7e7))
+		}
+		return nil
+	}
+
+	applyMigration(
+		t, beforeMigration, afterMigration, removeTxsOfOthers, false,
+	)
+}

@@ -15,6 +15,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - With a bchd backend too, a transaction that spends an output of another transaction in the same block marks that output spent when the block lists the spending transaction first. bchd notifies a block's transactions one at a time, and the wallet recorded each as it came, so it kept the output unspent. The RPC client now hands over a block's transactions together, as the SPV client does.
 - The wallet records only the transactions that pay it, spend its outputs or that it published. Once it publishes a transaction, the backend also watches the addresses the transaction pays, until the wallet restarts, so it reported the recipients' later transactions too, such as their spend of what the wallet paid them, and the wallet listed those among its own, with no debits or credits.
 - Publishing a transaction that spends the wallet's outputs no longer has the backend watch the addresses it pays. The backend reports the transaction for the outputs it spends, and watching the recipients' addresses too had an SPV wallet download the blocks of their later transactions until it restarted.
+- Opening a wallet removes the transactions it recorded that neither pay nor spend it, confirmed or not, and so also any such transaction that a client published through the wallet, which the wallet then no longer broadcasts. This upgrades the transaction store to version 4, which older versions of bchwallet can't open.
 
 ### RPC & gRPC
 

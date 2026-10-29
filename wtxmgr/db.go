@@ -354,6 +354,39 @@ func deleteBlockRecord(ns walletdb.ReadWriteBucket, height int32) error {
 	return ns.NestedReadWriteBucket(bucketBlocks).Delete(k)
 }
 
+// removeBlockRecordTx removes a transaction from the record of the block it was
+// mined in, and the record once it lists no transaction.
+func removeBlockRecordTx(ns walletdb.ReadWriteBucket, block *Block,
+	txHash *chainhash.Hash) error {
+
+	k, v := existsBlockRecord(ns, block.Height)
+	if v == nil {
+		return nil
+	}
+	var rec blockRecord
+	if err := readRawBlockRecord(k, v, &rec); err != nil {
+		return err
+	}
+	if rec.Hash != block.Hash {
+		return nil
+	}
+
+	newv := make([]byte, 44, len(v))
+	copy(newv, v[:44])
+	var n uint32
+	for i := range rec.transactions {
+		if rec.transactions[i] != *txHash {
+			newv = append(newv, rec.transactions[i][:]...)
+			n++
+		}
+	}
+	if n == 0 {
+		return deleteBlockRecord(ns, block.Height)
+	}
+	byteOrder.PutUint32(newv[40:44], n)
+	return putRawBlockRecord(ns, k, newv)
+}
+
 // Transaction records are keyed as such:
 //
 //   [0:32]  Transaction hash (32 bytes)
