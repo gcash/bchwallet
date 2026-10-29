@@ -127,10 +127,73 @@ func (c *PaymentProtocolClient) DownloadPaymentRequest(ctx context.Context,
 	}
 	pr, bip70Err := c.DownloadBip0070PaymentRequest(ctx, uri)
 	if bip70Err != nil {
-		return nil, fmt.Errorf("JSON payment protocol: %v; BIP70: %v",
-			jppErr, bip70Err)
+		return nil, paymentRequestError(jppErr, bip70Err)
 	}
 	return pr, nil
+}
+
+// requestStage is how far a request for a payment request got before it
+// failed.  A merchant that doesn't speak a protocol answers its request with
+// an error status, or with what it answers the other protocol's request, so
+// the protocol whose request got further is the merchant's.
+type requestStage int
+
+const (
+	// stageConnect is a request that got no response.
+	stageConnect requestStage = iota
+
+	// stageStatus is a request answered with an error status.
+	stageStatus
+
+	// stageFormat is a request answered with something other than the
+	// protocol's response.
+	stageFormat
+
+	// stageRequest is a request answered with the protocol's payment
+	// request, which the client refuses.
+	stageRequest
+)
+
+// stageError is the error of a request for a payment request that failed
+// before it got the protocol's payment request.
+type stageError struct {
+	stage requestStage
+	err   error
+}
+
+func (e *stageError) Error() string {
+	return e.err.Error()
+}
+
+func (e *stageError) Unwrap() error {
+	return e.err
+}
+
+// stageOf returns how far the request that failed with err got.
+func stageOf(err error) requestStage {
+	var se *stageError
+	if errors.As(err, &se) {
+		return se.stage
+	}
+	return stageRequest
+}
+
+// paymentRequestError returns the error of a payment request that neither
+// protocol got: that of the protocol whose request got further, as the
+// merchant speaks it, the error once if both requests failed alike to get a
+// response, or else both.
+func paymentRequestError(jppErr, bip70Err error) error {
+	jppStage, bip70Stage := stageOf(jppErr), stageOf(bip70Err)
+	switch {
+	case jppStage > bip70Stage:
+		return jppErr
+	case bip70Stage > jppStage:
+		return bip70Err
+	case jppStage == stageConnect && jppErr.Error() == bip70Err.Error():
+		return jppErr
+	}
+	return fmt.Errorf("JSON payment protocol: %v; BIP70: %v", jppErr,
+		bip70Err)
 }
 
 // DownloadBip0070PaymentRequest will download a Bip70 (protobuf) payment request from
@@ -153,11 +216,12 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Contex
 	// Make the request
 	resp, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, &stageError{stageConnect, err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http status not OK: %d", resp.StatusCode)
+		return nil, &stageError{stageStatus,
+			fmt.Errorf("http status not OK: %d", resp.StatusCode)}
 	}
 
 	// Read a byte more than a payment request may have, so that one that
@@ -165,7 +229,7 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Contex
 	paymentRequestBytes, err := io.ReadAll(io.LimitReader(resp.Body,
 		MaxPaymentRequestSize+1))
 	if err != nil {
-		return nil, err
+		return nil, &stageError{stageConnect, err}
 	}
 	return c.ParseBip0070PaymentRequest(paymentRequestBytes)
 }
@@ -189,7 +253,7 @@ func (c *PaymentProtocolClient) ParseBip0070PaymentRequest(
 	// Unmarshal payment request
 	paymentRequest := new(payments.PaymentRequest)
 	if err := proto.Unmarshal(paymentRequestBytes, paymentRequest); err != nil {
-		return nil, err
+		return nil, &stageError{stageFormat, err}
 	}
 
 	// A request signed with x509+sha256 names the merchant of its certificate,

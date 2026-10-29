@@ -21,6 +21,7 @@ import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
+	"github.com/gcash/bchwallet/pymtproto/payments"
 )
 
 // testMerchant is a JSON Payment Protocol merchant for tests, which signs its
@@ -376,6 +377,80 @@ func TestPaymentRequestFallsBackToBIP70(t *testing.T) {
 	if pr.Protocol != ProtocolBIP70 || pr.PayToName != "Example Store" {
 		t.Errorf("got payment request %+v", pr)
 	}
+}
+
+// TestPaymentRequestErrors checks that when neither protocol gets a payment
+// request, the error is that of the protocol the merchant speaks, alone, and
+// that the error of a merchant that can't be reached comes once.
+func TestPaymentRequestErrors(t *testing.T) {
+	root := newTestCert(t, caTemplate(1, "Test Root CA"), newECDSAKey(t), nil)
+	merchant := newTestCert(t, merchantTemplate(2, "Example Store",
+		"store.example"), newECDSAKey(t), root)
+	expired := signedPaymentRequestPaying(t, merchant,
+		[]*testCert{merchant}, "main", p2pkhScript(t),
+		func(details *payments.PaymentDetails) {
+			past := uint64(time.Now().Add(-time.Hour).Unix())
+			details.Expires = &past
+		})
+	const wantExpired = "payment request is expired"
+
+	t.Run("BIP70 merchant refusing JPP", func(t *testing.T) {
+		m, client := newTestMerchant(t)
+		m.noJPP = true
+		m.bip70 = expired
+		client.roots = x509.NewCertPool()
+		client.roots.AddCert(root.cert)
+
+		_, err := client.DownloadPaymentRequest(context.Background(),
+			"bitcoincash:?r="+m.url)
+		if err == nil || err.Error() != wantExpired {
+			t.Errorf("got %v, want %v", err, wantExpired)
+		}
+	})
+
+	t.Run("BIP70 merchant ignoring the protocol", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(expired)
+			}))
+		t.Cleanup(server.Close)
+		client := NewPaymentProtocolClient(&chaincfg.MainNetParams, nil)
+		client.httpClient = server.Client()
+		client.roots = x509.NewCertPool()
+		client.roots.AddCert(root.cert)
+
+		_, err := client.DownloadPaymentRequest(context.Background(),
+			"bitcoincash:?r="+server.URL+"/i/1")
+		if err == nil || err.Error() != wantExpired {
+			t.Errorf("got %v, want %v", err, wantExpired)
+		}
+	})
+
+	t.Run("JPP merchant without BIP70", func(t *testing.T) {
+		m, client := newTestMerchant(t)
+		m.expires = time.Now().Add(-time.Hour)
+
+		_, err := client.DownloadPaymentRequest(context.Background(),
+			"bitcoincash:?r="+m.url)
+		if err == nil || err.Error() != wantExpired {
+			t.Errorf("got %v, want %v", err, wantExpired)
+		}
+	})
+
+	t.Run("unreachable merchant", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.NotFoundHandler())
+		client := NewPaymentProtocolClient(&chaincfg.MainNetParams, nil)
+		client.httpClient = server.Client()
+		uri := "bitcoincash:?r=" + server.URL + "/i/1"
+		server.Close()
+
+		_, err := client.DownloadPaymentRequest(context.Background(), uri)
+		if err == nil || strings.Count(err.Error(), "dial tcp") != 1 ||
+			strings.Contains(err.Error(), "BIP70") {
+
+			t.Errorf("got %v, want the connection's error once", err)
+		}
+	})
 }
 
 // TestBitPayKeys checks that each of BitPay's keys has the identity of its

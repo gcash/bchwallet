@@ -142,12 +142,12 @@ func (c *PaymentProtocolClient) jppDo(ctx context.Context, method, rawURL,
 
 	resp, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, &stageError{stageConnect, err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxJPPResponseSize))
 	if err != nil {
-		return nil, err
+		return nil, &stageError{stageConnect, err}
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Errors come as plain text, which is worth passing on, but
@@ -156,7 +156,8 @@ func (c *PaymentProtocolClient) jppDo(ctx context.Context, method, rawURL,
 		if len(msg) > 200 {
 			msg = msg[:200]
 		}
-		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, msg)
+		return nil, &stageError{stageStatus,
+			fmt.Errorf("http status %d: %s", resp.StatusCode, msg)}
 	}
 	return &jppResponse{host: u.Hostname(), header: resp.Header, body: respBody}, nil
 }
@@ -168,7 +169,10 @@ func (c *PaymentProtocolClient) jppDo(ctx context.Context, method, rawURL,
 func (c *PaymentProtocolClient) verifyJPPResponse(resp *jppResponse) (string, error) {
 	alg, digestHex, ok := strings.Cut(resp.header.Get("Digest"), "=")
 	if !ok || !strings.EqualFold(alg, "SHA-256") {
-		return "", errors.New("response has no SHA-256 digest")
+		// The response of a server that doesn't speak the protocol, such
+		// as a BIP70 payment request, has none.
+		return "", &stageError{stageFormat,
+			errors.New("response has no SHA-256 digest")}
 	}
 	digest, err := hex.DecodeString(digestHex)
 	sum := sha256.Sum256(resp.body)
