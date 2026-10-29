@@ -1047,8 +1047,8 @@ The `DownloadPaymentRequest` method downloads the payment request of a
 `bitcoincash:` URI with an `r` parameter. It uses version 2 of BitPay's JSON
 Payment Protocol when the merchant offers it, signed by a key the wallet trusts
 for the merchant's domain, which are BitPay's, and BIP70 otherwise, whose
-certificate must chain to a certificate authority the system trusts and which
-may be no larger than 50,000 bytes. Pay the
+certificate must chain to a certificate authority the system trusts, unless the
+request is unsigned, and which may be no larger than 50,000 bytes. Pay the
 outputs with `CreateTransaction`, at a fee rate of at least
 `required_sat_per_kb_fee`, then sign the transaction and send it with
 `PostPayment`.
@@ -1060,7 +1060,9 @@ outputs with `CreateTransaction`, at a fee rate of at least
 **Response:** `DownloadPaymentRequestResponse`
 
 - `string pay_to_name`: The verified name of the merchant: the owner of the JSON
-  Payment Protocol key, or the name in the BIP70 certificate.
+  Payment Protocol key, or the name in the BIP70 certificate. It is empty for an
+  unsigned BIP70 request, which BIP70 has wallets accept but which is no more
+  trustworthy than a plain address.
 
 - `repeated Output outputs`: The addresses and amounts to pay.
 
@@ -1092,8 +1094,8 @@ The `ParsePaymentRequest` method checks a BIP70 payment request that the client
 has as a file, as a merchant hands one over with the
 `application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest`
 checks a downloaded one: its certificate must chain to a certificate authority
-the system trusts, it must be for the wallet's network and not expired, and it
-may be no larger than 50,000 bytes.
+the system trusts, unless it is unsigned, it must be for the wallet's network
+and not expired, and it may be no larger than 50,000 bytes.
 
 **Request:** `ParsePaymentRequestRequest`
 

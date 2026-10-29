@@ -498,3 +498,80 @@ func TestDownloadPaymentRequestSize(t *testing.T) {
 		t.Fatalf("payment request of %d bytes: %v", len(request), err)
 	}
 }
+
+// unsignedPaymentRequest returns a serialized payment request for network
+// whose one output pays script, with the PKI type given, and no certificate or
+// signature.
+func unsignedPaymentRequest(t *testing.T, network string, script []byte,
+	pkiType string) []byte {
+
+	t.Helper()
+
+	amount := uint64(1000)
+	now := uint64(time.Now().Unix())
+	expires := now + 3600
+	details := &payments.PaymentDetails{
+		Outputs: []*payments.Output{{Amount: &amount, Script: script}},
+		Time:    &now,
+		Expires: &expires,
+		Network: &network,
+	}
+	serializedDetails, err := proto.Marshal(details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &payments.PaymentRequest{
+		PkiType:                  &pkiType,
+		SerializedPaymentDetails: serializedDetails,
+	}
+	serialized, err := proto.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return serialized
+}
+
+// TestUnsignedPaymentRequest ensures an unsigned payment request is accepted
+// without a merchant's name, after the checks that don't need a signature,
+// and that one signed with SHA-1 is refused.
+func TestUnsignedPaymentRequest(t *testing.T) {
+	root := newTestCert(t, caTemplate(1, "Test Root CA"), newECDSAKey(t), nil)
+	script := p2pkhScript(t)
+
+	pr, err := parsePaymentRequest(unsignedPaymentRequest(t, "test", script,
+		"none"), &chaincfg.TestNet3Params, root)
+	if err != nil {
+		t.Fatalf("unsigned request: %v", err)
+	}
+	if pr.PayToName != "" || len(pr.Outputs) != 1 {
+		t.Fatalf("unsigned request pays to %q, %d outputs", pr.PayToName,
+			len(pr.Outputs))
+	}
+
+	tests := []struct {
+		name    string
+		request []byte
+		refusal string
+	}{
+		{
+			name: "unsigned mainnet request on testnet",
+			request: unsignedPaymentRequest(t, "main", script,
+				"none"),
+			refusal: "\"main\" network",
+		},
+		{
+			name: "request signed with SHA-1",
+			request: unsignedPaymentRequest(t, "test", script,
+				"x509+sha1"),
+			refusal: "x509+sha1 is insecure",
+		},
+	}
+	for _, test := range tests {
+		_, err := parsePaymentRequest(test.request, &chaincfg.TestNet3Params,
+			root)
+		if err == nil || !strings.Contains(err.Error(), test.refusal) {
+			t.Errorf("%s: %v, want an error with %q", test.name, err,
+				test.refusal)
+		}
+	}
+}

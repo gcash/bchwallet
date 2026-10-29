@@ -172,11 +172,12 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Contex
 
 // ParseBip0070PaymentRequest checks a serialized Bip70 (protobuf) payment request, as
 // DownloadBip0070PaymentRequest downloads one or as a merchant hands one over in a file.
-// It validates the request is formatted correctly, is no larger than BIP70 allows, is
-// for the client's network and is signed with a valid X509 certificate. The cert must
-// chain to a certificate authority in the OS's certificate store, through the
-// intermediate certs the request includes. A PaymentRequest object with the relevant
-// data extracted is returned.
+// It validates the request is formatted correctly, is no larger than BIP70 allows and is
+// for the client's network, and that a signed one is signed with a valid X509
+// certificate. The cert must chain to a certificate authority in the OS's certificate
+// store, through the intermediate certs the request includes. A PaymentRequest object
+// with the relevant data extracted is returned, whose PayToName is empty for an
+// unsigned request.
 func (c *PaymentProtocolClient) ParseBip0070PaymentRequest(
 	paymentRequestBytes []byte) (*PaymentRequest, error) {
 
@@ -191,16 +192,101 @@ func (c *PaymentProtocolClient) ParseBip0070PaymentRequest(
 		return nil, err
 	}
 
-	// We're only accepting `x509+sha256` certs. The alternatives are `none` which is insecure
-	// and `x509+sha1` which is also insecure. So `x509+sha256` it is.
+	// A request signed with x509+sha256 names the merchant of its certificate,
+	// once the certificate and the signature check out. BIP70 has wallets
+	// accept requests without a signature, PkiType none, which name no one and
+	// are as trustworthy as a plain address. SHA-1 signatures can be forged, so
+	// x509+sha1 requests are refused.
+	var payTo string
 	switch paymentRequest.GetPkiType() {
 	case "x509+sha256":
-		break
+		merchant, err := c.verifyBip0070Merchant(paymentRequest)
+		if err != nil {
+			return nil, err
+		}
+		payTo = payToName(merchant)
+	case "none":
 	case "x509+sha1":
 		return nil, errors.New("payment request PkiType x509+sha1 is insecure")
 	default:
 		return nil, errors.New("payment request PkiType unknown")
 	}
+
+	// Parse the payment details and build the response
+	paymentDetails := new(payments.PaymentDetails)
+	if err := proto.Unmarshal(paymentRequest.SerializedPaymentDetails, paymentDetails); err != nil {
+		return nil, err
+	}
+
+	// A payment request is for the main network or a test network.
+	network := "main"
+	if c.params.Net != wire.MainNet {
+		network = "test"
+	}
+	if paymentDetails.GetNetwork() != network {
+		return nil, fmt.Errorf("payment request is for the %q network, not %q",
+			paymentDetails.GetNetwork(), network)
+	}
+
+	pr := &PaymentRequest{
+		PayToName: payTo,
+	}
+
+	for _, out := range paymentDetails.Outputs {
+		// We're going to return an error here if they ask us to pay an unparsable
+		// address. This is kind of lame as we should be able to pay any script but
+		// our gRPC API currently only works with addresses for convenience so we wont
+		// be able to pay arbitrary scripts right now anyway.
+		class, addrs, _, err := txscript.ExtractPkScriptAddrs(out.Script, c.params)
+		if err != nil {
+			return nil, err
+		}
+
+		// Only a script that pays one address by its hash is that
+		// address's.  Other scripts have no address, such as OP_RETURN
+		// outputs, or addresses that pay something else, such as the
+		// public keys of a bare multisig script.
+		switch class {
+		case txscript.PubKeyHashTy, txscript.ScriptHashTy,
+			txscript.ScriptHash32Ty:
+		default:
+			return nil, fmt.Errorf("payment request output pays a %v "+
+				"script, not an address", class)
+		}
+		if len(addrs) != 1 {
+			return nil, fmt.Errorf("payment request output pays %d "+
+				"addresses, not one", len(addrs))
+		}
+		if out.Amount == nil {
+			return nil, errors.New("nil payment amount")
+		}
+		output := Output{
+			Address: addrs[0],
+			Amount:  bchutil.Amount(int64(*out.Amount)),
+		}
+		pr.Outputs = append(pr.Outputs, output)
+	}
+	pr.Expires = time.Unix(int64(paymentDetails.GetExpires()), 0)
+
+	if !c.skipExpirationChecks {
+		if pr.Expires.Before(time.Now()) {
+			return nil, errors.New("payment request is expired")
+		}
+	}
+
+	pr.Memo = paymentDetails.GetMemo()
+	pr.PaymentURL = paymentDetails.GetPaymentUrl()
+	pr.MerchantData = paymentDetails.GetMerchantData()
+
+	return pr, nil
+}
+
+// verifyBip0070Merchant returns the certificate of the merchant that signed a
+// x509+sha256 payment request, once it has checked that the certificate chains
+// to a certificate authority that the client trusts, through the intermediate
+// certificates that the request includes, and that it made the signature.
+func (c *PaymentProtocolClient) verifyBip0070Merchant(
+	paymentRequest *payments.PaymentRequest) (*x509.Certificate, error) {
 
 	// Unmarshal the certificate object
 	certificateProto := new(payments.X509Certificates)
@@ -266,74 +352,7 @@ func (c *PaymentProtocolClient) ParseBip0070PaymentRequest(
 	if err := certs[0].CheckSignature(sigAlgorithm, serializedPaymentRequest, signature); err != nil {
 		return nil, err
 	}
-
-	// Parse the payment details and build the response
-	paymentDetails := new(payments.PaymentDetails)
-	if err := proto.Unmarshal(paymentRequest.SerializedPaymentDetails, paymentDetails); err != nil {
-		return nil, err
-	}
-
-	// A payment request is for the main network or a test network.
-	network := "main"
-	if c.params.Net != wire.MainNet {
-		network = "test"
-	}
-	if paymentDetails.GetNetwork() != network {
-		return nil, fmt.Errorf("payment request is for the %q network, not %q",
-			paymentDetails.GetNetwork(), network)
-	}
-
-	pr := &PaymentRequest{
-		PayToName: payToName(certs[0]),
-	}
-
-	for _, out := range paymentDetails.Outputs {
-		// We're going to return an error here if they ask us to pay an unparsable
-		// address. This is kind of lame as we should be able to pay any script but
-		// our gRPC API currently only works with addresses for convenience so we wont
-		// be able to pay arbitrary scripts right now anyway.
-		class, addrs, _, err := txscript.ExtractPkScriptAddrs(out.Script, c.params)
-		if err != nil {
-			return nil, err
-		}
-
-		// Only a script that pays one address by its hash is that
-		// address's.  Other scripts have no address, such as OP_RETURN
-		// outputs, or addresses that pay something else, such as the
-		// public keys of a bare multisig script.
-		switch class {
-		case txscript.PubKeyHashTy, txscript.ScriptHashTy,
-			txscript.ScriptHash32Ty:
-		default:
-			return nil, fmt.Errorf("payment request output pays a %v "+
-				"script, not an address", class)
-		}
-		if len(addrs) != 1 {
-			return nil, fmt.Errorf("payment request output pays %d "+
-				"addresses, not one", len(addrs))
-		}
-		if out.Amount == nil {
-			return nil, errors.New("nil payment amount")
-		}
-		output := Output{
-			Address: addrs[0],
-			Amount:  bchutil.Amount(int64(*out.Amount)),
-		}
-		pr.Outputs = append(pr.Outputs, output)
-	}
-	pr.Expires = time.Unix(int64(paymentDetails.GetExpires()), 0)
-
-	if !c.skipExpirationChecks {
-		if pr.Expires.Before(time.Now()) {
-			return nil, errors.New("payment request is expired")
-		}
-	}
-
-	pr.Memo = paymentDetails.GetMemo()
-	pr.PaymentURL = paymentDetails.GetPaymentUrl()
-	pr.MerchantData = paymentDetails.GetMerchantData()
-
-	return pr, nil
+	return certs[0], nil
 }
 
 // sha256SignatureAlgorithm returns the algorithm of a signature over a SHA-256

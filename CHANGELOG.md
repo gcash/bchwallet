@@ -17,6 +17,7 @@ This release keeps the wallet from spending an output again that a transaction i
 
 - `ParsePaymentRequest` checks a BIP70 payment request that a client has as a file, as a merchant can hand one over with the `application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest` checks one that it downloads, and returns the same response. The gRPC API version is 2.2.0.
 - A BIP70 payment request larger than 50,000 bytes, the limit that BIP70 sets, is refused. `DownloadPaymentRequest` read all of one, however large.
+- An unsigned BIP70 payment request, which BIP70 has wallets accept, is accepted with an empty `pay_to_name`, as a request that names no merchant and is no more trustworthy than a plain address. One signed with `x509+sha1` is still refused, since SHA-1 signatures can be forged.
 
 ## 0.13.2 (2026-10-27)
 
