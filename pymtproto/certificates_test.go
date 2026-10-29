@@ -120,9 +120,10 @@ func signedPaymentRequest(t *testing.T, merchant *testCert, chain []*testCert,
 }
 
 // signedPaymentRequestPaying is signedPaymentRequest for a request whose one
-// output pays script.
+// output pays script, with the edits made to its details.
 func signedPaymentRequestPaying(t *testing.T, merchant *testCert,
-	chain []*testCert, network string, script []byte) []byte {
+	chain []*testCert, network string, script []byte,
+	edits ...func(*payments.PaymentDetails)) []byte {
 
 	t.Helper()
 
@@ -136,6 +137,9 @@ func signedPaymentRequestPaying(t *testing.T, merchant *testCert,
 	}
 	if network != "" {
 		details.Network = &network
+	}
+	for _, edit := range edits {
+		edit(details)
 	}
 	serializedDetails, err := proto.Marshal(details)
 	if err != nil {
@@ -372,5 +376,125 @@ func TestDownloadPaymentRequestScripts(t *testing.T) {
 			t.Errorf("%s: payment request accepted, paying %v",
 				test.name, pr.Outputs[0].Address)
 		}
+	}
+}
+
+// p2pkhScript returns the script that pays a mainnet address of zeros.
+func p2pkhScript(t *testing.T) []byte {
+	t.Helper()
+
+	addr, err := bchutil.NewAddressPubKeyHash(make([]byte, 20),
+		&chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+// largeMemo gives a payment request a memo that makes it larger than BIP70
+// allows.
+func largeMemo(details *payments.PaymentDetails) {
+	memo := strings.Repeat("x", MaxPaymentRequestSize)
+	details.Memo = &memo
+}
+
+// parsePaymentRequest checks request with a client for params that trusts
+// only roots, as ParsePaymentRequest checks a request that the wallet has as
+// a file.
+func parsePaymentRequest(request []byte, params *chaincfg.Params,
+	roots ...*testCert) (*PaymentRequest, error) {
+
+	prClient := NewPaymentProtocolClient(params, nil)
+	prClient.roots = x509.NewCertPool()
+	for _, root := range roots {
+		prClient.roots.AddCert(root.cert)
+	}
+	return prClient.ParseBip0070PaymentRequest(request)
+}
+
+// TestParsePaymentRequest ensures a payment request that the wallet has as a
+// file gets the checks of a downloaded one, and is refused when it is larger
+// than BIP70 allows.
+func TestParsePaymentRequest(t *testing.T) {
+	root := newTestCert(t, caTemplate(1, "Test Root CA"), newECDSAKey(t), nil)
+	merchant := newTestCert(t, merchantTemplate(2, "Example Store",
+		"store.example"), newECDSAKey(t), root)
+	expiredTemplate := merchantTemplate(3, "Example Store", "store.example")
+	expiredTemplate.NotBefore = time.Now().Add(-48 * time.Hour)
+	expiredTemplate.NotAfter = time.Now().Add(-24 * time.Hour)
+	expired := newTestCert(t, expiredTemplate, newECDSAKey(t), root)
+	otherRoot := newTestCert(t, caTemplate(4, "Other Root CA"), newECDSAKey(t), nil)
+	untrusted := newTestCert(t, merchantTemplate(5, "Example Store",
+		"store.example"), newECDSAKey(t), otherRoot)
+	script := p2pkhScript(t)
+
+	tests := []struct {
+		name    string
+		request []byte
+		refusal string // Part of the error when the request must be refused.
+	}{
+		{
+			name: "request of a trusted merchant",
+			request: signedPaymentRequestPaying(t, merchant,
+				[]*testCert{merchant}, "test", script),
+		},
+		{
+			name: "expired certificate",
+			request: signedPaymentRequestPaying(t, expired,
+				[]*testCert{expired}, "test", script),
+			refusal: "certificate is expired",
+		},
+		{
+			name: "certificate of an untrusted authority",
+			request: signedPaymentRequestPaying(t, untrusted,
+				[]*testCert{untrusted}, "test", script),
+			refusal: "unknown authority",
+		},
+		{
+			name: "mainnet request on testnet",
+			request: signedPaymentRequestPaying(t, merchant,
+				[]*testCert{merchant}, "main", script),
+			refusal: "\"main\" network",
+		},
+		{
+			name: "request larger than BIP70 allows",
+			request: signedPaymentRequestPaying(t, merchant,
+				[]*testCert{merchant}, "test", script, largeMemo),
+			refusal: "larger than 50000 bytes",
+		},
+	}
+	for _, test := range tests {
+		pr, err := parsePaymentRequest(test.request,
+			&chaincfg.TestNet3Params, root)
+		switch {
+		case test.refusal != "" && err == nil:
+			t.Errorf("%s: payment request accepted", test.name)
+		case test.refusal != "" && !strings.Contains(err.Error(), test.refusal):
+			t.Errorf("%s: refused with %q, want an error with %q",
+				test.name, err, test.refusal)
+		case test.refusal == "" && err != nil:
+			t.Errorf("%s: %v", test.name, err)
+		case test.refusal == "" && pr.PayToName != "Example Store":
+			t.Errorf("%s: pay to name %q", test.name, pr.PayToName)
+		}
+	}
+}
+
+// TestDownloadPaymentRequestSize ensures a downloaded payment request larger
+// than BIP70 allows is refused, also when it is signed by a trusted merchant.
+func TestDownloadPaymentRequestSize(t *testing.T) {
+	root := newTestCert(t, caTemplate(1, "Test Root CA"), newECDSAKey(t), nil)
+	merchant := newTestCert(t, merchantTemplate(2, "Example Store",
+		"store.example"), newECDSAKey(t), root)
+	request := signedPaymentRequestPaying(t, merchant, []*testCert{merchant},
+		"", p2pkhScript(t), largeMemo)
+
+	_, err := downloadPaymentRequest(t, request, &chaincfg.MainNetParams, root)
+	if err == nil || !strings.Contains(err.Error(), "larger than 50000 bytes") {
+		t.Fatalf("payment request of %d bytes: %v", len(request), err)
 	}
 }

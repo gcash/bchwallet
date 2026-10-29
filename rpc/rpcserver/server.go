@@ -55,7 +55,7 @@ import (
 const (
 	semverString = "2.1.0"
 	semverMajor  = 2
-	semverMinor  = 1
+	semverMinor  = 2
 	semverPatch  = 0
 )
 
@@ -1070,10 +1070,29 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 	if err != nil {
 		return nil, err
 	}
+	if pr.Protocol == pymtproto.ProtocolJPPv2 {
+		s.rememberJPPRequest(pr.PaymentURL, pr.Expires)
+	}
+	return paymentRequestResponse(pr), nil
+}
+
+func (s *walletServer) ParsePaymentRequest(ctx context.Context, req *pb.ParsePaymentRequestRequest) (
+	*pb.DownloadPaymentRequestResponse, error) {
+
+	client := pymtproto.NewPaymentProtocolClient(s.wallet.Load().ChainParams(), s.wallet.Load().GetProxyDialer())
+	pr, err := client.ParseBip0070PaymentRequest(req.PaymentRequest)
+	if err != nil {
+		return nil, err
+	}
+	return paymentRequestResponse(pr), nil
+}
+
+// paymentRequestResponse returns the response that describes a checked payment
+// request.
+func paymentRequestResponse(pr *pymtproto.PaymentRequest) *pb.DownloadPaymentRequestResponse {
 	protocol := pb.PaymentProtocol_BIP70
 	if pr.Protocol == pymtproto.ProtocolJPPv2 {
 		protocol = pb.PaymentProtocol_JSON_PAYMENT_PROTOCOL_V2
-		s.rememberJPPRequest(pr.PaymentURL, pr.Expires)
 	}
 	resp := &pb.DownloadPaymentRequestResponse{
 		PayToName:           pr.PayToName,
@@ -1091,7 +1110,7 @@ func (s *walletServer) DownloadPaymentRequest(ctx context.Context, req *pb.Downl
 		}
 		resp.Outputs = append(resp.Outputs, output)
 	}
-	return resp, nil
+	return resp
 }
 
 func (s *walletServer) PostPayment(ctx context.Context, req *pb.PostPaymentRequest) (

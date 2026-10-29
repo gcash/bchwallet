@@ -22,6 +22,10 @@ import (
 	"time"
 )
 
+// MaxPaymentRequestSize is the largest BIP70 payment request a client
+// accepts, in bytes, the limit that BIP70 sets.
+const MaxPaymentRequestSize = 50000
+
 // Protocol is a payment protocol.
 type Protocol int
 
@@ -130,11 +134,7 @@ func (c *PaymentProtocolClient) DownloadPaymentRequest(ctx context.Context,
 }
 
 // DownloadBip0070PaymentRequest will download a Bip70 (protobuf) payment request from
-// the provided bitcoincash URI. Upon download it will validate the request is formatted
-// correctly, is for the client's network and is signed with a valid X509 certificate.
-// The cert must chain to a certificate authority in the OS's certificate store, through
-// the intermediate certs the request includes. A PaymentRequest object with the relevant
-// data extracted is returned.
+// the provided bitcoincash URI and check it with ParseBip0070PaymentRequest.
 func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Context,
 	uri string) (*PaymentRequest, error) {
 
@@ -160,14 +160,34 @@ func (c *PaymentProtocolClient) DownloadBip0070PaymentRequest(ctx context.Contex
 		return nil, fmt.Errorf("http status not OK: %d", resp.StatusCode)
 	}
 
-	// Unmarshal payment request
-	paymentRequestBytes, err := io.ReadAll(resp.Body)
+	// Read a byte more than a payment request may have, so that one that
+	// is too large is refused without reading all of it.
+	paymentRequestBytes, err := io.ReadAll(io.LimitReader(resp.Body,
+		MaxPaymentRequestSize+1))
 	if err != nil {
 		return nil, err
 	}
+	return c.ParseBip0070PaymentRequest(paymentRequestBytes)
+}
 
+// ParseBip0070PaymentRequest checks a serialized Bip70 (protobuf) payment request, as
+// DownloadBip0070PaymentRequest downloads one or as a merchant hands one over in a file.
+// It validates the request is formatted correctly, is no larger than BIP70 allows, is
+// for the client's network and is signed with a valid X509 certificate. The cert must
+// chain to a certificate authority in the OS's certificate store, through the
+// intermediate certs the request includes. A PaymentRequest object with the relevant
+// data extracted is returned.
+func (c *PaymentProtocolClient) ParseBip0070PaymentRequest(
+	paymentRequestBytes []byte) (*PaymentRequest, error) {
+
+	if len(paymentRequestBytes) > MaxPaymentRequestSize {
+		return nil, fmt.Errorf("payment request is larger than %d bytes",
+			MaxPaymentRequestSize)
+	}
+
+	// Unmarshal payment request
 	paymentRequest := new(payments.PaymentRequest)
-	if err = proto.Unmarshal(paymentRequestBytes, paymentRequest); err != nil {
+	if err := proto.Unmarshal(paymentRequestBytes, paymentRequest); err != nil {
 		return nil, err
 	}
 

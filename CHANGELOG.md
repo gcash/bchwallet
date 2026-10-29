@@ -6,12 +6,17 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 ## Unreleased
 
-This release keeps the wallet from spending an output again that a transaction in the same block already spent, and repairs wallets that did.
+This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, and checks BIP70 payment requests that a client has as a file.
 
 ### Wallet
 
 - A transaction that spends an output of another transaction in the same block marks that output spent, also when the block lists the spending transaction first. Since the canonical transaction ordering upgrade, blocks list their transactions by txid, so this happens to about half of such pairs. The wallet kept the output unspent: it counted it in the balance and could spend it again, in a transaction that never confirmed and that the wallet broadcast again after every rescan.
 - Opening a wallet marks spent the outputs it kept unspent that way, and removes the unconfirmed transactions that spent them again, along with the transactions that spend their outputs, so the balance shows what the wallet holds and those transactions are no longer broadcast. This upgrades the transaction store to version 3, which older versions of bchwallet can't open.
+
+### RPC & gRPC
+
+- `ParsePaymentRequest` checks a BIP70 payment request that a client has as a file, as a merchant can hand one over with the `application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest` checks one that it downloads, and returns the same response. The gRPC API version is 2.2.0.
+- A BIP70 payment request larger than 50,000 bytes, the limit that BIP70 sets, is refused. `DownloadPaymentRequest` read all of one, however large.
 
 ## 0.13.2 (2026-10-27)
 

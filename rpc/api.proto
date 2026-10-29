@@ -48,6 +48,7 @@ service WalletService {
 
 	// Payment Requests
 	rpc DownloadPaymentRequest (DownloadPaymentRequestRequest) returns (DownloadPaymentRequestResponse);
+	rpc ParsePaymentRequest (ParsePaymentRequestRequest) returns (DownloadPaymentRequestResponse);
 	rpc PostPayment (PostPaymentRequest) returns (PostPaymentResponse);
 
 	// Utilities
@@ -497,6 +498,12 @@ message DownloadPaymentRequestResponse {
 	// The lowest fee rate the merchant accepts, in satoshis per kB, or 0
 	// when it does not say.
 	uint32 required_sat_per_kb_fee = 8;
+}
+
+message ParsePaymentRequestRequest {
+	// A BIP70 payment request, as a merchant serves one with the
+	// application/bitcoincash-paymentrequest type.
+	bytes payment_request = 1;
 }
 
 message PostPaymentRequest {

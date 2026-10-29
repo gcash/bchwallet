@@ -1,6 +1,6 @@
 # RPC API Specification
 
-Version: 2.1.0
+Version: 2.2.0
 =======
 
 **Note:** This document assumes the reader is familiar with gRPC concepts.
@@ -279,6 +279,7 @@ The service provides the following methods:
 - [`SignTransaction`](#signtransaction)
 - [`PublishTransaction`](#publishtransaction)
 - [`DownloadPaymentRequest`](#downloadpaymentrequest)
+- [`ParsePaymentRequest`](#parsepaymentrequest)
 - [`PostPayment`](#postpayment)
 - [`TransactionNotifications`](#transactionnotifications)
 - [`SpentnessNotifications`](#spentnessnotifications)
@@ -1046,7 +1047,8 @@ The `DownloadPaymentRequest` method downloads the payment request of a
 `bitcoincash:` URI with an `r` parameter. It uses version 2 of BitPay's JSON
 Payment Protocol when the merchant offers it, signed by a key the wallet trusts
 for the merchant's domain, which are BitPay's, and BIP70 otherwise, whose
-certificate must chain to a certificate authority the system trusts. Pay the
+certificate must chain to a certificate authority the system trusts and which
+may be no larger than 50,000 bytes. Pay the
 outputs with `CreateTransaction`, at a fee rate of at least
 `required_sat_per_kb_fee`, then sign the transaction and send it with
 `PostPayment`.
@@ -1079,6 +1081,32 @@ outputs with `CreateTransaction`, at a fee rate of at least
 
 - `Unknown`: The payment request could not be downloaded or verified with
   either protocol.
+
+**Stability:** Unstable
+
+___
+
+#### `ParsePaymentRequest`
+
+The `ParsePaymentRequest` method checks a BIP70 payment request that the client
+has as a file, as a merchant hands one over with the
+`application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest`
+checks a downloaded one: its certificate must chain to a certificate authority
+the system trusts, it must be for the wallet's network and not expired, and it
+may be no larger than 50,000 bytes.
+
+**Request:** `ParsePaymentRequestRequest`
+
+- `bytes payment_request`: The serialized BIP70 payment request.
+
+**Response:** `DownloadPaymentRequestResponse`, as `DownloadPaymentRequest`
+returns it, with the `BIP70` protocol. A request without a `payment_url` has no
+merchant to send the payment to, so its transaction is sent with
+`PublishTransaction` instead of `PostPayment`.
+
+**Expected errors:**
+
+- `Unknown`: The payment request could not be parsed or verified.
 
 **Stability:** Unstable
 
