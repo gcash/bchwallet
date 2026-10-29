@@ -134,7 +134,7 @@ func (w *Wallet) handleChainNotifications() {
 					return
 				}
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-					return w.addRelevantTx(tx, n.TxRecord, n.Block)
+					return w.addNotifiedTx(tx, n.TxRecord, n.Block)
 				})
 				notificationName = "relevant transaction"
 			case chain.FilteredBlockConnected:
@@ -276,20 +276,85 @@ func (w *Wallet) disconnectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) 
 	return nil
 }
 
-// addBlockTxs records the relevant transactions of a block, each after the
-// ones among them whose outputs it spends. The transaction store marks a
-// credit spent only when it records the spending transaction after the
-// credit, and since the canonical transaction ordering upgrade, blocks order
-// their transactions by txid, which can list a transaction before its parent.
+// addBlockTxs records those of a block's transactions that the chain backend
+// reports that are the wallet's, each after the ones among them whose outputs
+// it spends. The transaction store marks a credit spent only when it records
+// the spending transaction after the credit, and since the canonical
+// transaction ordering upgrade, blocks order their transactions by txid,
+// which can list a transaction before its parent.
 func (w *Wallet) addBlockTxs(dbtx walletdb.ReadWriteTx,
 	recs []*wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
 
 	for _, rec := range sortParentsFirst(recs) {
-		if err := w.addRelevantTx(dbtx, rec, block); err != nil {
+		if err := w.addNotifiedTx(dbtx, rec, block); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// addNotifiedTx records a transaction that the chain backend reports if it is
+// the wallet's. A backend reports every transaction that pays an address or
+// spends an output it watches, which can be more than the wallet's: once the
+// wallet publishes a transaction, the backend also watches the addresses it
+// pays, the recipients' among them, and the outputs it pays them, so it
+// reports their later transactions too.
+func (w *Wallet) addNotifiedTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord,
+	block *wtxmgr.BlockMeta) error {
+
+	ours, err := w.isWalletTx(dbtx, rec)
+	if err != nil {
+		return err
+	}
+	if !ours {
+		log.Debugf("Skipping transaction %v, which neither pays nor "+
+			"spends the wallet", rec.Hash)
+		return nil
+	}
+	return w.addRelevantTx(dbtx, rec, block)
+}
+
+// isWalletTx returns whether a transaction is the wallet's: it pays one of the
+// wallet's addresses, spends one of its outputs, or is already recorded, as one
+// the wallet published is.
+func (w *Wallet) isWalletTx(dbtx walletdb.ReadTx, rec *wtxmgr.TxRecord) (bool, error) {
+	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
+	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
+
+	details, err := w.TxStore.TxDetails(txmgrNs, &rec.Hash)
+	if err != nil {
+		return false, err
+	}
+	if details != nil {
+		return true, nil
+	}
+
+	spent, err := w.TxStore.PreviousPkScripts(txmgrNs, rec, nil)
+	if err != nil {
+		return false, err
+	}
+	if len(spent) > 0 {
+		return true, nil
+	}
+
+	for _, output := range rec.MsgTx.TxOut {
+		_, addrs, _, err := txscript.ExtractPkScriptAddrs(output.PkScript,
+			w.chainParams)
+		if err != nil {
+			// Non-standard outputs are skipped.
+			continue
+		}
+		for _, addr := range addrs {
+			_, err := w.Manager.Address(addrmgrNs, addr)
+			if err == nil {
+				return true, nil
+			}
+			if !waddrmgr.IsError(err, waddrmgr.ErrAddressNotFound) {
+				return false, err
+			}
+		}
+	}
+	return false, nil
 }
 
 // sortParentsFirst returns the transaction records ordered so that each comes
@@ -322,14 +387,14 @@ func sortParentsFirst(recs []*wtxmgr.TxRecord) []*wtxmgr.TxRecord {
 	return sorted
 }
 
+// addRelevantTx records a transaction and the outputs it pays the wallet, and
+// notifies clients of it. The transaction is the wallet's, one the wallet
+// publishes, or one a recovery found, as addNotifiedTx checks for those the
+// chain backend reports.
 func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
 	addrmgrNs := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadWriteBucket(wtxmgrNamespaceKey)
 
-	// At the moment all notified transactions are assumed to actually be
-	// relevant.  This assumption will not hold true when SPV support is
-	// added, but until then, simply insert the transaction because there
-	// should either be one or more relevant inputs or outputs.
 	err := w.TxStore.InsertTx(txmgrNs, rec, block)
 	if err != nil {
 		return err

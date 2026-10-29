@@ -6,13 +6,14 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 ## Unreleased
 
-This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, and checks BIP70 payment requests that a client has as a file.
+This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, and checks BIP70 payment requests that a client has as a file.
 
 ### Wallet
 
 - A transaction that spends an output of another transaction in the same block marks that output spent, also when the block lists the spending transaction first. Since the canonical transaction ordering upgrade, blocks list their transactions by txid, so this happens to about half of such pairs. The wallet kept the output unspent: it counted it in the balance and could spend it again, in a transaction that never confirmed and that the wallet broadcast again after every rescan.
 - Opening a wallet marks spent the outputs it kept unspent that way, and removes the unconfirmed transactions that spent them again, along with the transactions that spend their outputs, so the balance shows what the wallet holds and those transactions are no longer broadcast. This upgrades the transaction store to version 3, which older versions of bchwallet can't open.
 - With a bchd backend too, a transaction that spends an output of another transaction in the same block marks that output spent when the block lists the spending transaction first. bchd notifies a block's transactions one at a time, and the wallet recorded each as it came, so it kept the output unspent. The RPC client now hands over a block's transactions together, as the SPV client does.
+- The wallet records only the transactions that pay it, spend its outputs or that it published. Once it publishes a transaction, the backend also watches the addresses the transaction pays, until the wallet restarts, so it reported the recipients' later transactions too, such as their spend of what the wallet paid them, and the wallet listed those among its own, with no debits or credits.
 
 ### RPC & gRPC
 

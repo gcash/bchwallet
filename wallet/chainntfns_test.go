@@ -8,6 +8,7 @@ import (
 
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/waddrmgr"
@@ -448,5 +449,94 @@ func TestAddBlockTxsSpendBeforeParent(t *testing.T) {
 					bchutil.Amount(98000))
 			}
 		})
+	}
+}
+
+// TestAddNotifiedTxWalletOnly checks that of the transactions a chain backend
+// reports, the wallet records its own, which pay it, spend its outputs or
+// were published by it, and not the spend of an output it paid someone, which
+// a backend reports while it watches the outputs of a published transaction.
+func TestAddNotifiedTxWalletOnly(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	funding := addCredit(t, w, &wire.TxOut{Value: 100000, PkScript: script})
+	payment := spendTx([]wire.OutPoint{funding},
+		&wire.TxOut{Value: 10000, PkScript: otherScript},
+		&wire.TxOut{Value: 89000, PkScript: script})
+	paymentSpend := spendTx(
+		[]wire.OutPoint{{Hash: payment.TxHash(), Index: 0}},
+		&wire.TxOut{Value: 9000, PkScript: otherScript})
+	changeSpend := spendTx(
+		[]wire.OutPoint{{Hash: payment.TxHash(), Index: 1}},
+		&wire.TxOut{Value: 88000, PkScript: otherScript})
+	received := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{7}}},
+		&wire.TxOut{Value: 5000, PkScript: script})
+	published := spendTx([]wire.OutPoint{{Hash: chainhash.Hash{8}}},
+		&wire.TxOut{Value: 7000, PkScript: otherScript})
+	unminedSpend := spendTx(
+		[]wire.OutPoint{{Hash: paymentSpend.TxHash(), Index: 0}},
+		&wire.TxOut{Value: 8000, PkScript: otherScript})
+
+	// The wallet records the transactions it publishes, its own or not.
+	err = walletdb.Update(w.db, func(dbtx walletdb.ReadWriteTx) error {
+		err := w.addRelevantTx(dbtx, txRecord(t, payment), nil)
+		if err != nil {
+			return err
+		}
+		return w.addRelevantTx(dbtx, txRecord(t, published), nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block := &wtxmgr.BlockMeta{
+		Block: wtxmgr.Block{Hash: chainhash.Hash{2}, Height: 2},
+		Time:  testBlock.Time.Add(defaultBlockInterval),
+	}
+	var recs []*wtxmgr.TxRecord
+	for _, tx := range []*wire.MsgTx{paymentSpend, changeSpend, received,
+		published, payment} {
+
+		recs = append(recs, txRecord(t, tx))
+	}
+	err = walletdb.Update(w.db, func(dbtx walletdb.ReadWriteTx) error {
+		if err := w.addBlockTxs(dbtx, recs, block); err != nil {
+			return err
+		}
+
+		// An unmined transaction, as a bchd backend reports one.
+		return w.addNotifiedTx(dbtx, txRecord(t, unminedSpend), nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		tx   *wire.MsgTx
+		want bool
+	}{
+		{"the payment", payment, true},
+		{"the spend of the payment", paymentSpend, false},
+		{"the spend of the change", changeSpend, true},
+		{"a transaction paying the wallet", received, true},
+		{"a published transaction", published, true},
+		{"an unmined spend of the payment's spend", unminedSpend, false},
+	}
+	for _, test := range tests {
+		if got := recorded(t, w, test.tx); got != test.want {
+			t.Errorf("%s recorded: %v, want %v", test.name, got,
+				test.want)
+		}
 	}
 }
