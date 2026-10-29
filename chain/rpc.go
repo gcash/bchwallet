@@ -33,6 +33,12 @@ type RPCClient struct {
 	dequeueNotification chan interface{}
 	currentBlock        chan *waddrmgr.BlockStamp
 
+	// blockTxs holds the relevant transactions that recvtx and
+	// redeemingtx notifications named for one block, until a notification
+	// about anything else.
+	blockTxs    *FilteredBlockConnected
+	blockTxsMtx sync.Mutex
+
 	quit    chan struct{}
 	wg      sync.WaitGroup
 	started bool
@@ -312,6 +318,7 @@ func parseBlock(block *btcjson.BlockDetails) (*wtxmgr.BlockMeta, error) {
 }
 
 func (c *RPCClient) onClientConnect() {
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- ClientConnected{}:
 	case <-c.quit:
@@ -319,6 +326,7 @@ func (c *RPCClient) onClientConnect() {
 }
 
 func (c *RPCClient) onBlockConnected(hash *chainhash.Hash, height int32, time time.Time) {
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- BlockConnected{
 		Block: wtxmgr.Block{
@@ -332,6 +340,7 @@ func (c *RPCClient) onBlockConnected(hash *chainhash.Hash, height int32, time ti
 }
 
 func (c *RPCClient) onBlockDisconnected(hash *chainhash.Hash, height int32, time time.Time) {
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- BlockDisconnected{
 		Block: wtxmgr.Block{
@@ -358,6 +367,11 @@ func (c *RPCClient) onRecvTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
 			"tx: %v", err)
 		return
 	}
+	if blk != nil {
+		c.addBlockTx(rec, blk)
+		return
+	}
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- RelevantTx{rec, blk}:
 	case <-c.quit:
@@ -369,7 +383,53 @@ func (c *RPCClient) onRedeemingTx(tx *bchutil.Tx, block *btcjson.BlockDetails) {
 	c.onRecvTx(tx, block)
 }
 
+// addBlockTx collects a relevant transaction of a block.  bchd notifies a
+// block's transactions one at a time, in the block's order, which since the
+// canonical transaction ordering upgrade can list a transaction before the
+// parent whose output it spends.  They are handed over together once a
+// notification about anything else comes, so that the wallet records each
+// after the ones whose outputs it spends, and sees that it spends them.
+func (c *RPCClient) addBlockTx(rec *wtxmgr.TxRecord, blk *wtxmgr.BlockMeta) {
+	c.blockTxsMtx.Lock()
+	if c.blockTxs != nil && c.blockTxs.Block.Hash != blk.Hash {
+		c.blockTxsMtx.Unlock()
+		c.flushBlockTxs()
+		c.blockTxsMtx.Lock()
+	}
+	defer c.blockTxsMtx.Unlock()
+
+	if c.blockTxs == nil {
+		c.blockTxs = &FilteredBlockConnected{Block: blk}
+	}
+
+	// A transaction that both spends and pays a watched output comes in
+	// a redeemingtx and a recvtx notification.
+	for _, collected := range c.blockTxs.RelevantTxs {
+		if collected.Hash == rec.Hash {
+			return
+		}
+	}
+	c.blockTxs.RelevantTxs = append(c.blockTxs.RelevantTxs, rec)
+}
+
+// flushBlockTxs hands over the relevant transactions collected for a block.
+func (c *RPCClient) flushBlockTxs() {
+	c.blockTxsMtx.Lock()
+	ntfn := c.blockTxs
+	c.blockTxs = nil
+	c.blockTxsMtx.Unlock()
+	if ntfn == nil {
+		return
+	}
+
+	select {
+	case c.enqueueNotification <- *ntfn:
+	case <-c.quit:
+	}
+}
+
 func (c *RPCClient) onRescanProgress(hash *chainhash.Hash, height int32, blkTime time.Time) {
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- &RescanProgress{hash, height, blkTime}:
 	case <-c.quit:
@@ -377,6 +437,7 @@ func (c *RPCClient) onRescanProgress(hash *chainhash.Hash, height int32, blkTime
 }
 
 func (c *RPCClient) onRescanFinished(hash *chainhash.Hash, height int32, blkTime time.Time) {
+	c.flushBlockTxs()
 	select {
 	case c.enqueueNotification <- &RescanFinished{hash, height, blkTime}:
 	case <-c.quit:

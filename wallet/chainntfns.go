@@ -138,8 +138,14 @@ func (w *Wallet) handleChainNotifications() {
 				})
 				notificationName = "relevant transaction"
 			case chain.FilteredBlockConnected:
-				// Atomically update for the whole block.
+				// Atomically update for the whole block.  The RPC
+				// client hands over a block's relevant transactions
+				// this way too, so a recovery's filter request is
+				// interrupted as for a relevant transaction.
 				if len(n.RelevantTxs) > 0 {
+					if !w.interruptRecovery() {
+						return
+					}
 					err = walletdb.Update(w.db, func(
 						tx walletdb.ReadWriteTx) error {
 						return w.addBlockTxs(tx,
