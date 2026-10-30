@@ -718,6 +718,21 @@ func (s *Store) rollback(ns walletdb.ReadWriteBucket, height int32) error {
 // UnspentOutputs returns all unspent received transaction outputs.
 // The order is undefined.
 func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]Credit, error) {
+	return s.outputs(ns, false)
+}
+
+// OutputsToWatch returns the received transaction outputs that no mined
+// transaction spends: the unspent ones, and those that unmined transactions
+// spend, as a block can confirm one of those transactions, or a transaction
+// that spends the same output.  The order is undefined.
+func (s *Store) OutputsToWatch(ns walletdb.ReadBucket) ([]Credit, error) {
+	return s.outputs(ns, true)
+}
+
+// outputs returns the received transaction outputs that no mined transaction
+// spends, without those that unmined transactions spend unless spentUnmined
+// is set.
+func (s *Store) outputs(ns walletdb.ReadBucket, spentUnmined bool) ([]Credit, error) {
 	var unspent []Credit
 
 	var op wire.OutPoint
@@ -727,7 +742,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]Credit, error) {
 		if err != nil {
 			return err
 		}
-		if existsRawUnminedInput(ns, k) != nil {
+		if !spentUnmined && existsRawUnminedInput(ns, k) != nil {
 			// Output is spent by an unmined transaction.
 			// Skip this k/v pair.
 			return nil
@@ -773,7 +788,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]Credit, error) {
 	}
 
 	err = ns.NestedReadBucket(bucketUnminedCredits).ForEach(func(k, v []byte) error {
-		if existsRawUnminedInput(ns, k) != nil {
+		if !spentUnmined && existsRawUnminedInput(ns, k) != nil {
 			// Output is spent by an unmined transaction.
 			// Skip to next unmined credit.
 			return nil

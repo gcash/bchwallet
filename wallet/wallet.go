@@ -357,9 +357,13 @@ func (w *Wallet) SetChainSynced(synced bool) {
 	w.chainClientSyncMtx.Unlock()
 }
 
-// activeData returns the currently-active receiving addresses and all unspent
-// outputs.  This is primarely intended to provide the parameters for a
-// rescan request.
+// activeData returns the currently-active receiving addresses and the outputs
+// to watch for spends: the unspent ones, and those that the wallet's unmined
+// transactions spend.  This is primarely intended to provide the parameters
+// for a rescan request.  The backend reports a block that confirms one of the
+// wallet's transactions for the outputs it spends, which is all a transaction
+// that pays none of the wallet's addresses, such as one that sends all of its
+// coins, is reported for.
 func (w *Wallet) activeData(dbtx walletdb.ReadTx) ([]bchutil.Address, []wtxmgr.Credit, error) {
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
@@ -372,7 +376,7 @@ func (w *Wallet) activeData(dbtx walletdb.ReadTx) ([]bchutil.Address, []wtxmgr.C
 	if err != nil {
 		return nil, nil, err
 	}
-	unspent, err := w.TxStore.UnspentOutputs(txmgrNs)
+	unspent, err := w.TxStore.OutputsToWatch(txmgrNs)
 	return addrs, unspent, err
 }
 
@@ -721,9 +725,13 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		return err
 	}
 
+	// Watch the outputs that the wallet's unmined transactions spend too, as
+	// the scan marks the blocks it covers synced, so the rescan after it
+	// doesn't see a block among them that confirmed one of those
+	// transactions.
 	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		txMgrNS := tx.ReadBucket(wtxmgrNamespaceKey)
-		credits, err := w.TxStore.UnspentOutputs(txMgrNS)
+		credits, err := w.TxStore.OutputsToWatch(txMgrNS)
 		if err != nil {
 			return err
 		}

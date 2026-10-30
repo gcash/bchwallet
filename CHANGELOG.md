@@ -6,7 +6,7 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 ## Unreleased
 
-This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, and checks BIP70 payment requests that a client has as a file.
+This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, notices when a transaction it sent before a restart confirms, and checks BIP70 payment requests that a client has as a file.
 
 ### Wallet
 
@@ -16,6 +16,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - The wallet records only the transactions that pay it, spend its outputs or that it published. Once it publishes a transaction, the backend also watches the addresses the transaction pays, until the wallet restarts, so it reported the recipients' later transactions too, such as their spend of what the wallet paid them, and the wallet listed those among its own, with no debits or credits.
 - Publishing a transaction that spends the wallet's outputs no longer has the backend watch the addresses it pays. The backend reports the transaction for the outputs it spends, and watching the recipients' addresses too had an SPV wallet download the blocks of their later transactions until it restarted.
 - Opening a wallet removes the transactions it recorded that neither pay nor spend it, confirmed or not, and so also any such transaction that a client published through the wallet, which the wallet then no longer broadcasts. This upgrades the transaction store to version 4, which older versions of bchwallet can't open.
+- A wallet that restarts while a transaction it sent is unconfirmed sees the block that confirms it, also when the block came while the wallet was stopped. The scan for used addresses that the wallet runs at every start, over the blocks it missed, and the rescan after it watched only its unspent outputs, and the backend reports a transaction that pays none of the wallet's addresses, such as one that sends all of its coins, only for the outputs it spends. So the transaction stayed unconfirmed and the wallet broadcast it again, and once the network answered that it was already confirmed, the wallet removed it and counted its coins again.
 
 ### RPC & gRPC
 

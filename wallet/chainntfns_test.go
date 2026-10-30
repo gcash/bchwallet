@@ -11,6 +11,7 @@ import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
+	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
@@ -538,5 +539,134 @@ func TestAddNotifiedTxWalletOnly(t *testing.T) {
 			t.Errorf("%s recorded: %v, want %v", test.name, got,
 				test.want)
 		}
+	}
+}
+
+// TestActiveDataWatchesUnminedSpends checks that the outputs a rescan watches
+// include one that an unmined payment of the wallet spends, so that the backend
+// reports the block that confirms the payment also when it pays none of the
+// wallet's addresses, as a payment of all of the wallet's coins doesn't.
+func TestActiveDataWatchesUnminedSpends(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kept := addCredit(t, w, &wire.TxOut{Value: 50000, PkScript: script})
+	spent := addCredit(t, w, &wire.TxOut{Value: 100000, PkScript: script})
+	payment := spendTx([]wire.OutPoint{spent},
+		&wire.TxOut{Value: 99000, PkScript: otherScript})
+	insertTx(t, w, payment, nil)
+
+	var credits []wtxmgr.Credit
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		var err error
+		_, credits, err = w.activeData(dbtx)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watched := make(map[wire.OutPoint]bool)
+	for _, credit := range credits {
+		watched[credit.OutPoint] = true
+	}
+	if !watched[spent] {
+		t.Error("the output the unmined payment spends isn't watched")
+	}
+	if !watched[kept] {
+		t.Error("the unspent output isn't watched")
+	}
+}
+
+// filterRecordingChainClient is a mock chain client whose best block is the
+// one after the wallet's tip, and which records the outpoints that blocks are
+// filtered for.
+type filterRecordingChainClient struct {
+	mockChainClient
+	bestHeight int32
+	watched    map[wire.OutPoint]bchutil.Address
+}
+
+func (c *filterRecordingChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
+	return &chainhash.Hash{2}, c.bestHeight, nil
+}
+
+func (c *filterRecordingChainClient) GetBlockHash(int64) (*chainhash.Hash, error) {
+	return &chainhash.Hash{2}, nil
+}
+
+func (c *filterRecordingChainClient) GetBlockHeader(*chainhash.Hash) (
+	*wire.BlockHeader, error) {
+
+	return &wire.BlockHeader{Timestamp: time.Unix(1700000000, 0)}, nil
+}
+
+func (c *filterRecordingChainClient) FilterBlocks(
+	req *chain.FilterBlocksRequest) (*chain.FilterBlocksResponse, error) {
+
+	c.watched = req.WatchedOutPoints
+	return nil, nil
+}
+
+// TestRecoveryWatchesUnminedSpends checks that the scan for used addresses,
+// which a wallet with a recovery window runs at every start over the blocks
+// mined since it last synced, watches an output that an unmined payment of the
+// wallet spends, so that it finds a block that confirmed the payment while the
+// wallet was stopped, which the rescan after it doesn't scan again.
+func TestRecoveryWatchesUnminedSpends(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kept := addCredit(t, w, &wire.TxOut{Value: 50000, PkScript: script})
+	spent := addCredit(t, w, &wire.TxOut{Value: 100000, PkScript: script})
+	payment := spendTx([]wire.OutPoint{spent},
+		&wire.TxOut{Value: 99000, PkScript: otherScript})
+	insertTx(t, w, payment, nil)
+
+	// The scan reports its progress on rescanNotifications.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-w.rescanNotifications:
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	client := &filterRecordingChainClient{
+		bestHeight: w.Manager.SyncedTo().Height + 1,
+	}
+	birthday := waddrmgr.BlockStamp{}
+	if err := w.recovery(client, &birthday); err != nil {
+		t.Fatal(err)
+	}
+	if client.watched == nil {
+		t.Fatal("the scan filtered no blocks")
+	}
+	if _, ok := client.watched[spent]; !ok {
+		t.Error("the output the unmined payment spends isn't watched")
+	}
+	if _, ok := client.watched[kept]; !ok {
+		t.Error("the unspent output isn't watched")
 	}
 }

@@ -2262,3 +2262,113 @@ func TestInsertMempoolTxAndConfirm(t *testing.T) {
 		}
 	})
 }
+
+// TestOutputsToWatch checks that the outputs to watch for spends are the
+// unspent ones and those that unmined transactions spend, but not one that a
+// mined transaction spends, and that UnspentOutputs still leaves out those that
+// unmined transactions spend.
+func TestOutputsToWatch(t *testing.T) {
+	t.Parallel()
+
+	s, db, teardown, err := testStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teardown()
+
+	// fund pays the wallet three outputs: a mined transaction spends the
+	// first, an unmined one the second, and the third stays unspent.
+	// unminedParent pays the wallet an output that unminedChild spends.
+	fund := spendOutput(&chainhash.Hash{1}, 0, 1e8, 2e8, 3e8)
+	fundHash := fund.TxHash()
+	spentMined := spendOutput(&fundHash, 0, 9e7)
+	spentUnmined := spendOutput(&fundHash, 1, 19e7)
+	unminedParent := spendOutput(&chainhash.Hash{2}, 0, 5e7)
+	unminedParentHash := unminedParent.TxHash()
+	unminedChild := spendOutput(&unminedParentHash, 0, 4e7)
+	block := &BlockMeta{Block: Block{Hash: chainhash.Hash{100}, Height: 100}}
+	nextBlock := &BlockMeta{Block: Block{Hash: chainhash.Hash{101}, Height: 101}}
+
+	err = walletdb.Update(db, func(dbtx walletdb.ReadWriteTx) error {
+		ns := dbtx.ReadWriteBucket(namespaceKey)
+		insert := func(tx *wire.MsgTx, block *BlockMeta, credits ...uint32) error {
+			rec, err := NewTxRecordFromMsgTx(tx, timeNow())
+			if err != nil {
+				return err
+			}
+			if err := s.InsertTx(ns, rec, block); err != nil {
+				return err
+			}
+			for _, index := range credits {
+				err := s.AddCredit(ns, rec, block, index, false)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err := insert(fund, block, 0, 1, 2); err != nil {
+			return err
+		}
+		if err := insert(spentMined, nextBlock); err != nil {
+			return err
+		}
+		if err := insert(spentUnmined, nil); err != nil {
+			return err
+		}
+		if err := insert(unminedParent, nil, 0); err != nil {
+			return err
+		}
+		return insert(unminedChild, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outpoints := func(credits []Credit) map[wire.OutPoint]bool {
+		set := make(map[wire.OutPoint]bool, len(credits))
+		for _, credit := range credits {
+			set[credit.OutPoint] = true
+		}
+		return set
+	}
+	sameSet := func(got map[wire.OutPoint]bool, want ...wire.OutPoint) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for _, op := range want {
+			if !got[op] {
+				return false
+			}
+		}
+		return true
+	}
+
+	var watched, unspent []Credit
+	err = walletdb.View(db, func(dbtx walletdb.ReadTx) error {
+		ns := dbtx.ReadBucket(namespaceKey)
+		var err error
+		watched, err = s.OutputsToWatch(ns)
+		if err != nil {
+			return err
+		}
+		unspent, err = s.UnspentOutputs(ns)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantWatched := []wire.OutPoint{
+		{Hash: fundHash, Index: 1},
+		{Hash: fundHash, Index: 2},
+		{Hash: unminedParentHash, Index: 0},
+	}
+	if got := outpoints(watched); !sameSet(got, wantWatched...) {
+		t.Errorf("outputs to watch %v, want %v", got, wantWatched)
+	}
+	wantUnspent := []wire.OutPoint{{Hash: fundHash, Index: 2}}
+	if got := outpoints(unspent); !sameSet(got, wantUnspent...) {
+		t.Errorf("unspent outputs %v, want %v", got, wantUnspent)
+	}
+}
