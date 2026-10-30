@@ -726,6 +726,13 @@ func (s *NeutrinoClient) dispatchRescanFinished() {
 	}
 }
 
+// rescanFailed returns whether a rescan that ended with err failed, rather than
+// stopped, as a rescan does with neutrino.ErrRescanExit when a new one replaces
+// it, as for a rescan from the wallet's birthday, or when the client stops.
+func rescanFailed(err error) bool {
+	return err != nil && !errors.Is(err, neutrino.ErrRescanExit)
+}
+
 // notificationHandler queues and dequeues notifications. There are currently
 // no bounds on the queue, so the dequeue channel should be read continually to
 // avoid running out of memory.
@@ -797,7 +804,7 @@ out:
 			}
 
 		case err := <-rescanErr:
-			if err != nil {
+			if rescanFailed(err) {
 				log.Errorf("Neutrino rescan ended with error: %s", err)
 			}
 
