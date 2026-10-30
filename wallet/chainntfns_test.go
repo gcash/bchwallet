@@ -696,9 +696,11 @@ func (c *notifyWatchingChainClient) isWatched(addr bchutil.Address) bool {
 }
 
 // TestNewAddressesWatched checks that the backend watches the addresses that
-// the wallet derives as payments use the ones before them, so that a payment
-// to the address CurrentAddress hands out after ten payments, which the wallet
-// derived after the rescan that watches its addresses started, is seen.
+// the wallet derives as payments use the ones before them, as well as those
+// that the rescan watches when the wallet starts, so that a payment to any
+// address that CurrentAddress hands out is seen. CurrentAddress hands out the
+// unused address whose hash sorts first, which may be one the wallet started
+// with or one it derived since.
 func TestNewAddressesWatched(t *testing.T) {
 	w := newRegtestWallet(t)
 	client := &notifyWatchingChainClient{
@@ -708,6 +710,18 @@ func TestNewAddressesWatched(t *testing.T) {
 		watched: make(map[string]bool),
 	}
 	w.chainClient = client
+
+	// The rescan that starts with the wallet watches the addresses it has.
+	err := walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		addrs, _, err := w.activeData(dbtx)
+		if err != nil {
+			return err
+		}
+		return client.NotifyReceived(addrs)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// The recovery's interrupt handler takes what interruptRecovery sends.
 	done := make(chan struct{})
@@ -771,12 +785,17 @@ func TestNewAddressesWatched(t *testing.T) {
 		handled()
 	}
 
-	addr, err := w.CurrentAddress(0, waddrmgr.KeyScopeBIP0044)
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		ns := dbtx.ReadBucket(waddrmgrNamespaceKey)
+		return w.Manager.ForEachActiveAddress(ns, func(addr bchutil.Address) error {
+			if !client.isWatched(addr) {
+				t.Errorf("the backend doesn't watch %v, which the wallet "+
+					"derived after ten payments", addr)
+			}
+			return nil
+		})
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !client.isWatched(addr) {
-		t.Errorf("the backend doesn't watch %v, which the wallet hands "+
-			"out after ten payments", addr)
 	}
 }
