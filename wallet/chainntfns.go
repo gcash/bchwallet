@@ -136,6 +136,9 @@ func (w *Wallet) handleChainNotifications() {
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.addNotifiedTx(tx, n.TxRecord, n.Block)
 				})
+				if err == nil {
+					w.watchNewAddrs(chainClient)
+				}
 				notificationName = "relevant transaction"
 			case chain.FilteredBlockConnected:
 				// Atomically update for the whole block.  The RPC
@@ -151,6 +154,9 @@ func (w *Wallet) handleChainNotifications() {
 						return w.addBlockTxs(tx,
 							n.RelevantTxs, n.Block)
 					})
+					if err == nil {
+						w.watchNewAddrs(chainClient)
+					}
 				}
 				notificationName = "filtered block connected"
 
@@ -387,6 +393,25 @@ func sortParentsFirst(recs []*wtxmgr.TxRecord) []*wtxmgr.TxRecord {
 	return sorted
 }
 
+// watchNewAddrs has the backend watch the addresses that the wallet derived
+// while recording the last transactions.  The backend watches only the
+// addresses it was given, so it missed a payment to one, such as to the
+// address that CurrentAddress hands out once the ones before it are used,
+// until the wallet restarted, and after it too, as the rescan then started
+// past the block that confirmed the payment.
+func (w *Wallet) watchNewAddrs(chainClient chain.Interface) {
+	w.newAddrsMu.Lock()
+	addrs := w.newAddrs
+	w.newAddrs = nil
+	w.newAddrsMu.Unlock()
+	if len(addrs) == 0 {
+		return
+	}
+	if err := chainClient.NotifyReceived(addrs); err != nil {
+		log.Warnf("Unable to watch the wallet's new addresses: %v", err)
+	}
+}
+
 // addRelevantTx records a transaction and the outputs it pays the wallet, and
 // notifies clients of it. The transaction is the wallet's, one the wallet
 // publishes, or one a recovery found, as addNotifiedTx checks for those the
@@ -424,10 +449,13 @@ func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, 
 				if err != nil {
 					return err
 				}
-				err = w.Manager.MaybeExtendAddress(addrmgrNs, addr)
+				derived, err := w.Manager.MaybeExtendAddress(addrmgrNs, addr)
 				if err != nil {
 					return err
 				}
+				w.newAddrsMu.Lock()
+				w.newAddrs = append(w.newAddrs, derived...)
+				w.newAddrsMu.Unlock()
 				log.Debugf("Marked address %v used", addr)
 				continue
 			}

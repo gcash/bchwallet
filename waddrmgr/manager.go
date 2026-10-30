@@ -633,8 +633,10 @@ func (m *Manager) MarkUsed(ns walletdb.ReadWriteBucket, address bchutil.Address)
 }
 
 // MaybeExtendAddress tells the scopedManger to extend the keychain by one if the number of used
-// keys is below the buffer.
-func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket, address bchutil.Address) error {
+// keys is below the buffer.  It returns the address it derived, if it derived one.
+func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket,
+	address bchutil.Address) ([]bchutil.Address, error) {
+
 	m.mtx.RLock()
 	defer m.mtx.RUnlock()
 
@@ -650,24 +652,31 @@ func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket, address bchuti
 		// can extend it and return.
 		unused, err := scopedMgr.CountUnused(ns, maddr.Account(), maddr.Internal())
 		if err != nil {
-			return err
+			return nil, err
 		}
+		if unused >= NumInitialAddrs {
+			return nil, nil
+		}
+		var derived []ManagedAddress
 		if maddr.Internal() {
-			if unused < NumInitialAddrs {
-				_, err = scopedMgr.NextInternalAddresses(ns, maddr.Account(), 1)
-			}
+			derived, err = scopedMgr.NextInternalAddresses(ns, maddr.Account(), 1)
 		} else {
-			if unused < NumInitialAddrs {
-				_, err = scopedMgr.NextExternalAddresses(ns, maddr.Account(), 1)
-			}
+			derived, err = scopedMgr.NextExternalAddresses(ns, maddr.Account(), 1)
 		}
-		return err
+		if err != nil {
+			return nil, err
+		}
+		addrs := make([]bchutil.Address, 0, len(derived))
+		for _, d := range derived {
+			addrs = append(addrs, d.Address())
+		}
+		return addrs, nil
 	}
 
 	// If we get to this point, then we weren't able to find the address in
 	// any of the managers, so we'll exit with an error.
 	str := fmt.Sprintf("unable to find key for addr %v", address)
-	return managerError(ErrAddressNotFound, str, nil)
+	return nil, managerError(ErrAddressNotFound, str, nil)
 }
 
 // AddrAccount returns the account to which the given address belongs. We also

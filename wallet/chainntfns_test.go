@@ -3,6 +3,7 @@ package wallet
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -668,5 +669,114 @@ func TestRecoveryWatchesUnminedSpends(t *testing.T) {
 	}
 	if _, ok := client.watched[kept]; !ok {
 		t.Error("the unspent output isn't watched")
+	}
+}
+
+// notifyWatchingChainClient is a mock chain client whose notifications a
+// test sends, and which records the addresses that the wallet has it watch.
+type notifyWatchingChainClient struct {
+	notifyingChainClient
+	mu      sync.Mutex
+	watched map[string]bool
+}
+
+func (c *notifyWatchingChainClient) NotifyReceived(addrs []bchutil.Address) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, addr := range addrs {
+		c.watched[addr.EncodeAddress()] = true
+	}
+	return nil
+}
+
+func (c *notifyWatchingChainClient) isWatched(addr bchutil.Address) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.watched[addr.EncodeAddress()]
+}
+
+// TestNewAddressesWatched checks that the backend watches the addresses that
+// the wallet derives as payments use the ones before them, so that a payment
+// to the address CurrentAddress hands out after ten payments, which the wallet
+// derived after the rescan that watches its addresses started, is seen.
+func TestNewAddressesWatched(t *testing.T) {
+	w := newRegtestWallet(t)
+	client := &notifyWatchingChainClient{
+		notifyingChainClient: notifyingChainClient{
+			ntfns: make(chan interface{}),
+		},
+		watched: make(map[string]bool),
+	}
+	w.chainClient = client
+
+	// The recovery's interrupt handler takes what interruptRecovery sends.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-w.recoveryInterruptChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	w.wg.Add(1)
+	go w.handleChainNotifications()
+	defer func() {
+		w.Stop()
+		waitFor(t, "the chain notification handler", w.wg.Wait)
+	}()
+
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := func(i int, pkScript []byte) *wtxmgr.TxRecord {
+		tx := &wire.MsgTx{
+			Version: wire.TxVersion,
+			TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{
+				Hash: chainhash.Hash{byte(i)},
+			}}},
+			TxOut: []*wire.TxOut{{Value: 10000, PkScript: pkScript}},
+		}
+		rec, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec
+	}
+	// handled returns once the handler took a transaction that doesn't
+	// concern the wallet, and so has handled the notifications before it.
+	unrelated := record(0, otherScript)
+	handled := func() {
+		client.ntfns <- chain.RelevantTx{TxRecord: unrelated}
+	}
+
+	for i := 1; i <= 10; i++ {
+		addr, err := w.CurrentAddress(0, waddrmgr.KeyScopeBIP0044)
+		if err != nil {
+			t.Fatal(err)
+		}
+		script, err := txscript.PayToAddrScript(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.ntfns <- chain.RelevantTx{TxRecord: record(i, script)}
+		handled()
+	}
+
+	addr, err := w.CurrentAddress(0, waddrmgr.KeyScopeBIP0044)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !client.isWatched(addr) {
+		t.Errorf("the backend doesn't watch %v, which the wallet hands "+
+			"out after ten payments", addr)
 	}
 }

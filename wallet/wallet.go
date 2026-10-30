@@ -139,6 +139,12 @@ type Wallet struct {
 	filterInterruptChans  []chan struct{}
 	recoveryLock          sync.Mutex
 
+	// newAddrs are the addresses that the wallet derived while recording
+	// transactions, as it keeps a number of unused addresses, for the
+	// backend to watch once the transactions are recorded.
+	newAddrs   []bchutil.Address
+	newAddrsMu sync.Mutex
+
 	proxyDialer proxy.Dialer
 
 	fatalMtx          sync.Mutex
@@ -560,7 +566,11 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 
 	// Finally, we'll trigger a wallet rescan and request notifications for
 	// transactions sending to all wallet addresses and spending all wallet
-	// UTXOs.
+	// UTXOs.  The rescan watches the addresses derived so far, as during
+	// the recovery, so they don't need watching again.
+	w.newAddrsMu.Lock()
+	w.newAddrs = nil
+	w.newAddrsMu.Unlock()
 	var (
 		addrs   []bchutil.Address
 		unspent []wtxmgr.Credit
