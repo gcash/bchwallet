@@ -211,23 +211,24 @@ func (s *NeutrinoClient) FilterBlocks(
 		return nil, err
 	}
 
+	s.clientMtx.Lock()
+	quit := s.quit
+	s.clientMtx.Unlock()
+
 	// Iterate over the requested blocks, fetching the compact filter for
 	// each one, and matching it against the watchlist generated above. If
 	// the filter returns a positive match, the full block is then requested
-	// and scanned for addresses using the block filterer.
+	// and scanned for addresses using the block filterer. A filter or block
+	// that can't be fetched is asked for again until it arrives, since
+	// going past the block would mark it synced without scanning it.
 	for i, blk := range req.Blocks {
-		// TODO(wilmer): Investigate why polling it still necessary
-		// here. While testing, I ran into a few instances where the
-		// filter was not retrieved, leading to a panic. This should not
-		// happen in most cases thanks to the query logic revamp within
-		// Neutrino, but it seems there's still an uncovered edge case.
-		filter, err := s.pollCFilter(&blk.Hash)
+		filter, err := s.pollCFilter(&blk.Hash, quit)
 		if err != nil {
 			return nil, err
 		}
 
 		// Skip any empty filters.
-		if filter == nil || filter.N() == 0 {
+		if filter.N() == 0 {
 			continue
 		}
 
@@ -244,7 +245,12 @@ func (s *NeutrinoClient) FilterBlocks(
 
 		// TODO(conner): can optimize bandwidth by only fetching
 		// stripped blocks
-		rawBlock, err := s.GetBlock(&blk.Hash)
+		var rawBlock *wire.MsgBlock
+		err = retryFetch(fmt.Sprintf("block %v", blk.Hash), func() error {
+			var err error
+			rawBlock, err = s.GetBlock(&blk.Hash)
+			return err
+		}, quit, fetchRetryDelay, maxFetchRetryDelay)
 		if err != nil {
 			return nil, err
 		}
@@ -325,34 +331,67 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 	return watchList, nil
 }
 
-// pollCFilter attempts to fetch a CFilter from the neutrino client. This is
-// used to get around the fact that the filter headers may lag behind the
-// highest known block header.
-func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash) (*gcs.Filter, error) {
-	var (
-		filter *gcs.Filter
-		err    error
-		count  int
-	)
+const (
+	// fetchRetryDelay is how long FilterBlocks waits before it asks again
+	// for a filter or block it couldn't fetch. The wait doubles after each
+	// failure that follows, up to maxFetchRetryDelay.
+	fetchRetryDelay    = 100 * time.Millisecond
+	maxFetchRetryDelay = 30 * time.Second
+)
 
-	const maxFilterRetries = 50
-	for count < maxFilterRetries {
-		if count > 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
+// errClientStopped is returned by a fetch that was waiting to try again when
+// the client stopped.
+var errClientStopped = errors.New("neutrino client stopped")
 
+// pollCFilter fetches the regular filter of the block with the given hash,
+// trying again until it gets it or quit is closed. The filter headers may lag
+// behind the highest known block header, and a filter that no peer sent says
+// nothing about the block, so the caller mustn't go past the block without
+// it.
+func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash,
+	quit <-chan struct{}) (*gcs.Filter, error) {
+
+	var filter *gcs.Filter
+	err := retryFetch(fmt.Sprintf("filter of block %v", hash), func() error {
+		var err error
 		filter, err = s.CS.GetCFilter(
 			*hash, wire.GCSFilterRegular, neutrino.OptimisticBatch(),
 		)
-		if err != nil {
-			count++
-			continue
+		if err == nil && filter == nil {
+			err = errors.New("no filter")
+		}
+		return err
+	}, quit, fetchRetryDelay, maxFetchRetryDelay)
+	return filter, err
+}
+
+// retryFetch calls fetch until it succeeds, waiting delay after the first
+// failure and twice as long after each one that follows, up to maxDelay. It
+// returns the error of a fetch that failed because neutrino is shutting down,
+// and errClientStopped once quit is closed.
+func retryFetch(what string, fetch func() error, quit <-chan struct{},
+	delay, maxDelay time.Duration) error {
+
+	for attempt := 1; ; attempt++ {
+		err := fetch()
+		if err == nil || errors.Is(err, neutrino.ErrShuttingDown) {
+			return err
 		}
 
-		return filter, nil
-	}
+		log.Warnf("Unable to fetch %s, trying again in %v (attempt "+
+			"%d): %v", what, delay, attempt, err)
 
-	return nil, err
+		select {
+		case <-time.After(delay):
+		case <-quit:
+			return errClientStopped
+		}
+
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
 }
 
 // Rescan replicates the RPC client's Rescan command.
