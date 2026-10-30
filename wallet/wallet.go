@@ -796,15 +796,21 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		recoveryBatch := recoveryMgr.BlockBatch()
 		var syncedToBlock *waddrmgr.BlockStamp
 		if len(recoveryBatch) == recoveryBatchSize || height == bestHeight {
+			// Blocks before the wallet's birthday have nothing to
+			// recover, so a batch without any is done.
+			syncedTo := blocks[len(blocks)-1].Height
 			err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 				ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
-				syncedTo, err := w.recoverDefaultScopes(
-					chainClient, tx, ns, recoveryBatch,
-					recoveryMgr.State(),
-				)
-				if err != nil {
-					return err
+				if len(recoveryBatch) > 0 {
+					var err error
+					syncedTo, err = w.recoverDefaultScopes(
+						chainClient, tx, ns, recoveryBatch,
+						recoveryMgr.State(),
+					)
+					if err != nil {
+						return err
+					}
 				}
 				for _, block := range blocks {
 					if block.Height <= syncedTo {
@@ -823,7 +829,9 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 				return err
 			}
 
-			if len(recoveryBatch) > 0 {
+			// An interrupted scan may have finished none of the
+			// batch, which leaves no newly synced block to report.
+			if len(recoveryBatch) > 0 && syncedToBlock != nil {
 				log.Infof("Recovered addresses from blocks "+
 					"%d-%d", recoveryBatch[0].Height,
 					syncedToBlock.Height)
@@ -837,8 +845,8 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 
 			// If the recovery terminated early then reset the height
 			// back to where we synced to so we can restart from there.
-			if blocks[len(blocks)-1].Height != syncedToBlock.Height {
-				height = syncedToBlock.Height
+			if blocks[len(blocks)-1].Height != syncedTo {
+				height = syncedTo
 			}
 
 			blocks = blocks[:0]
@@ -935,8 +943,16 @@ expandHorizons:
 	filterResp, err := chainClient.FilterBlocks(filterReq)
 	w.removeRecoveryInterruptChan(filterReq.Interrupt)
 
+	// An interrupted request reports the index of the last block it
+	// finished, which wraps below zero when it finished none, so the
+	// batch is done through that block and the recovery restarts after it.
 	if err == chain.ErrFilterReqInterrupt {
-		return int32(filterResp.BatchIndex), nil
+		if filterResp == nil ||
+			filterResp.BatchIndex >= uint32(len(batch)) {
+
+			return batch[0].Height - 1, nil
+		}
+		return batch[filterResp.BatchIndex].Height, nil
 	} else if err != nil {
 		return 0, err
 	}

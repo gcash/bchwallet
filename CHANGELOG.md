@@ -20,6 +20,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - The backend watches the addresses that the wallet derives while it runs. The wallet keeps ten unused addresses and derives another each time a payment uses one, but the backend watched only the addresses the wallet had when its rescan started. So after ten payments in one run, the address that `CurrentAddress` handed out wasn't watched, and a payment to it went unseen, also after a restart, since the rescan then started past the block that confirmed it, until a rescan from the wallet's birthday.
 - A rescan that a new one replaces, as when a client asks for a rescan from the wallet's birthday, no longer logs that it ended with an error.
 - With an SPV backend, the scan for used addresses at every start waits for the filter of each block it scans, and for each block whose filter matches, until it gets them. It went past a block whose filter no peer sent and marked it synced, so a payment in that block went unseen until a rescan from the wallet's birthday, and a block it couldn't download stopped the wallet.
+- A scan for used addresses that a payment interrupts starts again after the last block it finished, and with an SPV backend a payment that arrives during the scan interrupts it too. The wallet took the index of that block in the scan's batch for its height and crashed, which with a bchd backend could happen whenever a payment arrived while the wallet was starting, and with an SPV backend the payment waited until the scan was through its batch.
 
 ### RPC & gRPC
 

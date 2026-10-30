@@ -29,8 +29,8 @@ func TestRescanFailed(t *testing.T) {
 
 // TestRetryFetch checks that a fetch that fails, as one of a filter that no
 // peer sends, is tried again until it succeeds rather than given up on after a
-// few tries, and that the retries end when neutrino shuts down or the client
-// stops.
+// few tries, and that the retries end when neutrino shuts down, the client
+// stops or the request is interrupted.
 func TestRetryFetch(t *testing.T) {
 	calls := 0
 	err := retryFetch("filter", func() error {
@@ -39,7 +39,7 @@ func TestRetryFetch(t *testing.T) {
 			return errors.New("no peer sent the filter")
 		}
 		return nil
-	}, nil, time.Millisecond, 2*time.Millisecond)
+	}, nil, nil, time.Millisecond, 2*time.Millisecond)
 	if err != nil || calls != 4 {
 		t.Fatalf("a fetch that failed three times gave %v after %d "+
 			"calls, want success after 4", err, calls)
@@ -49,7 +49,7 @@ func TestRetryFetch(t *testing.T) {
 	err = retryFetch("filter", func() error {
 		calls++
 		return fmt.Errorf("query ended: %w", neutrino.ErrShuttingDown)
-	}, nil, time.Millisecond, time.Millisecond)
+	}, nil, nil, time.Millisecond, time.Millisecond)
 	if !errors.Is(err, neutrino.ErrShuttingDown) || calls != 1 {
 		t.Fatalf("a fetch that failed as neutrino shut down gave %v "+
 			"after %d calls, want its error after 1", err, calls)
@@ -59,9 +59,19 @@ func TestRetryFetch(t *testing.T) {
 	close(quit)
 	err = retryFetch("filter", func() error {
 		return errors.New("no peer sent the filter")
-	}, quit, time.Hour, time.Hour)
+	}, nil, quit, time.Hour, time.Hour)
 	if !errors.Is(err, errClientStopped) {
 		t.Fatalf("a fetch retried after the client stopped gave %v, "+
 			"want errClientStopped", err)
+	}
+
+	interrupt := make(chan struct{})
+	close(interrupt)
+	err = retryFetch("filter", func() error {
+		return errors.New("no peer sent the filter")
+	}, interrupt, nil, time.Hour, time.Hour)
+	if !errors.Is(err, ErrFilterReqInterrupt) {
+		t.Fatalf("a fetch retried after the request was interrupted "+
+			"gave %v, want ErrFilterReqInterrupt", err)
 	}
 }

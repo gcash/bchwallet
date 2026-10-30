@@ -215,6 +215,15 @@ func (s *NeutrinoClient) FilterBlocks(
 	quit := s.quit
 	s.clientMtx.Unlock()
 
+	// An interrupted request reports the last block it finished, so that
+	// the recovery can restart after it once the wallet has handled the
+	// transaction that interrupted it.
+	interrupted := func(i int) (*FilterBlocksResponse, error) {
+		return &FilterBlocksResponse{
+			BatchIndex: uint32(i - 1),
+		}, ErrFilterReqInterrupt
+	}
+
 	// Iterate over the requested blocks, fetching the compact filter for
 	// each one, and matching it against the watchlist generated above. If
 	// the filter returns a positive match, the full block is then requested
@@ -222,7 +231,16 @@ func (s *NeutrinoClient) FilterBlocks(
 	// that can't be fetched is asked for again until it arrives, since
 	// going past the block would mark it synced without scanning it.
 	for i, blk := range req.Blocks {
-		filter, err := s.pollCFilter(&blk.Hash, quit)
+		select {
+		case <-req.Interrupt:
+			return interrupted(i)
+		default:
+		}
+
+		filter, err := s.pollCFilter(&blk.Hash, req.Interrupt, quit)
+		if err == ErrFilterReqInterrupt {
+			return interrupted(i)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +268,10 @@ func (s *NeutrinoClient) FilterBlocks(
 			var err error
 			rawBlock, err = s.GetBlock(&blk.Hash)
 			return err
-		}, quit, fetchRetryDelay, maxFetchRetryDelay)
+		}, req.Interrupt, quit, fetchRetryDelay, maxFetchRetryDelay)
+		if err == ErrFilterReqInterrupt {
+			return interrupted(i)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -344,11 +365,11 @@ const (
 var errClientStopped = errors.New("neutrino client stopped")
 
 // pollCFilter fetches the regular filter of the block with the given hash,
-// trying again until it gets it or quit is closed. The filter headers may lag
-// behind the highest known block header, and a filter that no peer sent says
-// nothing about the block, so the caller mustn't go past the block without
-// it.
-func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash,
+// trying again until it gets it, interrupt is closed or quit is. The filter
+// headers may lag behind the highest known block header, and a filter that no
+// peer sent says nothing about the block, so the caller mustn't go past the
+// block without it.
+func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash, interrupt,
 	quit <-chan struct{}) (*gcs.Filter, error) {
 
 	var filter *gcs.Filter
@@ -361,16 +382,17 @@ func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash,
 			err = errors.New("no filter")
 		}
 		return err
-	}, quit, fetchRetryDelay, maxFetchRetryDelay)
+	}, interrupt, quit, fetchRetryDelay, maxFetchRetryDelay)
 	return filter, err
 }
 
 // retryFetch calls fetch until it succeeds, waiting delay after the first
 // failure and twice as long after each one that follows, up to maxDelay. It
 // returns the error of a fetch that failed because neutrino is shutting down,
-// and errClientStopped once quit is closed.
-func retryFetch(what string, fetch func() error, quit <-chan struct{},
-	delay, maxDelay time.Duration) error {
+// ErrFilterReqInterrupt once interrupt is closed and errClientStopped once
+// quit is.
+func retryFetch(what string, fetch func() error, interrupt,
+	quit <-chan struct{}, delay, maxDelay time.Duration) error {
 
 	for attempt := 1; ; attempt++ {
 		err := fetch()
@@ -383,6 +405,8 @@ func retryFetch(what string, fetch func() error, quit <-chan struct{},
 
 		select {
 		case <-time.After(delay):
+		case <-interrupt:
+			return ErrFilterReqInterrupt
 		case <-quit:
 			return errClientStopped
 		}

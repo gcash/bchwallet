@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"encoding/binary"
 	"fmt"
 	"reflect"
 	"sync"
@@ -797,5 +798,122 @@ func TestNewAddressesWatched(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// interruptingChainClient is a mock chain client with a chain of distinct
+// blocks. It interrupts the first filter request after the request's second
+// block, as a client does when a relevant transaction arrives during the scan,
+// and records the heights of the blocks that each request asks to scan.
+type interruptingChainClient struct {
+	mockChainClient
+	bestHeight int32
+	requests   [][]int32
+}
+
+// recoveryBlockHash returns the hash of the mock chain's block at height.
+func recoveryBlockHash(height int32) *chainhash.Hash {
+	var hash chainhash.Hash
+	binary.BigEndian.PutUint32(hash[:], uint32(height))
+	hash[31] = 0x11
+	return &hash
+}
+
+func (c *interruptingChainClient) GetBestBlock() (*chainhash.Hash, int32,
+	error) {
+
+	return recoveryBlockHash(c.bestHeight), c.bestHeight, nil
+}
+
+func (c *interruptingChainClient) GetBlockHash(height int64) (
+	*chainhash.Hash, error) {
+
+	return recoveryBlockHash(int32(height)), nil
+}
+
+func (c *interruptingChainClient) GetBlockHeader(*chainhash.Hash) (
+	*wire.BlockHeader, error) {
+
+	return &wire.BlockHeader{Timestamp: time.Unix(1700000000, 0)}, nil
+}
+
+func (c *interruptingChainClient) FilterBlocks(
+	req *chain.FilterBlocksRequest) (*chain.FilterBlocksResponse, error) {
+
+	heights := make([]int32, 0, len(req.Blocks))
+	for _, block := range req.Blocks {
+		heights = append(heights, block.Height)
+	}
+	c.requests = append(c.requests, heights)
+
+	if len(c.requests) == 1 {
+		return &chain.FilterBlocksResponse{BatchIndex: 1},
+			chain.ErrFilterReqInterrupt
+	}
+	return nil, nil
+}
+
+// TestRecoveryResumesAfterInterrupt checks that the scan for used addresses,
+// interrupted part way through a batch as a relevant transaction does, starts
+// again after the last block it finished and ends synced to the best block. It
+// took the index of that block in the batch for its height, which matched no
+// block of the scan, and then dereferenced the block it didn't find.
+func TestRecoveryResumesAfterInterrupt(t *testing.T) {
+	w := newRegtestWallet(t)
+
+	// Start the scan well above the index of any block in its batch, as
+	// on a real chain.
+	const syncedHeight = 1000
+	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		start := w.Manager.SyncedTo().Height + 1
+		for height := start; height <= syncedHeight; height++ {
+			err := w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
+				Height: height,
+				Hash:   *recoveryBlockHash(height),
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The scan reports its progress on rescanNotifications.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-w.rescanNotifications:
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	client := &interruptingChainClient{bestHeight: syncedHeight + 6}
+	birthday := waddrmgr.BlockStamp{}
+	if err := w.recovery(client, &birthday); err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]int32{
+		{1001, 1002, 1003, 1004, 1005, 1006},
+		{1003, 1004, 1005, 1006},
+	}
+	if !reflect.DeepEqual(client.requests, want) {
+		t.Fatalf("the scan asked to filter blocks %v, want %v",
+			client.requests, want)
+	}
+	synced := w.Manager.SyncedTo()
+	if synced.Height != syncedHeight+6 ||
+		synced.Hash != *recoveryBlockHash(syncedHeight + 6) {
+
+		t.Fatalf("the wallet is synced to %d (%v), want %d",
+			synced.Height, synced.Hash, syncedHeight+6)
 	}
 }
