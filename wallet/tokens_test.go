@@ -682,6 +682,46 @@ func TestCreateUnsignedTokenTx(t *testing.T) {
 	}
 }
 
+// TestCreateUnsignedTxKeepsTokens checks that a send of BCH alone doesn't spend
+// an output that carries tokens, which would burn them, also when that output
+// holds the most BCH, so that the largest-first coin selection would take it
+// first.
+func TestCreateUnsignedTxKeepsTokens(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	someone, err := bchutil.NewAddressPubKeyHash(
+		bchutil.Hash160([]byte("someone else")), w.chainParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(someone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokens := wire.TokenData{CategoryID: testToken.CategoryID, Amount: 70,
+		BitField: wire.HAS_AMOUNT}
+	withTokens := addCredit(t, w, wire.NewTxOut(1000000, script, tokens))
+	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+
+	tx, err := w.CreateUnsignedTx(0, []*wire.TxOut{
+		wire.NewTxOut(50000, otherScript, wire.TokenData{}),
+	}, nil, 1, txrules.DefaultRelayFeePerKb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range tx.Tx.TxIn {
+		if in.PreviousOutPoint == withTokens {
+			t.Error("the send of BCH spends the output with the tokens")
+		}
+	}
+	for _, out := range tx.Tx.TxOut {
+		if !out.TokenData.IsEmpty() {
+			t.Error("the send of BCH has an output with tokens")
+		}
+	}
+}
+
 // TestCreateUnsignedNFTTx checks that CreateUnsignedTx sends the NFT an output
 // names as it is, and returns the fungible tokens its output also held.
 func TestCreateUnsignedNFTTx(t *testing.T) {
