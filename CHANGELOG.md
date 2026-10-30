@@ -6,7 +6,7 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 ## Unreleased
 
-This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, notices when a transaction it sent before a restart confirms, sees payments to the addresses it derives while it runs, and checks BIP70 payment requests that a client has as a file.
+This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, notices when a transaction it sent before a restart confirms, sees payments to the addresses it derives while it runs, checks BIP70 payment requests that a client has as a file, and moves to the latest neutrino, which checks the blocks it downloads against their filter headers and tries again rather than skipping what it couldn't fetch.
 
 ### Wallet
 
@@ -21,6 +21,16 @@ This release keeps the wallet from spending an output again that a transaction i
 - A rescan that a new one replaces, as when a client asks for a rescan from the wallet's birthday, no longer logs that it ended with an error.
 - With an SPV backend, the scan for used addresses at every start waits for the filter of each block it scans, and for each block whose filter matches, until it gets them. It went past a block whose filter no peer sent and marked it synced, so a payment in that block went unseen until a rescan from the wallet's birthday, and a block it couldn't download stopped the wallet.
 - A scan for used addresses that a payment interrupts starts again after the last block it finished, and with an SPV backend a payment that arrives during the scan interrupts it too. The wallet took the index of that block in the scan's batch for its height and crashed, which with a bchd backend could happen whenever a payment arrived while the wallet was starting, and with an SPV backend the payment waited until the scan was through its batch.
+
+### SPV
+
+- A transaction that spends an output of another transaction in the same block is found when the block lists it first, also when it pays none of the wallet's addresses, as one that sends all of the wallet's coins does. The SPV backend checked the block's spends of watched outputs before it watched the outputs that the block creates (latest neutrino).
+- An unconfirmed transaction that the peer asked for it doesn't send, because the peer disconnects or no longer has it, is asked of another peer that announced it. The wallet only saw such a transaction once a block confirmed it (latest neutrino).
+- A rescan that can't fetch the filter of a block, or the block itself, tries again until it can, also while it catches up with the chain. A filter that no peer sent counted as one that matches nothing, so the rescan went past the block and missed its transactions, and a failed fetch while catching up ended the rescan, after which the wallet stopped following the chain until it restarted. A rescan that retried a block could also crash the wallet when it replaced its block subscription (latest neutrino).
+- Each block the wallet downloads is checked against the filter header synced for it. Filter headers above the last checkpoint often came from a single peer and were checked only when another peer disagreed. A block that doesn't match isn't used and is tried again, and when another peer serves the filter built from the block, the peers serving another filter are banned (latest neutrino).
+- Headers in a message that don't link to each other no longer count toward a reorg, and the peer that sent them is disconnected. Such a message could switch the wallet to a shorter branch (latest neutrino).
+- A peer whose reply to a checkpointed filter header request doesn't carry one filter hash per block of the requested range is banned, and an error reading or writing the filter header store is retried. Such a reply could crash the wallet, as could such an error (latest neutrino).
+- The wallet syncs from bchd nodes that serve compact filters with bloom filters turned off. It banned them for a day (latest neutrino).
 
 ### RPC & gRPC
 
