@@ -88,8 +88,40 @@ func (s *NeutrinoClient) Start() error {
 			}
 		}()
 		go s.notificationHandler()
+
+		rollbacks, cancel := (&neutrino.RescanChainSource{
+			ChainService: s.CS,
+		}).SubscribeFilterHeaderRollbacks()
+		s.wg.Add(1)
+		go s.forwardFilterRollbacks(rollbacks, cancel, s.quit)
 	}
 	return nil
+}
+
+// forwardFilterRollbacks tells the wallet of each rollback of the filter
+// headers, until quit is closed.  A new subscription gets the lowest rollback
+// since the chain service started, should the filter headers have been rolled
+// back before the client started.
+func (s *NeutrinoClient) forwardFilterRollbacks(rollbacks <-chan uint32,
+	cancel func(), quit <-chan struct{}) {
+
+	defer s.wg.Done()
+	defer cancel()
+
+	for {
+		select {
+		case height := <-rollbacks:
+			select {
+			case s.enqueueNotification <- FilterHeadersRolledBack{
+				Height: int32(height),
+			}:
+			case <-quit:
+				return
+			}
+		case <-quit:
+			return
+		}
+	}
 }
 
 // Stop replicates the RPC client's Stop method.

@@ -128,6 +128,15 @@ type (
 		Time   time.Time
 	}
 
+	// FilterHeadersRolledBack is a notification that the SPV client found
+	// its filter headers wrong above Height and rolled them back to it, so
+	// the filters it checked against them, which the wallet scanned the
+	// blocks above Height with, may have left out the wallet's
+	// transactions.
+	FilterHeadersRolledBack struct {
+		Height int32
+	}
+
 	// RecoveryProgress is a notification describing the current status
 	// of an in-progress recovery.
 	RecoveryProgress struct {

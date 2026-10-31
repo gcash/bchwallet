@@ -348,16 +348,9 @@ func (w *Wallet) Rescan(addrs []bchutil.Address, unspent []wtxmgr.Credit) error 
 func (w *Wallet) rescanWithTarget(addrs []bchutil.Address,
 	unspent []wtxmgr.Credit, startStamp *waddrmgr.BlockStamp) error {
 
-	outpoints := make(map[wire.OutPoint]bchutil.Address, len(unspent))
-	for _, output := range unspent {
-		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
-			output.PkScript, w.chainParams,
-		)
-		if err != nil {
-			return err
-		}
-
-		outpoints[output.OutPoint] = outputAddrs[0]
+	outpoints, err := w.watchedOutPoints(unspent)
+	if err != nil {
+		return err
 	}
 
 	// If a start block stamp was provided, we will use that as the initial
@@ -381,4 +374,23 @@ func (w *Wallet) rescanWithTarget(addrs []bchutil.Address,
 	case <-w.quitChan():
 		return ErrWalletShuttingDown
 	}
+}
+
+// watchedOutPoints returns the outpoints of unspent with the addresses they
+// pay, for a rescan to watch for their spends.
+func (w *Wallet) watchedOutPoints(unspent []wtxmgr.Credit) (
+	map[wire.OutPoint]bchutil.Address, error) {
+
+	outpoints := make(map[wire.OutPoint]bchutil.Address, len(unspent))
+	for _, output := range unspent {
+		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
+			output.PkScript, w.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		outpoints[output.OutPoint] = outputAddrs[0]
+	}
+	return outpoints, nil
 }

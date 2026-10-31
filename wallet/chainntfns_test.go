@@ -917,3 +917,196 @@ func TestRecoveryResumesAfterInterrupt(t *testing.T) {
 			synced.Height, synced.Hash, syncedHeight+6)
 	}
 }
+
+// resyncChainClient is a mock SPV client whose chain has distinct blocks up to
+// bestHeight, whose filter headers are synced, and that records the blocks its
+// filter requests ask to scan and the heights its rescans start from.
+type resyncChainClient struct {
+	mockChainClient
+	bestHeight int32
+	ntfns      chan interface{}
+
+	mtx      sync.Mutex
+	requests [][]int32
+	rescans  []int32
+}
+
+func (c *resyncChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
+	return recoveryBlockHash(c.bestHeight), c.bestHeight, nil
+}
+
+func (c *resyncChainClient) GetBlockHash(height int64) (*chainhash.Hash,
+	error) {
+
+	return recoveryBlockHash(int32(height)), nil
+}
+
+func (c *resyncChainClient) GetBlockHeader(*chainhash.Hash) (
+	*wire.BlockHeader, error) {
+
+	return &wire.BlockHeader{Timestamp: time.Unix(1700000000, 0)}, nil
+}
+
+func (c *resyncChainClient) IsCurrent() bool {
+	return true
+}
+
+func (c *resyncChainClient) FilterBlocks(req *chain.FilterBlocksRequest) (
+	*chain.FilterBlocksResponse, error) {
+
+	heights := make([]int32, 0, len(req.Blocks))
+	for _, block := range req.Blocks {
+		heights = append(heights, block.Height)
+	}
+	c.mtx.Lock()
+	c.requests = append(c.requests, heights)
+	c.mtx.Unlock()
+	return nil, nil
+}
+
+func (c *resyncChainClient) Rescan(startHash *chainhash.Hash,
+	_ []bchutil.Address, _ map[wire.OutPoint]bchutil.Address) error {
+
+	c.mtx.Lock()
+	c.rescans = append(c.rescans,
+		int32(binary.BigEndian.Uint32(startHash[:4])))
+	c.mtx.Unlock()
+	return nil
+}
+
+func (c *resyncChainClient) Notifications() <-chan interface{} {
+	return c.ntfns
+}
+
+// scans returns the blocks that the filter requests asked to scan and the
+// heights the rescans started from.
+func (c *resyncChainClient) scans() ([][]int32, []int32) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	return append([][]int32(nil), c.requests...),
+		append([]int32(nil), c.rescans...)
+}
+
+// newSyncedWallet returns a regtest wallet synced to the block at
+// syncedHeight of the mock chain, with its birthday block set, which drains
+// the progress that its scans report.
+func newSyncedWallet(t *testing.T, syncedHeight int32) *Wallet {
+	t.Helper()
+
+	w := newRegtestWallet(t)
+	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		start := w.Manager.SyncedTo().Height + 1
+		for height := start; height <= syncedHeight; height++ {
+			err := w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
+				Height: height,
+				Hash:   *recoveryBlockHash(height),
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return w.Manager.SetBirthdayBlock(ns, waddrmgr.BlockStamp{
+			Height: 1,
+			Hash:   *recoveryBlockHash(1),
+		}, true)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		for {
+			select {
+			case <-w.rescanNotifications:
+			case <-done:
+				return
+			}
+		}
+	}()
+	return w
+}
+
+// TestResyncAfterFilterRollback checks that a rollback of the filter headers
+// below the block the wallet is synced to has the wallet scan the blocks above
+// the rollback again for used addresses, at once, and restart the rescan from
+// where the scan ends, and that a rollback that leaves its blocks alone does
+// nothing.
+func TestResyncAfterFilterRollback(t *testing.T) {
+	w := newSyncedWallet(t, 1000)
+	client := &resyncChainClient{bestHeight: 1006}
+
+	if err := w.resyncAfterFilterRollback(client, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.resyncAfterFilterRollback(client, 1003); err != nil {
+		t.Fatal(err)
+	}
+	if requests, rescans := client.scans(); len(requests) != 0 ||
+		len(rescans) != 0 {
+
+		t.Fatalf("a rollback above the synced block scanned %v and "+
+			"rescanned from %v", requests, rescans)
+	}
+
+	if err := w.resyncAfterFilterRollback(client, 990); err != nil {
+		t.Fatal(err)
+	}
+	var want []int32
+	for height := int32(991); height <= 1006; height++ {
+		want = append(want, height)
+	}
+	requests, rescans := client.scans()
+	if !reflect.DeepEqual(requests, [][]int32{want}) {
+		t.Fatalf("the scan asked to filter blocks %v, want %v",
+			requests, want)
+	}
+	if !reflect.DeepEqual(rescans, []int32{1006}) {
+		t.Fatalf("rescans started from %v, want 1006", rescans)
+	}
+	if synced := w.Manager.SyncedTo(); synced.Height != 1006 {
+		t.Fatalf("the wallet is synced to block %d, want 1006",
+			synced.Height)
+	}
+}
+
+// TestFilterRollbackNotification checks that the wallet scans the blocks
+// above a rollback of the filter headers again when the chain client tells
+// it of the rollback.
+func TestFilterRollbackNotification(t *testing.T) {
+	w := newSyncedWallet(t, 1000)
+	client := &resyncChainClient{
+		bestHeight: 1000,
+		ntfns:      make(chan interface{}),
+	}
+	w.chainClient = client
+	handlerDone := make(chan struct{})
+	w.wg.Add(1)
+	go func() {
+		w.handleChainNotifications()
+		close(handlerDone)
+	}()
+	t.Cleanup(func() {
+		close(client.ntfns)
+		<-handlerDone
+	})
+
+	client.ntfns <- chain.FilterHeadersRolledBack{Height: 995}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		requests, rescans := client.scans()
+		if len(rescans) == 1 {
+			if len(requests) != 1 || requests[0][0] != 996 {
+				t.Fatalf("the scan asked to filter blocks %v, "+
+					"want 996-1000", requests)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the wallet didn't scan the blocks again")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

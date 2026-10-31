@@ -12,6 +12,7 @@ import (
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
@@ -160,6 +161,11 @@ func (w *Wallet) handleChainNotifications() {
 				}
 				notificationName = "filtered block connected"
 
+			case chain.FilterHeadersRolledBack:
+				err = w.resyncAfterFilterRollback(chainClient,
+					n.Height)
+				notificationName = "filter header rollback"
+
 			// The following require some database maintenance, but also
 			// need to be reported to the wallet's rescan goroutine.
 			case *chain.RescanProgress:
@@ -204,6 +210,115 @@ func (w *Wallet) handleChainNotifications() {
 			return
 		}
 	}
+}
+
+// resyncAfterFilterRollback scans the blocks above height again, once the SPV
+// client found its filter headers wrong above height and rolled them back.  The
+// wallet scanned those blocks with filters checked against them, which may have
+// left out its transactions and the addresses it used.  The rescan finds the
+// transactions to the addresses the wallet knows again, as it rewinds itself,
+// but it watches only the unused addresses the wallet keeps past the last used,
+// where the scan for used addresses looks a recovery window ahead.  So the
+// wallet moves the block it is synced to back to height, and once the client
+// has synced its filter headers again, runs the scan for used addresses from
+// there, as at a start, and restarts the rescan from where the scan ends, with
+// all it watches.  The scan saves its progress, so a wallet that stops part way
+// resumes it at its next start.  It restarts the rescan directly rather than
+// through a rescan job, as the rescan it replaces may be one whose job hasn't
+// finished, which the new rescan's end then finishes.
+func (w *Wallet) resyncAfterFilterRollback(chainClient chain.Interface,
+	height int32) error {
+
+	syncedTo := w.Manager.SyncedTo()
+	if height >= syncedTo.Height || w.recoveryWindow == 0 {
+		return nil
+	}
+
+	// Moving the synced block back needs the hash of the block before the
+	// one it moves to, which the wallet keeps for the last MaxReorgDepth
+	// blocks it synced, and from the block its first sync started at, so
+	// it moves back to the lowest such block at or above height.
+	target := height
+	var hash *chainhash.Hash
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		ns := tx.ReadBucket(waddrmgrNamespaceKey)
+		for ; target < syncedTo.Height; target++ {
+			if _, err := w.Manager.BlockHash(ns, target-1); err != nil {
+				continue
+			}
+			var err error
+			hash, err = w.Manager.BlockHash(ns, target)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if hash == nil {
+		log.Warnf("The filter headers were rolled back to block %d, "+
+			"below the blocks the wallet keeps, so it can't scan "+
+			"them again", height)
+		return nil
+	}
+	if target > height {
+		log.Warnf("The filter headers were rolled back to block %d, "+
+			"below the blocks the wallet keeps, so it scans the "+
+			"blocks after %d again", height, target)
+	} else {
+		log.Infof("The filter headers were rolled back to block %d, so "+
+			"the wallet scans the blocks after it again", height)
+	}
+
+	header, err := chainClient.GetBlockHeader(hash)
+	if err != nil {
+		return err
+	}
+	var birthday waddrmgr.BlockStamp
+	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		err := w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
+			Height:    target,
+			Hash:      *hash,
+			Timestamp: header.Timestamp,
+		})
+		if err != nil {
+			return err
+		}
+		birthday, _, err = w.Manager.BirthdayBlock(ns)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := w.waitUntilBackendSynced(chainClient); err != nil {
+		return err
+	}
+	if err := w.recovery(chainClient, &birthday); err != nil {
+		return err
+	}
+
+	w.newAddrsMu.Lock()
+	w.newAddrs = nil
+	w.newAddrsMu.Unlock()
+	var (
+		addrs   []bchutil.Address
+		unspent []wtxmgr.Credit
+	)
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		addrs, unspent, err = w.activeData(dbtx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	outpoints, err := w.watchedOutPoints(unspent)
+	if err != nil {
+		return err
+	}
+	syncedTo = w.Manager.SyncedTo()
+	return chainClient.Rescan(&syncedTo.Hash, addrs, outpoints)
 }
 
 // connectBlock handles a chain server notification by marking a wallet

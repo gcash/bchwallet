@@ -39,6 +39,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - A transaction that spends the wallet's outputs and pays someone else, as another wallet with the same seed sends, shows once peers announce it, rather than once mined (latest neutrino).
 - A rescan that can't fetch or check a block waits twice as long before each retry, up to 30 seconds. It tried every 100 milliseconds, downloading a block that doesn't match its filter header ten times a second (latest neutrino).
 - After a reorg rolls back filter headers, a rescan that catches up with the chain is no longer handed blocks whose filter headers aren't synced yet (latest neutrino).
+- When the SPV client rolls its filter headers back below the blocks the wallet has synced, the wallet scans the blocks above the rollback again for used addresses at once, as at a start, and restarts its rescan from where that scan ends. The rescan rewound itself, but it watches only the unused addresses the wallet keeps past the last one used, where the scan for used addresses looks further, so after a restore whose scan ran on wrong filters, a payment to an address further on stayed unseen.
 
 ### RPC & gRPC
 

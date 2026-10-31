@@ -75,3 +75,34 @@ func TestRetryFetch(t *testing.T) {
 			"gave %v, want ErrFilterReqInterrupt", err)
 	}
 }
+
+// TestForwardFilterRollbacks checks that the client tells the wallet of each
+// rollback of the filter headers, and that it ends its subscription to them
+// once it stops.
+func TestForwardFilterRollbacks(t *testing.T) {
+	s := &NeutrinoClient{enqueueNotification: make(chan interface{})}
+	rollbacks := make(chan uint32, 1)
+	cancelled := make(chan struct{})
+	quit := make(chan struct{})
+	s.wg.Add(1)
+	go s.forwardFilterRollbacks(rollbacks, func() { close(cancelled) }, quit)
+
+	rollbacks <- 500
+	select {
+	case n := <-s.enqueueNotification:
+		if n != (FilterHeadersRolledBack{Height: 500}) {
+			t.Fatalf("got notification %#v, want a rollback to block "+
+				"500", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the rollback wasn't forwarded")
+	}
+
+	close(quit)
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the subscription wasn't ended once the client stopped")
+	}
+	s.wg.Wait()
+}
