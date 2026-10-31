@@ -394,6 +394,78 @@ func TestPublishTransactionTokenRules(t *testing.T) {
 	}
 }
 
+// tipChainClient is a chain backend whose chain has its tip at height, in a
+// block made at time.
+type tipChainClient struct {
+	mockChainClient
+	height int32
+	time   time.Time
+}
+
+func (c *tipChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
+	return &chainhash.Hash{byte(c.height)}, c.height, nil
+}
+
+func (c *tipChainClient) GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader,
+	error) {
+
+	return &wire.BlockHeader{Timestamp: c.time}, nil
+}
+
+// newRescanningWallet returns a wallet as newRegtestWallet does, but with the
+// token upgrade at height 100, which the chain's tip is past, while the wallet
+// is synced to a block before it, as during a rescan from a birthday before
+// the upgrade.
+func newRescanningWallet(t *testing.T) *Wallet {
+	t.Helper()
+
+	w := newRegtestWallet(t)
+	params := *w.chainParams
+	params.Upgrade9ForkHeight = 100
+	w.chainParams = &params
+	w.chainClient = &tipChainClient{height: 200, time: time.Now()}
+	setSyncedTo(t, w, 10)
+	return w
+}
+
+// TestSignTransactionTipRules checks that SignTransaction checks signatures
+// with the rules of the chain's tip, so that a signature covering the tokens
+// of the output its input spends is good while a rescan has the wallet synced
+// to a block before the token upgrade.
+func TestSignTransactionTipRules(t *testing.T) {
+	w := newRescanningWallet(t)
+	script := walletScript(t, w)
+	op := addCredit(t, w, wire.NewTxOut(1000, script, testToken))
+
+	tx := spendTx([]wire.OutPoint{op}, wire.NewTxOut(900, script, testToken))
+	sigErrs, err := w.SignTransaction(tx, nil, txscript.SigHashAll, nil,
+		nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sigErrs) != 0 {
+		t.Fatalf("got %v, want no signature errors", sigErrs)
+	}
+}
+
+// TestPublishTransactionTipRules checks that the wallet refuses to publish a
+// transaction that breaks the token rules while a rescan has it synced to a
+// block before the token upgrade.
+func TestPublishTransactionTipRules(t *testing.T) {
+	w := newRescanningWallet(t)
+	script := walletScript(t, w)
+	op := addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+
+	bad := spendTx([]wire.OutPoint{op}, wire.NewTxOut(1000, script, testToken))
+	err := w.PublishTransaction(bad)
+	if err == nil || !strings.Contains(err.Error(), "token rules") {
+		t.Fatalf("got %v, want a token rules error", err)
+	}
+	if recorded(t, w, bad) {
+		t.Fatal("recorded a transaction that breaks the token rules")
+	}
+}
+
 // setSyncedTo marks the wallet synced to the block at height, so outputs mined
 // up to it have confirmations.
 func setSyncedTo(t *testing.T, w *Wallet, height int32) {

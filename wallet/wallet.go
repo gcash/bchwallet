@@ -3524,8 +3524,7 @@ func (w *Wallet) SignTransaction(tx *wire.MsgTx, inputValues []int64, hashType t
 	p2shRedeemScriptsByAddress map[string][]byte,
 	allowTokenBurn bool) ([]SignatureError, error) {
 
-	syncedTo := w.Manager.SyncedTo()
-	flags := scriptFlags(w.chainParams, &syncedTo)
+	flags := w.tipScriptFlags()
 
 	var signErrors []SignatureError
 	err := walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
@@ -3776,8 +3775,7 @@ func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
 // need every output tx spends, so the check is skipped if the wallet doesn't
 // have them all, and nodes check tx anyway.
 func (w *Wallet) checkTokenRules(tx *wire.MsgTx) error {
-	syncedTo := w.Manager.SyncedTo()
-	flags := scriptFlags(w.chainParams, &syncedTo)
+	flags := w.tipScriptFlags()
 	if !flags.HasFlag(txscript.ScriptAllowCashTokens) {
 		return nil
 	}

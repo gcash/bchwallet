@@ -119,6 +119,10 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
+	// The rules are read before the database transaction is opened, as
+	// reading them can wait on the chain backend.
+	flags := w.tipScriptFlags()
+
 	dbtx, err := w.db.BeginReadWriteTx()
 	if err != nil {
 		return nil, err
@@ -192,12 +196,8 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
-	// The block stamp of the chain backend has no time, which the upgrades
-	// that activate by time need, so the flags are those of the block the
-	// wallet is synced to.
-	syncedTo := w.Manager.SyncedTo()
 	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues,
-		tx.PrevTokens, scriptFlags(w.chainParams, &syncedTo))
+		tx.PrevTokens, flags)
 	if err != nil {
 		return nil, err
 	}
@@ -646,6 +646,30 @@ func scriptFlags(params *chaincfg.Params, bs *waddrmgr.BlockStamp) txscript.Scri
 		flags |= txscript.ScriptAllowMay2026
 	}
 	return flags
+}
+
+// tipScriptFlags returns scriptFlags for the tip of the chain, as the network
+// checks a transaction that the wallet publishes now by its rules.  The block
+// the wallet is synced to stands in when the chain backend can't tell the tip
+// or the tip is lower.  It can't stand in otherwise: a rescan moves it back to
+// the block that the rescan starts from, which can come before an upgrade, and
+// the block stamp of the chain backend follows the rescan too.
+func (w *Wallet) tipScriptFlags() txscript.ScriptFlags {
+	bs := w.Manager.SyncedTo()
+	if chainClient := w.ChainClient(); chainClient != nil {
+		hash, height, err := chainClient.GetBestBlock()
+		if err == nil && height > bs.Height {
+			header, err := chainClient.GetBlockHeader(hash)
+			if err == nil {
+				bs = waddrmgr.BlockStamp{
+					Height:    height,
+					Hash:      *hash,
+					Timestamp: header.Timestamp,
+				}
+			}
+		}
+	}
+	return scriptFlags(w.chainParams, &bs)
 }
 
 // validateMsgTx verifies transaction input scripts for tx, and the token rules
