@@ -261,14 +261,17 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 		changeSource := func() ([]byte, error) {
 			// Derive the change output script.  As a hack to allow
 			// spending from the imported account, change addresses
-			// are created from account 0.
-			var changeAddr bchutil.Address
-			var err error
+			// are created from account 0.  The address is read with
+			// this transaction, as another read transaction opened
+			// inside it can deadlock.
+			changeAccount := account
 			if account == waddrmgr.ImportedAddrAccount {
-				changeAddr, err = w.CurrentChangeAddress(0, waddrmgr.KeyScopeBIP0044)
-			} else {
-				changeAddr, err = w.CurrentChangeAddress(account, waddrmgr.KeyScopeBIP0044)
+				changeAccount = 0
 			}
+			changeAddr, err := w.currentChangeAddress(
+				dbtx.ReadBucket(waddrmgrNamespaceKey),
+				changeAccount, waddrmgr.KeyScopeBIP0044,
+			)
 			if err != nil {
 				return nil, err
 			}

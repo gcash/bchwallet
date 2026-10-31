@@ -21,6 +21,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - A rescan that a new one replaces, as when a client asks for a rescan from the wallet's birthday, no longer logs that it ended with an error.
 - With an SPV backend, the scan for used addresses at every start waits for the filter of each block it scans, and for each block whose filter matches, until it gets them. It went past a block whose filter no peer sent and marked it synced, so a payment in that block went unseen until a rescan from the wallet's birthday, and a block it couldn't download stopped the wallet.
 - A scan for used addresses that a payment interrupts starts again after the last block it finished, and with an SPV backend a payment that arrives during the scan interrupts it too. The wallet took the index of that block in the scan's batch for its height and crashed, which with a bchd backend could happen whenever a payment arrived while the wallet was starting, and with an SPV backend the payment waited until the scan was through its batch.
+- Creating a transaction with the gRPC `CreateTransaction` reads the change address with the database transaction it already holds. It opened another read transaction inside that one, which bbolt can deadlock on when a block written in between grows the database file, hanging the call and every later write to the wallet's database.
 
 ### SPV
 

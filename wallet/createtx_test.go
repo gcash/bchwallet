@@ -7,6 +7,9 @@ package wallet
 import (
 	"bytes"
 	"os"
+	"runtime"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil/hdkeychain"
 	"github.com/gcash/bchwallet/waddrmgr"
+	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	_ "github.com/gcash/bchwallet/walletdb/bdb"
 	"github.com/gcash/bchwallet/wtxmgr"
@@ -198,5 +202,148 @@ func TestTxToOutputsDryRun(t *testing.T) {
 	if !bytes.Equal(change2.PkScript, change3.PkScript) {
 		t.Fatalf("dry-run using different change address " +
 			"than wet run")
+	}
+}
+
+// txCountingDB is a walletdb.DB that records a goroutine opening a database
+// transaction while it has another open.  bbolt can deadlock on that when a
+// write in between has to remap the database file: the write waits for the
+// open transaction to end, and the new transaction waits for the write.
+type txCountingDB struct {
+	walletdb.DB
+
+	mtx    sync.Mutex
+	open   map[uint64]int
+	nested bool
+}
+
+func newTxCountingDB(db walletdb.DB) *txCountingDB {
+	return &txCountingDB{DB: db, open: make(map[uint64]int)}
+}
+
+// opened records a transaction that the calling goroutine opened, and returns
+// a function that records it closed.
+func (db *txCountingDB) opened() func() {
+	id := goroutineID()
+
+	db.mtx.Lock()
+	if db.open[id] > 0 {
+		db.nested = true
+	}
+	db.open[id]++
+	db.mtx.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			db.mtx.Lock()
+			db.open[id]--
+			db.mtx.Unlock()
+		})
+	}
+}
+
+// nestedTx returns whether a goroutine opened a transaction while it had
+// another open.
+func (db *txCountingDB) nestedTx() bool {
+	db.mtx.Lock()
+	defer db.mtx.Unlock()
+
+	return db.nested
+}
+
+func (db *txCountingDB) BeginReadTx() (walletdb.ReadTx, error) {
+	tx, err := db.DB.BeginReadTx()
+	if err != nil {
+		return nil, err
+	}
+	return &countedReadTx{ReadTx: tx, closed: db.opened()}, nil
+}
+
+func (db *txCountingDB) BeginReadWriteTx() (walletdb.ReadWriteTx, error) {
+	tx, err := db.DB.BeginReadWriteTx()
+	if err != nil {
+		return nil, err
+	}
+	return &countedReadWriteTx{ReadWriteTx: tx, closed: db.opened()}, nil
+}
+
+type countedReadTx struct {
+	walletdb.ReadTx
+	closed func()
+}
+
+func (tx *countedReadTx) Rollback() error {
+	defer tx.closed()
+	return tx.ReadTx.Rollback()
+}
+
+type countedReadWriteTx struct {
+	walletdb.ReadWriteTx
+	closed func()
+}
+
+func (tx *countedReadWriteTx) Rollback() error {
+	defer tx.closed()
+	return tx.ReadWriteTx.Rollback()
+}
+
+func (tx *countedReadWriteTx) Commit() error {
+	defer tx.closed()
+	return tx.ReadWriteTx.Commit()
+}
+
+// goroutineID returns the ID of the calling goroutine, read from its stack
+// trace, which starts "goroutine <ID> [".
+func goroutineID() uint64 {
+	var buf [64]byte
+	stack := bytes.TrimPrefix(buf[:runtime.Stack(buf[:], false)],
+		[]byte("goroutine "))
+	id, _ := strconv.ParseUint(
+		string(stack[:bytes.IndexByte(stack, ' ')]), 10, 64,
+	)
+	return id
+}
+
+// TestCreateUnsignedOneTransactionAtATime checks that CreateUnsignedTx doesn't
+// open a database transaction inside another.  It read the change address in
+// a read transaction of its own inside the one it held, which bbolt can
+// deadlock on when a block written meanwhile grows the database file, hanging
+// the send and every later write.
+func TestCreateUnsignedOneTransactionAtATime(t *testing.T) {
+	w := newRegtestWallet(t)
+	script := walletScript(t, w)
+	fungible := func(amount uint64) wire.TokenData {
+		return wire.TokenData{
+			CategoryID: testToken.CategoryID,
+			Amount:     amount,
+			BitField:   wire.HAS_AMOUNT,
+		}
+	}
+	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
+	addCredit(t, w, wire.NewTxOut(1000, script, fungible(100)))
+
+	db := newTxCountingDB(w.db)
+	w.db = db
+
+	// A token send asks for a change address for the token change as well
+	// as for the BCH change.
+	for _, test := range []struct {
+		name string
+		out  *wire.TxOut
+	}{
+		{"BCH", wire.NewTxOut(10000, script, wire.TokenData{})},
+		{"tokens", wire.NewTxOut(0, script, fungible(40))},
+	} {
+		_, err := w.CreateUnsignedTx(0, []*wire.TxOut{test.out}, nil, 1,
+			txrules.DefaultRelayFeePerKb)
+		if err != nil {
+			t.Fatalf("%s: unable to create transaction: %v", test.name,
+				err)
+		}
+		if db.nestedTx() {
+			t.Fatalf("%s: opened a database transaction inside "+
+				"another", test.name)
+		}
 	}
 }

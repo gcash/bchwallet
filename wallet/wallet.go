@@ -1891,27 +1891,36 @@ func (w *Wallet) CurrentAddress(account uint32, scope waddrmgr.KeyScope) (bchuti
 // from a wallet for a particular key-chain scope. This should never return
 // a used address because we maintain a buffer of unused addresses.
 func (w *Wallet) CurrentChangeAddress(account uint32, scope waddrmgr.KeyScope) (bchutil.Address, error) {
-	manager, err := w.Manager.FetchScopedKeyManager(scope)
-	if err != nil {
-		return nil, err
-	}
-
 	var addr bchutil.Address
-	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
-		maddr, err := manager.FirstUnusedAddress(addrmgrNs, account, true)
-		if err != nil {
-			return err
-		}
-
-		addr = maddr.Address()
-		return nil
+		var err error
+		addr, err = w.currentChangeAddress(addrmgrNs, account, scope)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return addr, nil
+}
+
+// currentChangeAddress is CurrentChangeAddress for a caller that already has a
+// database transaction open, as opening another inside it can deadlock.
+func (w *Wallet) currentChangeAddress(addrmgrNs walletdb.ReadBucket,
+	account uint32, scope waddrmgr.KeyScope) (bchutil.Address, error) {
+
+	manager, err := w.Manager.FetchScopedKeyManager(scope)
+	if err != nil {
+		return nil, err
+	}
+
+	maddr, err := manager.FirstUnusedAddress(addrmgrNs, account, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return maddr.Address(), nil
 }
 
 // PubKeyForAddress looks up the associated public key for a P2PKH address.
