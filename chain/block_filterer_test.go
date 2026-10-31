@@ -1,12 +1,14 @@
 package chain_test
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/chain"
@@ -571,6 +573,93 @@ func TestOutOfOrderDependentTransaction(t *testing.T) {
 	assertNumRelevantTxns(t, blockFilterer, 3)
 	assertRelevantTxnsContains(t, blockFilterer, firstTx)
 	assertRelevantTxnsContains(t, blockFilterer, lastTx)
+}
+
+// TestBlockFiltererTokens checks that the BlockFilterer, which the scan for used
+// addresses runs on the blocks whose filters match, finds the wallet's outputs
+// that carry CashTokens, fungible or an NFT, and the transaction that spends
+// one of its outputs with tokens, in a block as a peer sends it.
+func TestBlockFiltererTokens(t *testing.T) {
+	addr, err := bchutil.DecodeAddress(
+		"qz2gcaj6dy2dg0e20tqh0k3v9a449h3a0s8t2kgggp",
+		&chaincfg.SimNetParams,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := bchutil.DecodeAddress(
+		"qrpe3mafcwft5cqnchsyaeefw4000avtxg7jh5geku",
+		&chaincfg.SimNetParams,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherScript, err := txscript.PayToAddrScript(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	category := [32]byte{2}
+	fungible := wire.TokenData{CategoryID: category, Amount: 1000,
+		BitField: wire.HAS_AMOUNT}
+	nft := wire.TokenData{CategoryID: category, Commitment: []byte("nft"),
+		BitField: wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH}
+
+	paid := wire.NewMsgTx(2)
+	paid.AddTxIn(wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{1}}, nil))
+	paid.AddTxOut(wire.NewTxOut(1000, script, fungible))
+	paid.AddTxOut(wire.NewTxOut(1000, script, nft))
+
+	// The spend pays someone else the tokens of an output of the wallet
+	// from an earlier block.
+	watched := wire.OutPoint{Hash: chainhash.Hash{2}}
+	spend := wire.NewMsgTx(2)
+	spend.AddTxIn(wire.NewTxIn(&watched, nil))
+	spend.AddTxOut(wire.NewTxOut(900, otherScript, nft))
+
+	var buf bytes.Buffer
+	block := wire.MsgBlock{Transactions: []*wire.MsgTx{paid, spend}}
+	if err := block.Serialize(&buf); err != nil {
+		t.Fatal(err)
+	}
+	var fromPeer wire.MsgBlock
+	if err := fromPeer.Deserialize(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	index := waddrmgr.ScopedIndex{Index: 3, Scope: waddrmgr.KeyScopeBIP0044}
+	req := &chain.FilterBlocksRequest{
+		ExternalAddrs: map[waddrmgr.ScopedIndex]bchutil.Address{
+			index: addr,
+		},
+		WatchedOutPoints: map[wire.OutPoint]bchutil.Address{
+			watched: addr,
+		},
+	}
+	blockFilterer := chain.NewBlockFilterer(&chaincfg.SimNetParams, req)
+	if !blockFilterer.FilterBlock(&fromPeer) {
+		t.Fatal("found nothing in the block")
+	}
+	assertNumRelevantTxns(t, blockFilterer, 2)
+	assertRelevantTxnsContains(t, blockFilterer, fromPeer.Transactions[0])
+	assertRelevantTxnsContains(t, blockFilterer, fromPeer.Transactions[1])
+
+	found := blockFilterer.FoundExternal[index.Scope]
+	if _, ok := found[index.Index]; !ok {
+		t.Error("the address that the outputs with tokens pay isn't " +
+			"found used")
+	}
+	paidHash := fromPeer.Transactions[0].TxHash()
+	for i := uint32(0); i < 2; i++ {
+		op := wire.OutPoint{Hash: paidHash, Index: i}
+		if _, ok := blockFilterer.FoundOutPoints[op]; !ok {
+			t.Errorf("output %d, which carries tokens, isn't found", i)
+		}
+	}
 }
 
 func Test_sortRelevantTxs(t *testing.T) {
