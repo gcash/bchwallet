@@ -36,11 +36,10 @@ func (p *OutputSelectionPolicy) meetsRequiredConfs(txHeight, curHeight int32) bo
 // described in the passed policy.
 func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOutput, error) {
 	var outputResults []*TransactionOutput
+	tip := w.ChainTip()
 	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
 		txmgrNs := tx.ReadBucket(wtxmgrNamespaceKey)
-
-		syncBlock := w.Manager.SyncedTo()
 
 		// TODO: actually stream outputs from the db instead of fetching
 		// all of them at once.
@@ -52,7 +51,7 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 		for _, output := range outputs {
 			// Ignore outputs that haven't reached the required
 			// number of confirmations.
-			if !policy.meetsRequiredConfs(output.Height, syncBlock.Height) {
+			if !policy.meetsRequiredConfs(output.Height, tip.Height) {
 				continue
 			}
 
@@ -65,7 +64,7 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 			// asked for.
 			if output.FromCoinBase && !policy.IncludeImmatureCoinbases &&
 				!confirmed(int32(w.chainParams.CoinbaseMaturity),
-					output.Height, syncBlock.Height) {
+					output.Height, tip.Height) {
 
 				continue
 			}

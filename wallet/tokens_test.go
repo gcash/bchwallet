@@ -395,11 +395,13 @@ func TestPublishTransactionTokenRules(t *testing.T) {
 }
 
 // tipChainClient is a chain backend whose chain has its tip at height, in a
-// block made at time.
+// block made at time, and whose block stamp is at stamp, as the block stamp of
+// the SPV client follows a rescan.
 type tipChainClient struct {
 	mockChainClient
 	height int32
 	time   time.Time
+	stamp  int32
 }
 
 func (c *tipChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
@@ -410,6 +412,13 @@ func (c *tipChainClient) GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader,
 	error) {
 
 	return &wire.BlockHeader{Timestamp: c.time}, nil
+}
+
+func (c *tipChainClient) BlockStamp() (*waddrmgr.BlockStamp, error) {
+	return &waddrmgr.BlockStamp{
+		Height: c.stamp,
+		Hash:   chainhash.Hash{byte(c.stamp)},
+	}, nil
 }
 
 // newRescanningWallet returns a wallet as newRegtestWallet does, but with the
@@ -423,7 +432,7 @@ func newRescanningWallet(t *testing.T) *Wallet {
 	params := *w.chainParams
 	params.Upgrade9ForkHeight = 100
 	w.chainParams = &params
-	w.chainClient = &tipChainClient{height: 200, time: time.Now()}
+	w.chainClient = &tipChainClient{height: 200, time: time.Now(), stamp: 10}
 	setSyncedTo(t, w, 10)
 	return w
 }

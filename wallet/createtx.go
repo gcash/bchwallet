@@ -119,9 +119,11 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 		return nil, err
 	}
 
-	// The rules are read before the database transaction is opened, as
-	// reading them can wait on the chain backend.
-	flags := w.tipScriptFlags()
+	// The tip, which confirmations are counted to and whose rules the
+	// transaction is checked by, is read before the database transaction
+	// is opened, as reading it can wait on the chain backend.
+	tip := w.ChainTip()
+	flags := scriptFlags(w.chainParams, &tip)
 
 	dbtx, err := w.db.BeginReadWriteTx()
 	if err != nil {
@@ -131,13 +133,7 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
 
 	addrmgrNs := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
 
-	// Get current block's height and hash.
-	bs, err := chainClient.BlockStamp()
-	if err != nil {
-		return nil, err
-	}
-
-	eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
+	eligible, err := w.findEligibleOutputs(dbtx, account, minconf, &tip)
 	if err != nil {
 		return nil, err
 	}
@@ -240,20 +236,17 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 	account uint32, minconf int32, feeSatPerKb bchutil.Amount) (
 	tx *txauthor.AuthoredTx, err error) {
 
-	chainClient, err := w.requireChainClient()
-	if err != nil {
+	if _, err := w.requireChainClient(); err != nil {
 		return nil, err
 	}
 
+	// Confirmations are counted to the chain's tip, which is read before
+	// the database transaction is opened, as reading it can wait on the
+	// chain backend.
+	tip := w.ChainTip()
 	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
-
-		// Get current block's height and hash.
-		bs, err := chainClient.BlockStamp()
-		if err != nil {
-			return err
-		}
-
-		eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
+		eligible, err := w.findEligibleOutputs(dbtx, account, minconf,
+			&tip)
 		if err != nil {
 			return err
 		}
@@ -283,7 +276,7 @@ func (w *Wallet) createUnsigned(outputs []*wire.TxOut, nfts []*wire.OutPoint,
 		var tokenCredits []wtxmgr.Credit
 		if sendsTokens(outputs, nfts) {
 			tokenEligible, err := w.findEligibleTokenOutputs(dbtx,
-				account, minconf, bs)
+				account, minconf, &tip)
 			if err != nil {
 				return err
 			}
@@ -648,28 +641,12 @@ func scriptFlags(params *chaincfg.Params, bs *waddrmgr.BlockStamp) txscript.Scri
 	return flags
 }
 
-// tipScriptFlags returns scriptFlags for the tip of the chain, as the network
-// checks a transaction that the wallet publishes now by its rules.  The block
-// the wallet is synced to stands in when the chain backend can't tell the tip
-// or the tip is lower.  It can't stand in otherwise: a rescan moves it back to
-// the block that the rescan starts from, which can come before an upgrade, and
-// the block stamp of the chain backend follows the rescan too.
+// tipScriptFlags returns scriptFlags for the tip of the chain, as ChainTip
+// tells it, as the network checks a transaction that the wallet publishes now
+// by its rules.
 func (w *Wallet) tipScriptFlags() txscript.ScriptFlags {
-	bs := w.Manager.SyncedTo()
-	if chainClient := w.ChainClient(); chainClient != nil {
-		hash, height, err := chainClient.GetBestBlock()
-		if err == nil && height > bs.Height {
-			header, err := chainClient.GetBlockHeader(hash)
-			if err == nil {
-				bs = waddrmgr.BlockStamp{
-					Height:    height,
-					Hash:      *hash,
-					Timestamp: header.Timestamp,
-				}
-			}
-		}
-	}
-	return scriptFlags(w.chainParams, &bs)
+	tip := w.ChainTip()
+	return scriptFlags(w.chainParams, &tip)
 }
 
 // validateMsgTx verifies transaction input scripts for tx, and the token rules

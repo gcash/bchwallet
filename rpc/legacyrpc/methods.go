@@ -807,7 +807,7 @@ func getTransaction(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 		return nil, &ErrNoTransactionInfo
 	}
 
-	syncBlock := w.Manager.SyncedTo()
+	tip := w.ChainTip()
 
 	// TODO: The serialized transaction is already in the DB, so
 	// reserializing can be avoided here.
@@ -832,7 +832,7 @@ func getTransaction(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	if details.Block.Height != -1 {
 		ret.BlockHash = details.Block.Hash.String()
 		ret.BlockTime = details.Block.Time.Unix()
-		ret.Confirmations = int64(confirms(details.Block.Height, syncBlock.Height))
+		ret.Confirmations = int64(confirms(details.Block.Height, tip.Height))
 	}
 
 	var (
@@ -885,7 +885,7 @@ func getTransaction(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 		ret.Fee = feeF64
 	}
 
-	credCat := wallet.RecvCategory(details, syncBlock.Height, w.ChainParams()).String()
+	credCat := wallet.RecvCategory(details, tip.Height, w.ChainParams()).String()
 	for _, cred := range details.Credits {
 		// Change is ignored.
 		if cred.Change {
@@ -1132,7 +1132,7 @@ func listReceivedByAddress(icmd interface{}, w *wallet.Wallet) (interface{}, err
 		account string
 	}
 
-	syncBlock := w.Manager.SyncedTo()
+	tip := w.ChainTip()
 
 	// Intermediate data for all addresses.
 	allAddrData := make(map[string]AddrData)
@@ -1152,10 +1152,10 @@ func listReceivedByAddress(icmd interface{}, w *wallet.Wallet) (interface{}, err
 	if minConf == 0 {
 		endHeight = -1
 	} else {
-		endHeight = syncBlock.Height - int32(minConf) + 1
+		endHeight = tip.Height - int32(minConf) + 1
 	}
 	err = wallet.UnstableAPI(w).RangeTransactions(0, endHeight, func(details []wtxmgr.TxDetails) (bool, error) {
-		confirmations := confirms(details[0].Block.Height, syncBlock.Height)
+		confirmations := confirms(details[0].Block.Height, tip.Height)
 		for _, tx := range details {
 			for _, cred := range tx.Credits {
 				pkScript := tx.MsgTx.TxOut[cred.Index].PkScript
@@ -1210,13 +1210,13 @@ func listReceivedByAddress(icmd interface{}, w *wallet.Wallet) (interface{}, err
 func listSinceBlock(icmd interface{}, w *wallet.Wallet, chainClient *chain.RPCClient) (interface{}, error) {
 	cmd := icmd.(*btcjson.ListSinceBlockCmd)
 
-	syncBlock := w.Manager.SyncedTo()
+	tip := w.ChainTip()
 	targetConf := int64(*cmd.TargetConfirmations)
 
 	// For the result we need the block hash for the last block counted
 	// in the blockchain due to confirmations. We send this off now so that
 	// it can arrive asynchronously while we figure out the rest.
-	gbh := chainClient.GetBlockHashAsync(int64(syncBlock.Height) + 1 - targetConf)
+	gbh := chainClient.GetBlockHashAsync(int64(tip.Height) + 1 - targetConf)
 
 	var start int32
 	if cmd.BlockHash != nil {
@@ -1231,7 +1231,7 @@ func listSinceBlock(icmd interface{}, w *wallet.Wallet, chainClient *chain.RPCCl
 		start = int32(block.Height) + 1
 	}
 
-	txInfoList, err := w.ListSinceBlock(start, -1, syncBlock.Height)
+	txInfoList, err := w.ListSinceBlock(start, -1, tip.Height)
 	if err != nil {
 		return nil, err
 	}

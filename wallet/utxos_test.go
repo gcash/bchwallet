@@ -47,6 +47,14 @@ func TestUnspentOutputsImmatureCoinbase(t *testing.T) {
 	immature := addCoinbase(t, w, script, 6000, 2)
 	setSyncedTo(t, w, maturity)
 
+	// The chain's tip, which confirmations are counted to, is the block
+	// the wallet is synced to.
+	w.chainClient = &tipChainClient{
+		height: maturity,
+		time:   time.Now(),
+		stamp:  maturity,
+	}
+
 	for _, test := range []struct {
 		include bool
 		want    []wire.OutPoint

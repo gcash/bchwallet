@@ -13,6 +13,13 @@ import (
 type mockChainClient struct {
 }
 
+// mockTip is the tip of the mock chain.
+var mockTip = waddrmgr.BlockStamp{
+	Height:    500000,
+	Hash:      chainhash.Hash{},
+	Timestamp: time.Unix(1234, 0),
+}
+
 var _ chain.Interface = (*mockChainClient)(nil)
 
 func (m *mockChainClient) Start() error {
@@ -25,7 +32,8 @@ func (m *mockChainClient) Stop() {
 func (m *mockChainClient) WaitForShutdown() {}
 
 func (m *mockChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
-	return nil, 0, nil
+	hash := mockTip.Hash
+	return &hash, mockTip.Height, nil
 }
 
 func (m *mockChainClient) GetBlock(*chainhash.Hash) (*wire.MsgBlock, error) {
@@ -38,7 +46,7 @@ func (m *mockChainClient) GetBlockHash(int64) (*chainhash.Hash, error) {
 
 func (m *mockChainClient) GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader,
 	error) {
-	return nil, nil
+	return &wire.BlockHeader{Timestamp: mockTip.Timestamp}, nil
 }
 
 func (m *mockChainClient) IsCurrent() bool {
@@ -51,11 +59,8 @@ func (m *mockChainClient) FilterBlocks(*chain.FilterBlocksRequest) (
 }
 
 func (m *mockChainClient) BlockStamp() (*waddrmgr.BlockStamp, error) {
-	return &waddrmgr.BlockStamp{
-		Height:    500000,
-		Hash:      chainhash.Hash{},
-		Timestamp: time.Unix(1234, 0),
-	}, nil
+	bs := mockTip
+	return &bs, nil
 }
 
 func (m *mockChainClient) SendRawTransaction(*wire.MsgTx, bool) (
