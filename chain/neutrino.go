@@ -426,6 +426,17 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 
 	s.CS.NotifyMempoolReceived(addrs)
 
+	// Peers don't announce the transactions in their mempools again, so
+	// we ask them for those that pay the addresses or spend the outputs,
+	// such as one sent while the wallet was stopped.  The chain service
+	// asks once its headers are synced, and again when it regains peers or
+	// wakes from sleep.
+	mempoolOutPoints := make([]wire.OutPoint, 0, len(outPoints))
+	for op := range outPoints {
+		mempoolOutPoints = append(mempoolOutPoints, op)
+	}
+	s.CS.RequestMempoolFilter(addrs, mempoolOutPoints)
+
 	if !s.started {
 		s.clientMtx.Unlock()
 		return fmt.Errorf("can't do a rescan when the chain client " +

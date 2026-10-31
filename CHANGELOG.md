@@ -6,7 +6,7 @@ bchwallet forked from [btcwallet](https://github.com/btcsuite/btcwallet) in Octo
 
 ## Unreleased
 
-This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, notices when a transaction it sent before a restart confirms, sees payments to the addresses it derives while it runs, checks BIP70 payment requests that a client has as a file, and moves to the latest neutrino, which checks the blocks it downloads against their filter headers and tries again rather than skipping what it couldn't fetch.
+This release keeps the wallet from spending an output again that a transaction in the same block already spent, repairs wallets that did, keeps other people's transactions out of the wallet, notices when a transaction it sent before a restart confirms, sees payments to the addresses it derives while it runs, checks BIP70 payment requests that a client has as a file, and moves to the latest neutrino, which checks the blocks it downloads against their filter headers, repairs wrong filter headers, tries again rather than skipping what it couldn't fetch, and asks peers for the unconfirmed transactions sent while the wallet was away.
 
 ### Wallet
 
@@ -34,6 +34,11 @@ This release keeps the wallet from spending an output again that a transaction i
 - Headers in a message that don't link to each other no longer count toward a reorg, and the peer that sent them is disconnected. Such a message could switch the wallet to a shorter branch (latest neutrino).
 - A peer whose reply to a checkpointed filter header request doesn't carry one filter hash per block of the requested range is banned, and an error reading or writing the filter header store is retried. Such a reply could crash the wallet, as could such an error (latest neutrino).
 - The wallet syncs from bchd nodes that serve compact filters with bloom filters turned off. It banned them for a day (latest neutrino).
+- The SPV client repairs its filter headers when a downloaded block or its peers show that they may be wrong: it finds the first wrong one through the checkpoints and the filter headers of its peers, settles which is right with the filter built from the block, bans the peers that served the wrong ones, and rolls the filter headers back to the block before it, dropping the filters checked against them. A rescan then scans the blocks above the rollback again with the filter headers that replace them. Nothing corrected wrong filter headers, with which the wallet could miss its transactions, and the sync banned honest peers or stalled (latest neutrino).
+- An SPV wallet asks its peers for the unconfirmed transactions in their mempools that pay it or spend its outputs, such as a payment sent while the app was closed, when it starts, regains peers after having none, or wakes from sleep. It saw them only once mined, as peers announce a transaction once. It asks for the filter of a peer's mempool first and fetches the mempool only when the filter matches, and asks a peer only while the ban score that bchd keeps for the request stays below its threshold (latest neutrino).
+- A transaction that spends the wallet's outputs and pays someone else, as another wallet with the same seed sends, shows once peers announce it, rather than once mined (latest neutrino).
+- A rescan that can't fetch or check a block waits twice as long before each retry, up to 30 seconds. It tried every 100 milliseconds, downloading a block that doesn't match its filter header ten times a second (latest neutrino).
+- After a reorg rolls back filter headers, a rescan that catches up with the chain is no longer handed blocks whose filter headers aren't synced yet (latest neutrino).
 
 ### RPC & gRPC
 
