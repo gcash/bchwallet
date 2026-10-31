@@ -21,6 +21,11 @@ type OutputSelectionPolicy struct {
 	// are left out by default, since spending them in a transaction that
 	// does not send their tokens on burns the tokens.
 	IncludeTokens bool
+
+	// IncludeImmatureCoinbases selects coinbase outputs that haven't
+	// matured as well.  They are left out by default, since the network
+	// rejects a transaction that spends one.
+	IncludeImmatureCoinbases bool
 }
 
 func (p *OutputSelectionPolicy) meetsRequiredConfs(txHeight, curHeight int32) bool {
@@ -53,6 +58,15 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 
 			// Ignore outputs that carry tokens unless asked for.
 			if output.HasTokens() && !policy.IncludeTokens {
+				continue
+			}
+
+			// Ignore coinbase outputs that haven't matured unless
+			// asked for.
+			if output.FromCoinBase && !policy.IncludeImmatureCoinbases &&
+				!confirmed(int32(w.chainParams.CoinbaseMaturity),
+					output.Height, syncBlock.Height) {
+
 				continue
 			}
 

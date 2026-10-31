@@ -39,6 +39,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - A BIP70 payment request larger than 50,000 bytes, the limit that BIP70 sets, is refused. `DownloadPaymentRequest` read all of one, however large.
 - An unsigned BIP70 payment request, which BIP70 has wallets accept, is accepted with an empty `pay_to_name`, as a request that names no merchant and is no more trustworthy than a plain address. One signed with `x509+sha1` is still refused, since SHA-1 signatures can be forged.
 - When `DownloadPaymentRequest` gets no payment request, it returns the error of the protocol the merchant speaks, the JSON Payment Protocol or BIP70, rather than the errors of both, and the error of a merchant that can't be reached once. It returns both only when the two requests failed at the same step, as when the merchant refused both.
+- `SweepAccount` leaves out coinbase outputs that haven't matured, and `FundTransaction` leaves them out unless `include_immature_coinbases` is set. The network rejects a transaction that spends one, so a sweep that included one failed, and `FundTransaction` returned them whatever the field said.
 
 ## 0.13.2 (2026-10-27)
 

@@ -561,8 +561,9 @@ func (s *walletServer) FundTransaction(ctx context.Context, req *pb.FundTransact
 	*pb.FundTransactionResponse, error) {
 
 	policy := wallet.OutputSelectionPolicy{
-		Account:               req.Account,
-		RequiredConfirmations: req.RequiredConfirmations,
+		Account:                  req.Account,
+		RequiredConfirmations:    req.RequiredConfirmations,
+		IncludeImmatureCoinbases: req.IncludeImmatureCoinbases,
 	}
 	unspentOutputs, err := s.wallet.Load().UnspentOutputs(policy)
 	if err != nil {
