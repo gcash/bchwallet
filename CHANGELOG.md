@@ -40,6 +40,7 @@ This release keeps the wallet from spending an output again that a transaction i
 - An unsigned BIP70 payment request, which BIP70 has wallets accept, is accepted with an empty `pay_to_name`, as a request that names no merchant and is no more trustworthy than a plain address. One signed with `x509+sha1` is still refused, since SHA-1 signatures can be forged.
 - When `DownloadPaymentRequest` gets no payment request, it returns the error of the protocol the merchant speaks, the JSON Payment Protocol or BIP70, rather than the errors of both, and the error of a merchant that can't be reached once. It returns both only when the two requests failed at the same step, as when the merchant refused both.
 - `SweepAccount` leaves out coinbase outputs that haven't matured, and `FundTransaction` leaves them out unless `include_immature_coinbases` is set. The network rejects a transaction that spends one, so a sweep that included one failed, and `FundTransaction` returned them whatever the field said.
+- `SignTransaction` counts the tokens that a transaction sends to an output that can't be spent, such as an OP_RETURN output, as burned, so it refuses to sign one that sends the wallet's tokens there unless `allow_token_burn` is set. It counted them as kept, and signed such a transaction, which burned the tokens.
 
 ## 0.13.2 (2026-10-27)
 

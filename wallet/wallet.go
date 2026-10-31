@@ -3701,8 +3701,9 @@ func (w *Wallet) spentOutput(txmgrNs walletdb.ReadBucket,
 // minting NFT must come out as a minting NFT, since its capability can't be
 // had back.  NFTs are told apart by their commitments, not just counted, so
 // another input's NFT, or one that a minting NFT mints, doesn't stand in for
-// one of prevOuts.  With several, it returns the first in the byte order of
-// transaction IDs.
+// one of prevOuts.  An output that can't be spent, such as an OP_RETURN output,
+// carries no tokens on, as tokens sent to one are burned.  With several, it
+// returns the first in the byte order of transaction IDs.
 func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
 	type held struct {
 		amount    uint64
@@ -3714,7 +3715,7 @@ func burnedTokens(tx *wire.MsgTx, prevOuts []*wire.TxOut) *chainhash.Hash {
 		byCategory := make(map[chainhash.Hash]*held)
 		for _, out := range outs {
 			token := &out.TokenData
-			if token.IsEmpty() {
+			if token.IsEmpty() || txscript.IsUnspendable(out.PkScript) {
 				continue
 			}
 			h := byCategory[token.CategoryID]

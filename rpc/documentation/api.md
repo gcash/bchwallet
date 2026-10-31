@@ -990,7 +990,8 @@ transaction using a wallet private keys.
   commitment, a mutable NFT that leaves no NFT of its category, or the
   capability of a minting NFT.  NFTs are told apart by their commitments, so
   another input's NFT, or one that a minting NFT mints, doesn't stand in for
-  one of the wallet's.
+  one of the wallet's.  Tokens sent to an output that can't be spent, such as
+  an OP_RETURN output, are burned.
 
 **Response:** `SignTransactionResponse`
 

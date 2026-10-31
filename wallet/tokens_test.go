@@ -812,11 +812,12 @@ func TestCreateUnsignedTokenErrors(t *testing.T) {
 }
 
 // TestSignTransactionTokenBurn checks that SignTransaction refuses to sign a
-// transaction that would burn tokens of the wallet's outputs it spends, unless
-// burns are allowed.
+// transaction that would burn tokens of the wallet's outputs it spends, also
+// by sending them to an OP_RETURN output, unless burns are allowed.
 func TestSignTransactionTokenBurn(t *testing.T) {
 	w := newRegtestWallet(t)
 	script := walletScript(t, w)
+	opReturn := []byte{txscript.OP_RETURN}
 	nft := wire.TokenData{
 		CategoryID: testToken.CategoryID,
 		Commitment: []byte("nft"),
@@ -842,6 +843,12 @@ func TestSignTransactionTokenBurn(t *testing.T) {
 			true},
 		{"no tokens", []*wire.TxOut{
 			wire.NewTxOut(1800, script, wire.TokenData{})}, true},
+		{"fungible to OP_RETURN", []*wire.TxOut{
+			wire.NewTxOut(0, opReturn, testToken),
+			wire.NewTxOut(900, script, nft)}, true},
+		{"NFT to OP_RETURN", []*wire.TxOut{
+			wire.NewTxOut(900, script, testToken),
+			wire.NewTxOut(0, opReturn, nft)}, true},
 	}
 	for _, test := range tests {
 		tx := spendTx(ops, test.outs...)
