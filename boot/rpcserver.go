@@ -35,6 +35,12 @@ import (
 // the client to set a key value in the context metadata to 'AuthenticationToken: cfg.AuthToken'
 const AuthenticationTokenKey = "AuthenticationToken"
 
+// rpcWindowSize is the gRPC server's flow-control window for each stream and
+// each connection: how much a client may send the wallet before the wallet
+// acknowledges it.  A client's requests are small, and what the wallet sends
+// back is paced by the client's own windows.
+const rpcWindowSize = 1 << 20
+
 // openRPCKeyPair creates or loads the RPC TLS keypair specified by the
 // application config.  This function respects the cfg.OneTimeTLSKey setting.
 func openRPCKeyPair() (tls.Certificate, error) {
@@ -173,8 +179,18 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 		// Stop waits for the handlers to return, so that the shutdown
 		// can tell when no call uses the wallet or the services any
 		// more.
+		//
+		// The flow-control windows are fixed, as grpc-go otherwise
+		// tunes them with a ping after each request on a connection
+		// that carries small messages.  grpc-java's OkHttp transport,
+		// which Android apps use, counts its answers to those pings
+		// against a limit of 10,000 queued control frames and never
+		// takes off the ones it flushes, so it closed the connection
+		// every 10,000 calls and ended the client's notification
+		// streams.
 		opts := []grpc.ServerOption{grpc.StreamInterceptor(interceptStreaming), grpc.UnaryInterceptor(interceptUnary),
-			grpc.WaitForHandlers(true)}
+			grpc.WaitForHandlers(true), grpc.StaticStreamWindowSize(rpcWindowSize),
+			grpc.StaticConnWindowSize(rpcWindowSize)}
 		if !cfg.DisableServerTLS {
 			creds := credentials.NewServerTLSFromCert(&keyPair)
 			opts = append(opts, grpc.Creds(creds))
