@@ -53,9 +53,9 @@ import (
 
 // Public API version constants
 const (
-	semverString = "2.2.0"
+	semverString = "2.3.0"
 	semverMajor  = 2
-	semverMinor  = 2
+	semverMinor  = 3
 	semverPatch  = 0
 )
 
@@ -1312,10 +1312,21 @@ func marshalTokenBalances(v []wallet.TokenBalance) []*pb.TokenBalancesResponse_B
 				Commitment:      nft.Commitment,
 			}
 		}
+		outputs := make([]*pb.TokenBalancesResponse_Output, len(bal.Outputs))
+		for j := range bal.Outputs {
+			out := &bal.Outputs[j]
+			outputs[j] = &pb.TokenBalancesResponse_Output{
+				TransactionHash: out.OutPoint.Hash[:],
+				OutputIndex:     out.OutPoint.Index,
+				Satoshis:        int64(out.Amount),
+				Token:           marshalTokenData(&out.Token),
+			}
+		}
 		balances[i] = &pb.TokenBalancesResponse_Balance{
 			Category: bal.Category.String(),
 			Amount:   bal.Amount,
 			Nfts:     nfts,
+			Outputs:  outputs,
 		}
 	}
 	return balances

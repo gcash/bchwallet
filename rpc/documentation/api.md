@@ -442,7 +442,8 @@ ___
 #### `TokenBalances`
 
 The `TokenBalances` method returns the CashTokens in an account's unspent
-outputs, by category: the sum of their fungible amounts, and their NFTs.
+outputs, by category: the sum of their fungible amounts, their NFTs, and the
+outputs that hold them, with the BCH each carries.
 
 **Request:** `TokenBalancesRequest`
 
@@ -468,13 +469,29 @@ outputs, by category: the sum of their fungible amounts, and their NFTs.
     **Nested message:** `NFT`
 
     - `bytes transaction_hash`: The hash of the transaction of the output that
-      holds the NFT, as `CreateTransaction` takes it to send the NFT.
+      holds the NFT, in the byte order of the wire, the reverse of a
+      transaction ID's, as `CreateTransaction` takes it to send the NFT.
 
     - `uint32 output_index`: The index of that output.
 
     - `TokenData.Capability capability`: The NFT's capability.
 
     - `bytes commitment`: The NFT's commitment.
+
+  - `repeated Output outputs`: The unspent outputs that hold the category's
+    tokens, sorted by outpoint.
+
+    **Nested message:** `Output`
+
+    - `bytes transaction_hash`: The hash of the output's transaction, in the
+      byte order of the wire, the reverse of a transaction ID's.
+
+    - `uint32 output_index`: The index of the output.
+
+    - `int64 satoshis`: The BCH the output carries.
+
+    - `TokenData token`: All of the output's tokens: its fungible amount, its
+      NFT, or both.
 
 **Expected errors:**
 

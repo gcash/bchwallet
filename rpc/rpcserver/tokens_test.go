@@ -133,11 +133,25 @@ func TestMarshalTokens(t *testing.T) {
 			Capability: wire.MUTABLE,
 			Commitment: []byte{7},
 		}},
+		Outputs: []wallet.TokenOutput{{
+			OutPoint: op,
+			Amount:   1500,
+			Token:    token,
+		}},
 	}})
 	if len(bals) != 1 || bals[0].Category != want || bals[0].Amount != 5 ||
-		len(bals[0].Nfts) != 1 {
+		len(bals[0].Nfts) != 1 || len(bals[0].Outputs) != 1 {
 
 		t.Fatalf("balances: got %v", bals)
+	}
+	out := bals[0].Outputs[0]
+	if !bytes.Equal(out.TransactionHash, op.Hash[:]) || out.OutputIndex != 2 ||
+		out.Satoshis != 1500 || out.Token == nil ||
+		out.Token.Category != want || out.Token.Amount != 5 ||
+		!out.Token.HasNft || out.Token.Capability != pb.TokenData_MINTING ||
+		!bytes.Equal(out.Token.Commitment, []byte{7}) {
+
+		t.Errorf("output: got %v", out)
 	}
 	nft := bals[0].Nfts[0]
 	if !bytes.Equal(nft.TransactionHash, op.Hash[:]) || nft.OutputIndex != 2 ||

@@ -506,7 +506,8 @@ func tokenBalancesEqual(a, b []TokenBalance) bool {
 	}
 	for i := range a {
 		if a[i].Category != b[i].Category || a[i].Amount != b[i].Amount ||
-			len(a[i].NFTs) != len(b[i].NFTs) {
+			len(a[i].NFTs) != len(b[i].NFTs) ||
+			len(a[i].Outputs) != len(b[i].Outputs) {
 			return false
 		}
 		for j := range a[i].NFTs {
@@ -516,13 +517,33 @@ func tokenBalancesEqual(a, b []TokenBalance) bool {
 				return false
 			}
 		}
+		for j := range a[i].Outputs {
+			x, y := &a[i].Outputs[j], &b[i].Outputs[j]
+			if x.OutPoint != y.OutPoint || x.Amount != y.Amount ||
+				!tokensEqual(&x.Token, &y.Token) {
+				return false
+			}
+		}
 	}
 	return true
 }
 
+// sortedOutputs returns outputs sorted by the bytes of their transaction
+// hashes, then by index.
+func sortedOutputs(outputs ...TokenOutput) []TokenOutput {
+	sort.Slice(outputs, func(i, j int) bool {
+		a, b := &outputs[i].OutPoint, &outputs[j].OutPoint
+		if c := bytes.Compare(a.Hash[:], b.Hash[:]); c != 0 {
+			return c < 0
+		}
+		return a.Index < b.Index
+	})
+	return outputs
+}
+
 // TestTokenBalances checks that TokenBalances sums the fungible amounts and
-// lists the NFTs in the account's unspent outputs with the required
-// confirmations, by category.
+// lists the NFTs and the outputs, with the BCH each carries, in the account's
+// unspent outputs with the required confirmations, by category.
 func TestTokenBalances(t *testing.T) {
 	w := newRegtestWallet(t)
 	setSyncedTo(t, w, testBlock.Height)
@@ -531,44 +552,62 @@ func TestTokenBalances(t *testing.T) {
 	// The bytes of a sort after b's, and in transaction ID order before.
 	a := [32]byte{0: 2, 31: 1}
 	b := [32]byte{0: 1, 31: 2}
+	c := [32]byte{0: 3, 31: 3}
 	fungible := func(category [32]byte, amount uint64) wire.TokenData {
 		return wire.TokenData{CategoryID: category, Amount: amount,
 			BitField: wire.HAS_AMOUNT}
 	}
-	addCredit(t, w, wire.NewTxOut(1000, script, fungible(a, 100)))
-	addCredit(t, w, wire.NewTxOut(1001, script, fungible(a, 200)))
+	credit := func(sats int64, token wire.TokenData) TokenOutput {
+		op := addCredit(t, w, wire.NewTxOut(sats, script, token))
+		return TokenOutput{OutPoint: op, Amount: bchutil.Amount(sats), Token: token}
+	}
+	a1 := credit(1000, fungible(a, 100))
+	a2 := credit(1001, fungible(a, 200))
+	mutableNFT := wire.TokenData{
+		CategoryID: b,
+		Commitment: []byte("nft"),
+		BitField: wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH |
+			wire.MUTABLE,
+	}
+	b1 := credit(1002, mutableNFT)
+	// An output that holds fungible tokens and an NFT, with BCH beyond what
+	// it needs.
+	withAmount := wire.TokenData{
+		CategoryID: b,
+		Amount:     5,
+		BitField:   wire.HAS_AMOUNT | wire.HAS_NFT,
+	}
+	b2 := credit(200000, withAmount)
 	nfts := []TokenNFT{
-		{
-			OutPoint: addCredit(t, w, wire.NewTxOut(1002, script,
-				wire.TokenData{
-					CategoryID: b,
-					Commitment: []byte("nft"),
-					BitField: wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH |
-						wire.MUTABLE,
-				})),
-			Capability: wire.MUTABLE,
-			Commitment: []byte("nft"),
-		},
-		{
-			OutPoint: addCredit(t, w, wire.NewTxOut(1003, script,
-				wire.TokenData{
-					CategoryID: b,
-					Amount:     5,
-					BitField:   wire.HAS_AMOUNT | wire.HAS_NFT,
-				})),
-			Capability: wire.NONE,
-		},
+		{OutPoint: b1.OutPoint, Capability: wire.MUTABLE, Commitment: []byte("nft")},
+		{OutPoint: b2.OutPoint, Capability: wire.NONE},
 	}
 	if bytes.Compare(nfts[0].OutPoint.Hash[:], nfts[1].OutPoint.Hash[:]) > 0 {
 		nfts[0], nfts[1] = nfts[1], nfts[0]
 	}
+	// An NFT with the longest commitment there is.
+	long := make([]byte, wire.MAX_COMMITMENT_LENGTH)
+	for i := range long {
+		long[i] = byte(i)
+	}
+	longNFT := wire.TokenData{
+		CategoryID: c,
+		Commitment: long,
+		BitField:   wire.HAS_NFT | wire.HAS_COMMITMENT_LENGTH | wire.MINTING,
+	}
+	c1 := credit(1035, longNFT)
 	addCredit(t, w, wire.NewTxOut(100000, script, wire.TokenData{}))
 
 	// An unmined transaction, with an input of its own, as the store
 	// drops unmined transactions that spend what a mined one does.
 	unminedInput := wire.OutPoint{Hash: chainhash.Hash{7}, Index: 7}
-	insertTx(t, w, spendTx([]wire.OutPoint{unminedInput},
+	rec := insertTx(t, w, spendTx([]wire.OutPoint{unminedInput},
 		wire.NewTxOut(1004, script, fungible(a, 7))), nil, 0)
+	a3 := TokenOutput{
+		OutPoint: wire.OutPoint{Hash: rec.Hash, Index: 0},
+		Amount:   1004,
+		Token:    fungible(a, 7),
+	}
 
 	// Tokens of another account.
 	account, err := w.NextAccount(waddrmgr.KeyScopeBIP0044, "other")
@@ -585,6 +624,11 @@ func TestTokenBalances(t *testing.T) {
 	}
 	addCredit(t, w, wire.NewTxOut(1005, otherScript, fungible(a, 1000)))
 
+	bWant := TokenBalance{Category: b, Amount: 5, NFTs: nfts,
+		Outputs: sortedOutputs(b1, b2)}
+	cWant := TokenBalance{Category: c, NFTs: []TokenNFT{
+		{OutPoint: c1.OutPoint, Capability: wire.MINTING, Commitment: long},
+	}, Outputs: []TokenOutput{c1}}
 	tests := []struct {
 		confirms int32
 		want     []TokenBalance
@@ -592,15 +636,17 @@ func TestTokenBalances(t *testing.T) {
 		{
 			confirms: 1,
 			want: []TokenBalance{
-				{Category: a, Amount: 300},
-				{Category: b, Amount: 5, NFTs: nfts},
+				{Category: a, Amount: 300, Outputs: sortedOutputs(a1, a2)},
+				bWant,
+				cWant,
 			},
 		},
 		{
 			confirms: 0,
 			want: []TokenBalance{
-				{Category: a, Amount: 307},
-				{Category: b, Amount: 5, NFTs: nfts},
+				{Category: a, Amount: 307, Outputs: sortedOutputs(a1, a2, a3)},
+				bWant,
+				cWant,
 			},
 		},
 	}

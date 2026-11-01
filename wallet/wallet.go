@@ -1798,12 +1798,13 @@ func (w *Wallet) CalculateAccountBalances(account uint32, confirms int32) (Balan
 }
 
 // TokenBalance holds the tokens of one category in an account's unspent
-// outputs: the sum of their fungible amounts and their NFTs.  The category's
-// String is in the byte order of transaction IDs.
+// outputs: the sum of their fungible amounts, their NFTs, and the outputs that
+// hold them.  The category's String is in the byte order of transaction IDs.
 type TokenBalance struct {
 	Category chainhash.Hash
 	Amount   uint64
 	NFTs     []TokenNFT
+	Outputs  []TokenOutput
 }
 
 // TokenNFT is an NFT in an unspent output.
@@ -1813,9 +1814,17 @@ type TokenNFT struct {
 	Commitment []byte
 }
 
+// TokenOutput is an unspent output that holds tokens: its outpoint, the BCH it
+// carries, and all of its tokens.
+type TokenOutput struct {
+	OutPoint wire.OutPoint
+	Amount   bchutil.Amount
+	Token    wire.TokenData
+}
+
 // TokenBalances returns the tokens in the account's unspent outputs that have
-// at least confirms confirmations, by category, sorted by category.  The NFTs of
-// a category are sorted by outpoint.
+// at least confirms confirmations, by category, sorted by category.  The NFTs
+// and the outputs of a category are sorted by outpoint.
 func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, error) {
 	byCategory := make(map[chainhash.Hash]*TokenBalance)
 	tip := w.ChainTip()
@@ -1860,6 +1869,11 @@ func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, 
 					Commitment: token.Commitment,
 				})
 			}
+			bal.Outputs = append(bal.Outputs, TokenOutput{
+				OutPoint: output.OutPoint,
+				Amount:   output.Amount,
+				Token:    *token,
+			})
 		}
 		return nil
 	})
@@ -1871,11 +1885,11 @@ func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, 
 	for _, bal := range byCategory {
 		nfts := bal.NFTs
 		sort.Slice(nfts, func(i, j int) bool {
-			a, b := &nfts[i].OutPoint, &nfts[j].OutPoint
-			if c := bytes.Compare(a.Hash[:], b.Hash[:]); c != 0 {
-				return c < 0
-			}
-			return a.Index < b.Index
+			return outPointLess(&nfts[i].OutPoint, &nfts[j].OutPoint)
+		})
+		outputs := bal.Outputs
+		sort.Slice(outputs, func(i, j int) bool {
+			return outPointLess(&outputs[i].OutPoint, &outputs[j].OutPoint)
 		})
 		bals = append(bals, *bal)
 	}
@@ -1883,6 +1897,14 @@ func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, 
 		return bals[i].Category.String() < bals[j].Category.String()
 	})
 	return bals, nil
+}
+
+// outPointLess orders outpoints by the bytes of their hashes, then by index.
+func outPointLess(a, b *wire.OutPoint) bool {
+	if c := bytes.Compare(a.Hash[:], b.Hash[:]); c != 0 {
+		return c < 0
+	}
+	return a.Index < b.Index
 }
 
 // CurrentAddress gets the most recently requested Bitcoin payment address

@@ -43,8 +43,9 @@ This release keeps the wallet from spending an output again that a transaction i
 
 ### RPC & gRPC
 
+- `TokenBalances` also lists the unspent outputs that hold each category, with the BCH each carries and all of its tokens, for a client to tell how much BCH its tokens hold and to pick the outputs it spends. The byte orders are documented: a category is hex in the order of transaction IDs, and a transaction hash is in the order of the wire. The gRPC API version is 2.3.0.
 - The gRPC server's flow-control windows are fixed at 1 MiB, so it no longer pings a client after each request. grpc-java's OkHttp transport, which Android apps use, closed its connection after answering 10,000 of those pings, which ended the client's notification streams, so the Android app's balance stopped changing after about five and a half hours.
-- `ParsePaymentRequest` checks a BIP70 payment request that a client has as a file, as a merchant can hand one over with the `application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest` checks one that it downloads, and returns the same response. The gRPC API version is 2.2.0.
+- `ParsePaymentRequest` checks a BIP70 payment request that a client has as a file, as a merchant can hand one over with the `application/bitcoincash-paymentrequest` type, as `DownloadPaymentRequest` checks one that it downloads, and returns the same response.
 - A BIP70 payment request larger than 50,000 bytes, the limit that BIP70 sets, is refused. `DownloadPaymentRequest` read all of one, however large.
 - An unsigned BIP70 payment request, which BIP70 has wallets accept, is accepted with an empty `pay_to_name`, as a request that names no merchant and is no more trustworthy than a plain address. One signed with `x509+sha1` is still refused, since SHA-1 signatures can be forged.
 - When `DownloadPaymentRequest` gets no payment request, it returns the error of the protocol the merchant speaks, the JSON Payment Protocol or BIP70, rather than the errors of both, and the error of a merchant that can't be reached once. It returns both only when the two requests failed at the same step, as when the merchant refused both.

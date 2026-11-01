@@ -213,15 +213,23 @@ message TokenBalancesRequest {
 }
 message TokenBalancesResponse {
 	message NFT {
-		bytes transaction_hash = 1;
+		bytes transaction_hash = 1; // In the byte order of the wire, the reverse of a transaction ID's.
 		uint32 output_index = 2;
 		TokenData.Capability capability = 3;
 		bytes commitment = 4;
+	}
+	// An unspent output that holds tokens of the category.
+	message Output {
+		bytes transaction_hash = 1; // In the byte order of the wire, the reverse of a transaction ID's.
+		uint32 output_index = 2;
+		int64 satoshis = 3; // The BCH the output carries.
+		TokenData token = 4; // All the output's tokens.
 	}
 	message Balance {
 		string category = 1; // Hex, in the byte order of transaction IDs.
 		uint64 amount = 2; // Fungible amount.
 		repeated NFT nfts = 3;
+		repeated Output outputs = 4; // Sorted by outpoint.
 	}
 	repeated Balance balances = 1; // Sorted by category.
 }
