@@ -16,8 +16,8 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
-github.com/gcash/bchd v0.22.5-0.20261105020735-bb13df8168a3 h1:p1fsL0yzfuLrzxKG7veZXZlZc9nsBDhpq/y+7a8aBHA=
-github.com/gcash/bchd v0.22.5-0.20261105020735-bb13df8168a3/go.mod h1:YX6X9xM89gexmUckgFPcnXlR8PLFMmhssCdswDh6VXk=
+github.com/gcash/bchd v0.22.5-0.20261105074815-17b53fb21205 h1://9Hntf8UApk3vKOR0i0OGL9S4saAYhCjaRueGmyCow=
+github.com/gcash/bchd v0.22.5-0.20261105074815-17b53fb21205/go.mod h1:YX6X9xM89gexmUckgFPcnXlR8PLFMmhssCdswDh6VXk=
 github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f h1:0SX+ItkFDQDEIAmrukIjt0yU1fImY2abRrWtYyAKov8=
 github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f/go.mod h1:PpfmXTLfjRp7Tf6v/DCGTRXHz+VFbiRcsoUxi7HvwlQ=
 github.com/gcash/bchutil v0.0.0-20261028060706-e320ade87427 h1:yn3A7reRZjmCsNOg0oWPFQIBPNOPqBLvz/DLy3DkE4s=
@@ -28,8 +28,8 @@ github.com/gcash/goleveldb v1.1.0 h1:ea7gh9xqgAD+llDYhP7ep7daQxLMlcr1zaFTENCygxE
 github.com/gcash/goleveldb v1.1.0/go.mod h1:5iJUbCHZlp/Gm54CgQz0uYPSX5EMGStfnEzxRiQ3l3Y=
 github.com/gcash/goslp v1.0.0 h1:CUaw4OixaLjJGws1x/lW+56d2QwoABlrUhXG7ssadDw=
 github.com/gcash/goslp v1.0.0/go.mod h1:9hXiB3vl/4agpprXS0i/i2WV7e7Yk9BRT7ThXl5eAM4=
-github.com/gcash/neutrino v0.0.0-20261105021920-d4235af7507d h1:HxwQ5jai131BR9tBYZdKpNk34B7H9as8BkLKdpUJ7Ps=
-github.com/gcash/neutrino v0.0.0-20261105021920-d4235af7507d/go.mod h1:3EbiUeEDDRaN1VIovnBf8Tpr4+4+Dt8YrruBdu43qos=
+github.com/gcash/neutrino v0.0.0-20261105081902-ce21d931c3f3 h1:dWDMP0femk4+mbTdhuYzrds4ihbjSqcUL8QqLD2WSpI=
+github.com/gcash/neutrino v0.0.0-20261105081902-ce21d931c3f3/go.mod h1:3EbiUeEDDRaN1VIovnBf8Tpr4+4+Dt8YrruBdu43qos=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
 github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
 github.com/golang/snappy v1.0.0 h1:Oy607GVXHs7RtbggtPBnr2RmDArIsAefDwvrdWvRhGs=
