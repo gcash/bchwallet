@@ -13,6 +13,7 @@ import (
 
 	"github.com/gcash/bchd/rpcclient"
 	"github.com/gcash/bchlog"
+	"github.com/gcash/bchwallet/bcmr"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
 	"github.com/gcash/bchwallet/rpc/rpcserver"
@@ -62,6 +63,7 @@ var (
 	txmgrLog     = backendLog.Logger("TMGR")
 	chainLog     = backendLog.Logger("CHNS")
 	grpcLog      = backendLog.Logger("GRPC")
+	bcmrLog      = backendLog.Logger("BCMR")
 	legacyRPCLog = backendLog.Logger("RPCS")
 	bchnLog      = backendLog.Logger("BCHN")
 )
@@ -73,6 +75,7 @@ func init() {
 	chain.UseLogger(chainLog)
 	rpcclient.UseLogger(chainLog)
 	rpcserver.UseLogger(grpcLog)
+	bcmr.UseLogger(bcmrLog)
 	legacyrpc.UseLogger(legacyRPCLog)
 	neutrino.UseLogger(bchnLog)
 }
@@ -84,6 +87,7 @@ var subsystemLoggers = map[string]bchlog.Logger{
 	"TMGR": txmgrLog,
 	"CHNS": chainLog,
 	"GRPC": grpcLog,
+	"BCMR": bcmrLog,
 	"RPCS": legacyRPCLog,
 	"BCHN": bchnLog,
 }

@@ -18,6 +18,7 @@ package rpcserver
 import (
 	"bytes"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,7 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
+	"github.com/gcash/bchwallet/bcmr"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/internal/cfgutil"
 	"github.com/gcash/bchwallet/internal/helpers"
@@ -533,6 +535,87 @@ func (s *walletServer) TokenBalances(ctx context.Context, req *pb.TokenBalancesR
 		return nil, translateError(err)
 	}
 	return &pb.TokenBalancesResponse{Balances: marshalTokenBalances(bals)}, nil
+}
+
+func (s *walletServer) TokenMetadata(ctx context.Context, req *pb.TokenMetadataRequest) (
+	*pb.TokenMetadataResponse, error) {
+
+	categories := make([]chainhash.Hash, len(req.Categories))
+	for i, category := range req.Categories {
+		hash, err := chainhash.NewHashFromStr(category)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "category: %v", err)
+		}
+		categories[i] = *hash
+	}
+
+	// With no chain client there's nothing to say yet, which isn't an error.
+	manager := s.wallet.Load().TokenMetadata()
+	if manager == nil {
+		return &pb.TokenMetadataResponse{}, nil
+	}
+	return &pb.TokenMetadataResponse{
+		Tokens: marshalTokenInfos(manager.Tokens(categories), req.IncludeNftTypes),
+	}, nil
+}
+
+func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.RefreshTokenMetadataRequest) (
+	*pb.RefreshTokenMetadataResponse, error) {
+
+	category, err := chainhash.NewHashFromStr(req.Category)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "category: %v", err)
+	}
+	manager := s.wallet.Load().TokenMetadata()
+	if manager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "the wallet has no chain client")
+	}
+	manager.Refresh(*category)
+	return &pb.RefreshTokenMetadataResponse{}, nil
+}
+
+// marshalTokenInfos returns the tokens as the API has them.
+func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadataResponse_Token {
+	tokens := make([]*pb.TokenMetadataResponse_Token, len(infos))
+	for i := range infos {
+		info := &infos[i]
+		token := &pb.TokenMetadataResponse_Token{
+			Category:      info.Category.String(),
+			Status:        pb.TokenMetadataResponse_Status(info.Status),
+			Known:         info.Known,
+			LoadsByItself: info.InHints,
+			LookAlike:     info.LookAlike,
+			Burned:        info.Burned,
+
+			PublicationStale: info.Stale,
+		}
+		if m := info.Metadata; m != nil {
+			token.HasMetadata = true
+			token.Name, token.Description, token.Symbol = m.Name, m.Description, m.Symbol
+			token.Decimals = uint32(m.Decimals)
+			token.IconUri, token.WebUri = m.IconURI, m.WebURI
+			if !nftTypes {
+				tokens[i] = token
+				continue
+			}
+			commitments := make([]string, 0, len(m.NFTTypes))
+			for commitment := range m.NFTTypes {
+				commitments = append(commitments, commitment)
+			}
+			sort.Strings(commitments)
+			for _, commitment := range commitments {
+				nft := m.NFTTypes[commitment]
+				token.NftTypes = append(token.NftTypes, &pb.TokenMetadataResponse_NftType{
+					Commitment:  commitment,
+					Name:        nft.Name,
+					Description: nft.Description,
+					IconUri:     nft.IconURI,
+				})
+			}
+		}
+		tokens[i] = token
+	}
+	return tokens
 }
 
 // confirmed checks whether a transaction at height txHeight has met minconf

@@ -1,0 +1,135 @@
+package boot
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
+
+	chainbcmr "github.com/gcash/bchd/bcmr"
+	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchwallet/bcmr"
+	"github.com/gcash/bchwallet/chain"
+	"github.com/gcash/bchwallet/wallet"
+	"github.com/gcash/neutrino"
+	"golang.org/x/net/proxy"
+)
+
+// spvSource adapts the neutrino client for the SPV backend.
+type spvSource struct {
+	*chain.NeutrinoClient
+}
+
+// SearchSpends asks neutrino.
+func (s spvSource) SearchSpends(outpoints []wire.OutPoint, from, to int32,
+	found func(bcmr.SpendFound) []wire.OutPoint, progress func(height int32),
+	quit <-chan struct{}) (int32, error) {
+
+	return s.CS.SearchSpends(outpoints, from, to, func(spend neutrino.FoundSpend) []wire.OutPoint {
+		return found(bcmr.SpendFound{
+			OutPoint:  spend.OutPoint,
+			Tx:        spend.SpendingTx,
+			Height:    spend.Height,
+			BlockHash: spend.BlockHash,
+		})
+	}, progress, quit)
+}
+
+// proxiedDial returns the connection for registries when the wallet goes through
+// a proxy, or nil for a direct one.
+func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn, error), error) {
+	if cfg.Proxy == "" {
+		return nil, nil
+	}
+	var auth *proxy.Auth
+	if cfg.ProxyUser != "" && cfg.ProxyPass != "" {
+		auth = &proxy.Auth{User: cfg.ProxyUser, Password: cfg.ProxyPass}
+	}
+	dialer, err := proxy.SOCKS5("tcp", cfg.Proxy, auth, proxy.Direct)
+	if err != nil {
+		return nil, err
+	}
+	return func(_ context.Context, network, address string) (net.Conn, error) {
+		return dialer.Dial(network, address)
+	}, nil
+}
+
+// autoLoad returns what loads by itself: the tokens in the table, with either
+// backend, as a token a stranger sends could otherwise have the wallet reach a
+// host of their choosing.  Any other token waits for the user to ask.
+func autoLoad(hints *chainbcmr.Hints) func(chainhash.Hash) bool {
+	return func(category chainhash.Hash) bool {
+		if hints == nil {
+			return false
+		}
+		_, ok := hints.Lookup(category)
+		return ok
+	}
+}
+
+// startTokenMetadata starts following the wallet's tokens with the chain
+// client.  The wallet works without it, so a failure only turns it off.
+func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager, error) {
+	store, err := bcmr.NewStore(w.Database())
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[chainhash.Hash]*bcmr.Metadata)
+	if cfg.BcmrKnown != "" {
+		data, err := os.ReadFile(cfg.BcmrKnown)
+		if err != nil {
+			return nil, err
+		}
+		known, err = bcmr.ParseKnownList(data, time.Now())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	dial, err := proxiedDial()
+	if err != nil {
+		return nil, err
+	}
+	config := bcmr.Config{
+		Store: store,
+		Fetcher: bcmr.NewFetcher(cfg.BcmrGateways,
+			filepath.Join(networkDir(cfg.AppDataDir.Value, activeNet.Params), "bcmr-registries"), dial),
+		Known: known,
+		Ready: client.IsCurrent,
+		Tip: func() (*chainhash.Hash, error) {
+			hash, _, err := client.GetBestBlock()
+			return hash, err
+		},
+	}
+	var hints *chainbcmr.Hints
+	if cfg.BcmrHints != "" {
+		data, err := os.ReadFile(cfg.BcmrHints)
+		if err != nil {
+			return nil, err
+		}
+		hints, err = chainbcmr.ParseHints(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	config.AutoLoad = autoLoad(hints)
+	switch c := client.(type) {
+	case *chain.NeutrinoClient:
+		config.Backend = bcmr.NewSPVBackend(spvSource{c}, hints)
+	case *chain.RPCClient:
+		config.Backend = bcmr.NewFullNodeBackend(c)
+	default:
+		return nil, fmt.Errorf("no token metadata with %s", client.BackEnd())
+	}
+
+	manager, err := bcmr.NewManager(config)
+	if err != nil {
+		return nil, err
+	}
+	manager.Start()
+	w.SetTokenMetadata(manager)
+	return manager, nil
+}

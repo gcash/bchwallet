@@ -24,6 +24,8 @@ service WalletService {
 	rpc Accounts (AccountsRequest) returns (AccountsResponse);
 	rpc Balance (BalanceRequest) returns (BalanceResponse);
 	rpc TokenBalances (TokenBalancesRequest) returns (TokenBalancesResponse);
+	rpc TokenMetadata (TokenMetadataRequest) returns (TokenMetadataResponse);
+	rpc RefreshTokenMetadata (RefreshTokenMetadataRequest) returns (RefreshTokenMetadataResponse);
 	rpc CurrentAddress (CurrentAddressRequest) returns (CurrentAddressResponse);
 	rpc GetTransactions (GetTransactionsRequest) returns (GetTransactionsResponse);
 
@@ -205,6 +207,48 @@ message BalanceResponse {
 	int64 total = 1;
 	int64 spendable = 2;
 	int64 immature_reward = 3;
+}
+
+message TokenMetadataRequest {
+	repeated string categories = 1; // Hex, in the byte order of transaction IDs.
+	bool include_nft_types = 2; // Ask for few tokens with this, as a type list can be large.
+}
+message TokenMetadataResponse {
+	enum Status {
+		SEARCHING = 0; // Not followed to the tip yet: what shows isn't verified.
+		VERIFIED = 1; // Followed to the tip.
+		UNAVAILABLE = 2; // A full node without its BCMR index.
+		FAILED = 3; // The identity wasn't where it had to be.
+	}
+	message NftType {
+		string commitment = 1; // Hex.
+		string name = 2;
+		string description = 3;
+		string icon_uri = 4;
+	}
+	message Token {
+		string category = 1; // Hex, in the byte order of transaction IDs.
+		bool has_metadata = 2; // Whether the fields below hold anything.
+		string name = 3;
+		string description = 4;
+		string symbol = 5;
+		uint32 decimals = 6;
+		string icon_uri = 7;
+		string web_uri = 8;
+		Status status = 9;
+		bool known = 10; // On the Known list.
+		bool loads_by_itself = 11; // Otherwise it takes RefreshTokenMetadata.
+		bool look_alike = 12; // Has the name or symbol of a Known token.
+		bool burned = 13; // Its identity ended, so its metadata can't change.
+		repeated NftType nft_types = 14; // Sorted by commitment, with include_nft_types.
+		bool publication_stale = 15; // The publication isn't on the head.
+	}
+	repeated Token tokens = 1; // In the order of the request.
+}
+message RefreshTokenMetadataRequest {
+	string category = 1; // Hex, in the byte order of transaction IDs.
+}
+message RefreshTokenMetadataResponse {
 }
 
 message TokenBalancesRequest {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
+	"github.com/gcash/bchwallet/bcmr"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet/txauthor"
@@ -78,6 +80,9 @@ var (
 // complete wallet.  It contains the Armory-style key store
 // addresses and keys),
 type Wallet struct {
+	// tokenMetadata keeps the metadata of the wallet's tokens.
+	tokenMetadata atomic.Pointer[bcmr.Manager]
+
 	publicPassphrase []byte
 
 	// Data stores
@@ -266,6 +271,17 @@ func (w *Wallet) requireChainClient() (chain.Interface, error) {
 		return nil, errors.New("blockchain RPC is inactive")
 	}
 	return chainClient, nil
+}
+
+// TokenMetadata returns what keeps the metadata of the wallet's tokens, or nil
+// while there's no chain client.
+func (w *Wallet) TokenMetadata() *bcmr.Manager {
+	return w.tokenMetadata.Load()
+}
+
+// SetTokenMetadata sets what TokenMetadata returns.
+func (w *Wallet) SetTokenMetadata(manager *bcmr.Manager) {
+	w.tokenMetadata.Store(manager)
 }
 
 // ChainClient returns the optional consensus RPC client associated with the
