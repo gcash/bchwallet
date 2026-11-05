@@ -26,6 +26,7 @@ service WalletService {
 	rpc TokenBalances (TokenBalancesRequest) returns (TokenBalancesResponse);
 	rpc TokenMetadata (TokenMetadataRequest) returns (TokenMetadataResponse);
 	rpc RefreshTokenMetadata (RefreshTokenMetadataRequest) returns (RefreshTokenMetadataResponse);
+	rpc TokenIcon (TokenIconRequest) returns (TokenIconResponse);
 	rpc CurrentAddress (CurrentAddressRequest) returns (CurrentAddressResponse);
 	rpc GetTransactions (GetTransactionsRequest) returns (GetTransactionsResponse);
 
@@ -249,6 +250,13 @@ message RefreshTokenMetadataRequest {
 	string category = 1; // Hex, in the byte order of transaction IDs.
 }
 message RefreshTokenMetadataResponse {
+}
+
+message TokenIconRequest {
+	string uri = 1; // An icon_uri of TokenMetadata.
+}
+message TokenIconResponse {
+	bytes data = 1; // The image, whose format the host decides.
 }
 
 message TokenBalancesRequest {

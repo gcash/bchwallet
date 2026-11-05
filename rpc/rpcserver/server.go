@@ -574,6 +574,20 @@ func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.Refresh
 	return &pb.RefreshTokenMetadataResponse{}, nil
 }
 
+func (s *walletServer) TokenIcon(ctx context.Context, req *pb.TokenIconRequest) (
+	*pb.TokenIconResponse, error) {
+
+	manager := s.wallet.Load().TokenMetadata()
+	if manager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "the wallet has no chain client")
+	}
+	data, err := manager.Icon(ctx, req.Uri)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "%v", err)
+	}
+	return &pb.TokenIconResponse{Data: data}, nil
+}
+
 // marshalTokenInfos returns the tokens as the API has them.
 func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadataResponse_Token {
 	tokens := make([]*pb.TokenMetadataResponse_Token, len(infos))
