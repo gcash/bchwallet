@@ -1732,6 +1732,7 @@ func (w *Wallet) AccountAddresses(account uint32) (addrs []bchutil.Address, err 
 // CalculateBalance sums the amounts of all unspent transaction
 // outputs to addresses of a wallet and returns the balance.
 //
+// Outputs that carry CashTokens don't count, as the wallet doesn't spend them.
 // If confirmations is 0, all UTXOs, even those not present in a
 // block (height -1), will be used to get the balance.  Otherwise,
 // a UTXO must be in a block.  If confirmations is 1 or greater,
@@ -1742,9 +1743,22 @@ func (w *Wallet) CalculateBalance(confirms int32) (bchutil.Amount, error) {
 	tip := w.ChainTip()
 	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		txmgrNs := tx.ReadBucket(wtxmgrNamespaceKey)
-		var err error
-		balance, err = w.TxStore.Balance(txmgrNs, confirms, tip.Height)
-		return err
+		unspent, err := w.TxStore.UnspentOutputs(txmgrNs)
+		if err != nil {
+			return err
+		}
+		for i := range unspent {
+			output := &unspent[i]
+			if output.HasTokens() || !confirmed(confirms, output.Height, tip.Height) {
+				continue
+			}
+			if output.FromCoinBase && !confirmed(int32(w.chainParams.CoinbaseMaturity),
+				output.Height, tip.Height) {
+				continue
+			}
+			balance += output.Amount
+		}
+		return nil
 	})
 	return balance, err
 }
@@ -2795,7 +2809,7 @@ func (w *Wallet) AccountBalances(scope waddrmgr.KeyScope,
 		}
 		for i := range unspentOutputs {
 			output := &unspentOutputs[i]
-			if !confirmed(requiredConfs, output.Height, tip.Height) {
+			if output.HasTokens() || !confirmed(requiredConfs, output.Height, tip.Height) {
 				continue
 			}
 			if output.FromCoinBase && !confirmed(int32(w.chainParams.CoinbaseMaturity),

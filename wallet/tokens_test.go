@@ -1228,3 +1228,29 @@ func TestTokenBalancesLeavesOutWhatIsntTheWallets(t *testing.T) {
 		t.Fatalf("%+v", bals)
 	}
 }
+
+// TestBalancesLeaveOutTokens ensures the balances the legacy RPC gives count only
+// what the wallet can spend.
+func TestBalancesLeaveOutTokens(t *testing.T) {
+	w := newRegtestWallet(t)
+	setSyncedTo(t, w, testBlock.Height)
+	script := walletScript(t, w)
+	addCredit(t, w, wire.NewTxOut(5000, script, wire.TokenData{}))
+	addCredit(t, w, wire.NewTxOut(1000, script,
+		wire.TokenData{CategoryID: [32]byte{9}, Amount: 5, BitField: wire.HAS_AMOUNT}))
+
+	balance, err := w.CalculateBalance(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if balance != 5000 {
+		t.Fatalf("balance %v", balance)
+	}
+	results, err := w.AccountBalances(waddrmgr.KeyScopeBIP0044, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].AccountBalance != 5000 {
+		t.Fatalf("%+v", results)
+	}
+}
