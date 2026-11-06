@@ -176,7 +176,7 @@ func TestParseKnownList(t *testing.T) {
 func TestParseRegistryNFTTypesBounded(t *testing.T) {
 	var types strings.Builder
 	long := strings.Repeat("d", maxDescriptionRunes)
-	for i := range 2000 {
+	for i := range 10000 {
 		if i > 0 {
 			types.WriteString(",")
 		}
@@ -188,7 +188,7 @@ func TestParseRegistryNFTTypesBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.NFTTypes) == 0 || len(m.NFTTypes) >= 2000 {
+	if len(m.NFTTypes) == 0 || len(m.NFTTypes) >= 10000 {
 		t.Fatalf("%d NFT types", len(m.NFTTypes))
 	}
 	if _, ok := m.NFTTypes["0000"]; !ok {

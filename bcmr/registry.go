@@ -27,9 +27,10 @@ const (
 	// maxURILen bounds a URI of a registry.
 	maxURILen = 2048
 
-	// maxNFTTypesSize bounds the size of the NFT types kept from a registry,
-	// which is how a registry could otherwise fill a reply to the app.
-	maxNFTTypesSize = 1 << 20
+	// maxNFTTypesSize bounds the size of the NFT types kept from a registry.
+	// It's the size of the largest registry, so that no collection loses
+	// names, and a reply to the app has to allow for it.
+	maxNFTTypesSize = maxRegistrySize
 )
 
 // symbolPattern is the CHIP's rule for a token's symbol.

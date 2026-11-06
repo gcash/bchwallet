@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	// maxRegistrySize bounds a download.  The largest registry in use is
-	// about 5 MB.
-	maxRegistrySize = 8 << 20
+	// maxRegistrySize bounds a download.  The largest registry in use, of a
+	// collection of 10,000 NFTs, is about 10 MB.
+	maxRegistrySize = 16 << 20
 
-	// fetchTimeout bounds one download.
-	fetchTimeout = 30 * time.Second
+	// fetchTimeout bounds one download, which has to leave a slow connection
+	// time for the largest registry.
+	fetchTimeout = 5 * time.Minute
 
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
