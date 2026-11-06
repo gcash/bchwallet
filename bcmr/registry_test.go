@@ -153,6 +153,20 @@ func TestParseRegistrySkipsParsableNFTs(t *testing.T) {
 	}
 }
 
+// TestParseRegistryEmptyBytecode ensures a collection with an empty bytecode is
+// sequential, as Gambling Apes Club and Punk Apes Club have it.
+func TestParseRegistryEmptyBytecode(t *testing.T) {
+	data := testRegistry(`{"name":"T","token":{"category":"%s","symbol":"T","nfts":{"parse":
+		{"bytecode":"","types":{"0001":{"name":"One"}}}}}}`)
+	m, err := ParseRegistry(data, testCategory, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.NFTTypes["0001"].Name != "One" {
+		t.Fatalf("%+v", m.NFTTypes)
+	}
+}
+
 // TestParseKnownList ensures each usable token of a list is read under its
 // category, and the rest are left out.
 func TestParseKnownList(t *testing.T) {

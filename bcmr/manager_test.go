@@ -602,3 +602,44 @@ func TestManagerOldFailure(t *testing.T) {
 		t.Fatalf("%+v", info)
 	}
 }
+
+// TestManagerNewParser ensures a registry read by an older parser is read again.
+func TestManagerNewParser(t *testing.T) {
+	category := chainhash.Hash{0x37}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	hits := f.hits.Load()
+	state.RegistryParser = 0
+	state.Metadata.Name = "Old"
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits+1 || state.Metadata.Name != "Coin" || state.RegistryParser != registryParser {
+		t.Fatalf("%d hits, %+v", f.hits.Load()-hits, state.Metadata)
+	}
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits+1 {
+		t.Fatal("read again")
+	}
+}
+
+// TestManagerReadAgainKeepsWhatShows ensures a registry that a new parser can't
+// use leaves a token as it was, and is tried again.
+func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
+	category := chainhash.Hash{0x38}
+	f := newManagerFixture(t, category, []byte(`{"identities":{}}`), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	state.RegistryHash = f.backend.pubs[category].Hash
+	state.Metadata = &Metadata{Name: "Shown", Symbol: "S"}
+	state.RegistryFailed, state.RegistryParser = false, 0
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if state.Metadata == nil || state.RegistryFailed || state.RegistryParser == registryParser {
+		t.Fatalf("%+v", state)
+	}
+}

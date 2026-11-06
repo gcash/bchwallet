@@ -196,7 +196,8 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 	if displayable(snapshot.Description, maxDescriptionRunes) {
 		metadata.Description = snapshot.Description
 	}
-	if nfts := token.NFTs; nfts != nil && nfts.Parse.Bytecode == nil {
+	// An empty bytecode parses nothing, so it's as sequential as none.
+	if nfts := token.NFTs; nfts != nil && (nfts.Parse.Bytecode == nil || *nfts.Parse.Bytecode == "") {
 		commitments := make([]string, 0, len(nfts.Parse.Types))
 		for commitment := range nfts.Parse.Types {
 			commitments = append(commitments, commitment)

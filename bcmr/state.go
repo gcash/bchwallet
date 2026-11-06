@@ -83,6 +83,9 @@ type State struct {
 	RegistryChanged bool
 	RegistryRead    time.Time
 
+	// RegistryParser is the registryParser that read Metadata.
+	RegistryParser int
+
 	// RegistryFailed reports that there's no metadata to show because the
 	// publication's registry couldn't be read or had nothing to use.
 	RegistryFailed bool

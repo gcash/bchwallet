@@ -18,6 +18,11 @@ const (
 	// maxRetryInterval is the longest a registry that keeps failing waits.
 	maxRetryInterval = 24 * time.Hour
 
+	// registryParser numbers what the wallet reads from a registry.  Raising it
+	// has the registries read again, as what was kept from them can't show
+	// what the parser has learned since.
+	registryParser = 1
+
 	// changedRegistryInterval is how often a registry that isn't the published
 	// one is read again, as a collection still being minted adds to it.
 	changedRegistryInterval = 24 * time.Hour
@@ -324,7 +329,7 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 		}
 		same := pub.Hash == state.RegistryHash && state.RegistryHash != [32]byte{}
 		_, reread := m.reread[state.Category]
-		if same && !reread && (!state.RegistryChanged ||
+		if same && !reread && state.RegistryParser == registryParser && (!state.RegistryChanged ||
 			time.Since(state.RegistryRead) < changedRegistryInterval) {
 
 			// A state from before failures were kept has nothing to show.
@@ -356,6 +361,12 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			}
 		}
 
+		// A file that can't be used on a second reading loses nothing that
+		// shows, as a parser that changed could be at fault.
+		if err == nil && metadata == nil && same && state.Metadata != nil {
+			err = ErrNoMetadata
+		}
+
 		// Only a collection adds to its registry as it goes, so a file that
 		// isn't the published one counts for nothing else.  Its decimals
 		// don't count either, as they would change how amounts read.
@@ -381,6 +392,7 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 		delete(m.reread, state.Category)
 		state.RegistryHash, state.Metadata = pub.Hash, metadata
 		state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
+		state.RegistryParser = registryParser
 		state.RegistryRead = time.Time{}
 		if changed {
 			state.RegistryRead = time.Now()
