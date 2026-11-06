@@ -181,7 +181,9 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 
 // locations returns the URLs to try for a URI, by the CHIP: no scheme means
 // https, a domain alone means its well-known path, and ipfs goes through the
-// gateways.  Any other scheme gives none.
+// gateways.  Any other scheme gives none.  A URL with an ipfs path is on a
+// gateway of the publisher's choice, which can close, so the wallet's gateways
+// follow it.
 func (f *Fetcher) locations(uri string) []string {
 	if len(uri) > maxURILen || !displayable(uri, maxURILen) {
 		return nil
@@ -190,11 +192,7 @@ func (f *Fetcher) locations(uri string) []string {
 		if rest == "" {
 			return nil
 		}
-		locations := make([]string, 0, len(f.Gateways))
-		for _, gateway := range f.Gateways {
-			locations = append(locations, strings.TrimRight(gateway, "/")+"/ipfs/"+rest)
-		}
-		return locations
+		return f.gatewayLocations(rest)
 	}
 	if strings.Contains(uri, "://") && !strings.HasPrefix(uri, "https://") {
 		return nil
@@ -210,7 +208,32 @@ func (f *Fetcher) locations(uri string) []string {
 	if parsed.Path == "" {
 		parsed.Path = wellKnownPath
 	}
-	return []string{parsed.String()}
+	locations := []string{parsed.String()}
+	if path := ipfsPath(parsed); path != "" {
+		locations = append(locations, f.gatewayLocations(path)...)
+	}
+	return locations
+}
+
+// ipfsPath returns the ipfs path a URL on a gateway serves, as
+// host/ipfs/<cid>/file or <cid>.ipfs.host/file have it, or else nothing.
+func ipfsPath(location *url.URL) string {
+	if path, ok := strings.CutPrefix(location.Path, "/ipfs/"); ok {
+		return path
+	}
+	if cid, _, ok := strings.Cut(strings.ToLower(location.Hostname()), ".ipfs."); ok && cid != "" {
+		return cid + location.Path
+	}
+	return ""
+}
+
+// gatewayLocations returns the URLs of an ipfs path on the gateways.
+func (f *Fetcher) gatewayLocations(path string) []string {
+	locations := make([]string, 0, len(f.Gateways))
+	for _, gateway := range f.Gateways {
+		locations = append(locations, strings.TrimRight(gateway, "/")+"/ipfs/"+path)
+	}
+	return locations
 }
 
 // download reads a URL, up to the size limit.
