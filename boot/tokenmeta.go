@@ -52,7 +52,13 @@ func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn
 	if err != nil {
 		return nil, err
 	}
-	return func(_ context.Context, network, address string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		if err := bcmr.RefuseLocal(address); err != nil {
+			return nil, err
+		}
+		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+			return contextDialer.DialContext(ctx, network, address)
+		}
 		return dialer.Dial(network, address)
 	}, nil
 }

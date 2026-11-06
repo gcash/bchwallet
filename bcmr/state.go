@@ -195,11 +195,13 @@ func NewStore(db walletdb.DB) (*Store, error) {
 // writes a map in a random order, and they can be megabytes.
 func typesVersion(state *State) [sha256.Size]byte {
 	types := 0
+	var nextSnapshot int64
 	if state.Metadata != nil {
 		types = len(state.Metadata.NFTTypes)
+		nextSnapshot = state.Metadata.NextSnapshot.UnixNano()
 	}
-	version := fmt.Sprintf("%x %d %d %d", state.RegistryHash, state.RegistryRead.UnixNano(),
-		state.RegistryParser, types)
+	version := fmt.Sprintf("%x %d %d %d %d", state.RegistryHash, state.RegistryRead.UnixNano(),
+		state.RegistryParser, types, nextSnapshot)
 	return sha256.Sum256([]byte(version))
 }
 

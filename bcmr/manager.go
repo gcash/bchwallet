@@ -21,7 +21,7 @@ const (
 	// registryParser numbers what the wallet reads from a registry.  Raising it
 	// has the registries read again, as what was kept from them can't show
 	// what the parser has learned since.
-	registryParser = 2
+	registryParser = 3
 
 	// changedRegistryInterval is how often a registry that isn't the published
 	// one is read again, as a collection still being minted adds to it.
@@ -327,10 +327,13 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			}
 			continue
 		}
-		same := pub.Hash == state.RegistryHash && state.RegistryHash != [32]byte{}
+		// A hash of zeros is what nothing read yet has too, so it takes what
+		// was read to tell them apart.
+		read := state.RegistryHash != [32]byte{} || state.Metadata != nil || state.RegistryFailed
+		same := pub.Hash == state.RegistryHash && read
 		_, reread := m.reread[state.Category]
-		if same && !reread && state.RegistryParser == registryParser && (!state.RegistryChanged ||
-			time.Since(state.RegistryRead) < changedRegistryInterval) {
+		if same && !reread && state.RegistryParser == registryParser && !snapshotDue(state) &&
+			(!state.RegistryChanged || time.Since(state.RegistryRead) < changedRegistryInterval) {
 
 			// A state from before failures were kept has nothing to show.
 			if state.Metadata == nil && !state.RegistryFailed {
@@ -374,9 +377,16 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 		// isn't the published one counts for nothing else.  Its decimals
 		// don't count either, as they would change how amounts read.
 		if changed {
-			if metadata == nil || len(metadata.NFTTypes) == 0 {
+			switch {
+			case metadata == nil || len(metadata.NFTTypes) == 0:
 				err, metadata = fmt.Errorf("%w, for a token that isn't a collection", err), nil
-			} else {
+
+			// What was read of the published file stays, when reading it
+			// again gets another.
+			case same && state.Metadata != nil && !state.RegistryChanged:
+				metadata = nil
+
+			default:
 				err = nil
 				metadata.Decimals = 0
 			}
@@ -402,6 +412,12 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 		}
 		m.save(state)
 	}
+}
+
+// snapshotDue returns whether a snapshot that was still to come has taken over.
+func snapshotDue(state *State) bool {
+	return state.Metadata != nil && !state.Metadata.NextSnapshot.IsZero() &&
+		!time.Now().Before(state.Metadata.NextSnapshot)
 }
 
 // retryWait returns how long a registry waits after failing tries times.
@@ -453,12 +469,25 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 
 // looksKnown returns whether metadata has the name or symbol of a Known token.
 func (m *Manager) looksKnown(metadata *Metadata) bool {
+	symbol := baseSymbol(metadata.Symbol)
+	if reservedSymbols[symbol] {
+		return true
+	}
 	for _, known := range m.cfg.Known {
-		if strings.EqualFold(known.Name, metadata.Name) ||
-			strings.EqualFold(known.Symbol, metadata.Symbol) {
-
+		if strings.EqualFold(known.Name, metadata.Name) || baseSymbol(known.Symbol) == symbol {
 			return true
 		}
 	}
 	return false
+}
+
+// reservedSymbols are the base symbols no token can have for itself, which the
+// CHIP has wallets keep, as an amount of them reads as money.
+var reservedSymbols = map[string]bool{"BCH": true, "XBCH": true, "BTC": true, "XBT": true}
+
+// baseSymbol returns a symbol up to its first hyphen, which is what the CHIP has
+// be unique.
+func baseSymbol(symbol string) string {
+	base, _, _ := strings.Cut(strings.ToUpper(symbol), "-")
+	return base
 }

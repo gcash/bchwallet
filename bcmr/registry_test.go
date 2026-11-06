@@ -231,3 +231,36 @@ func TestParseRegistryNFTTypesBounded(t *testing.T) {
 		t.Fatal("the first commitments weren't the ones kept")
 	}
 }
+
+// TestParseRegistryRefusesTooManyEntries ensures a registry can't take all of a
+// phone's memory with short keys.
+func TestParseRegistryRefusesTooManyEntries(t *testing.T) {
+	data := []byte(strings.Repeat(":", maxRegistryEntries+1))
+	if _, err := ParseRegistry(data, testCategory, testNow); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestParseRegistryNextSnapshot ensures a snapshot still to come is noted.
+func TestParseRegistryNextSnapshot(t *testing.T) {
+	data := []byte(fmt.Sprintf(`{"identities":{"%s":{
+		"2024-01-01T00:00:00.000Z":{"name":"Now","token":{"category":"%s","symbol":"T"}},
+		"2030-01-01T00:00:00.000Z":{"name":"Later","token":{"category":"%s","symbol":"T"}}}}}`,
+		testCategory, testCategory, testCategory))
+	m, err := ParseRegistry(data, testCategory, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Name != "Now" || m.NextSnapshot.Year() != 2030 {
+		t.Fatalf("%+v", m)
+	}
+}
+
+// TestSymbolPattern ensures a symbol follows the CHIP's rule.
+func TestSymbolPattern(t *testing.T) {
+	for symbol, want := range map[string]bool{"MUSD": true, "MUSD-A": true, "-BCH": false, "---": false, "a": false} {
+		if symbolPattern.MatchString(symbol) != want {
+			t.Errorf("%q", symbol)
+		}
+	}
+}

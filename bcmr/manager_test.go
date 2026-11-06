@@ -643,3 +643,76 @@ func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
 		t.Fatalf("%+v", state)
 	}
 }
+
+// TestManagerReservedSymbol ensures a token with a symbol that reads as money is
+// a look-alike, also with no Known list, and that a class of a Known token's
+// symbol is too.
+func TestManagerReservedSymbol(t *testing.T) {
+	m := &Manager{cfg: Config{Known: map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}}}}
+	for symbol, want := range map[string]bool{"BCH": true, "BCH-X": true, "MUSD-A": true, "OTHER": false} {
+		if m.looksKnown(&Metadata{Name: "N", Symbol: symbol}) != want {
+			t.Errorf("%q", symbol)
+		}
+	}
+}
+
+// TestManagerChangedFileKeepsPublished ensures a file that isn't the published one
+// doesn't replace what was read of the published one.
+func TestManagerChangedFileKeepsPublished(t *testing.T) {
+	category := chainhash.Hash{0x39}
+	f := newManagerFixture(t, category, collectionFor(category, "Host"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	state.Links[0].Publication.Hash = sha256.Sum256([]byte("published"))
+	state.RegistryHash = state.Links[0].Publication.Hash
+	state.Metadata = &Metadata{Name: "Published", Symbol: "P", Decimals: 8}
+	state.RegistryParser = 0
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if state.Metadata.Name != "Published" || state.Metadata.Decimals != 8 || state.RegistryChanged {
+		t.Fatalf("%+v", state.Metadata)
+	}
+}
+
+// TestManagerNextSnapshot ensures a registry is read again once a snapshot still
+// to come has taken over.
+func TestManagerNextSnapshot(t *testing.T) {
+	category := chainhash.Hash{0x3a}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	hits := f.hits.Load()
+	state.Metadata.NextSnapshot = time.Now().Add(time.Hour)
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits {
+		t.Fatal("read before its time")
+	}
+	state.Metadata.NextSnapshot = time.Now().Add(-time.Hour)
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if state.Metadata == nil || !state.Metadata.NextSnapshot.IsZero() {
+		t.Fatalf("%+v", state.Metadata)
+	}
+}
+
+// TestManagerZeroHash ensures a publication of a hash of zeros isn't read over and
+// over.
+func TestManagerZeroHash(t *testing.T) {
+	category := chainhash.Hash{0x3b}
+	f := newManagerFixture(t, category, collectionFor(category, "Host"), nil, always)
+	f.backend.pubs[category].Hash = [32]byte{}
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	hits := f.hits.Load()
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits || state.Metadata == nil {
+		t.Fatalf("%d more reads, %+v", f.hits.Load()-hits, state.Metadata)
+	}
+}

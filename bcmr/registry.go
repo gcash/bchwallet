@@ -1,6 +1,7 @@
 package bcmr
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,12 @@ const (
 	// maxURILen bounds a URI of a registry.
 	maxURILen = 2048
 
+	// maxRegistryEntries bounds the keys a registry can hold.  A short key
+	// costs far more in memory than it does in the file, so a small registry
+	// could otherwise take all of a phone's memory.  The largest in use, of
+	// 10,000 NFTs with their attributes, has about 200,000.
+	maxRegistryEntries = 1 << 20
+
 	// maxNFTTypesSize bounds the size of the NFT types kept from a registry.
 	// It's the size of the largest registry, so that no collection loses
 	// names, and a reply to the app has to allow for it.
@@ -34,7 +41,7 @@ const (
 )
 
 // symbolPattern is the CHIP's rule for a token's symbol.
-var symbolPattern = regexp.MustCompile(`^[-A-Z0-9]+$`)
+var symbolPattern = regexp.MustCompile(`^[A-Z0-9]+[-A-Z0-9]*$`)
 
 // ErrNoMetadata is the error of a registry that has no usable metadata for a
 // token.
@@ -61,6 +68,10 @@ type Metadata struct {
 	// site, if it has them.
 	IconURI string
 	WebURI  string
+
+	// NextSnapshot is when a snapshot of the registry that's still to come
+	// takes over, if one is.
+	NextSnapshot time.Time
 
 	// NFTTypes has the sequential NFTs the registry names, by the hex of
 	// their commitments.
@@ -93,15 +104,27 @@ type snapshotJSON struct {
 	} `json:"token"`
 }
 
+// readRegistry reads a registry that isn't too much to read.
+func readRegistry(data []byte) (*registryJSON, error) {
+	if bytes.Count(data, []byte(":")) > maxRegistryEntries {
+		return nil, errors.New("invalid registry: too many entries")
+	}
+	var registry registryJSON
+	if err := json.Unmarshal(data, &registry); err != nil {
+		return nil, fmt.Errorf("invalid registry: %w", err)
+	}
+	return &registry, nil
+}
+
 // ParseRegistry returns what a registry says of a token as of now.  Only the
 // identity whose authbase is the category counts: a registry published on a
 // token's own authchain speaks for that token, and whatever else it holds has
 // no such backing.  It returns ErrNoMetadata if the registry has nothing it can
 // use for the token.
 func ParseRegistry(data []byte, category chainhash.Hash, now time.Time) (*Metadata, error) {
-	var registry registryJSON
-	if err := json.Unmarshal(data, &registry); err != nil {
-		return nil, fmt.Errorf("invalid registry: %w", err)
+	registry, err := readRegistry(data)
+	if err != nil {
+		return nil, err
 	}
 	history, ok := registry.Identities[category.String()]
 	if !ok {
@@ -114,9 +137,9 @@ func ParseRegistry(data []byte, category chainhash.Hash, now time.Time) (*Metada
 // embedded Known list does, each under its category, as of now.  A token it
 // can't use is left out.
 func ParseKnownList(data []byte, now time.Time) (map[chainhash.Hash]*Metadata, error) {
-	var registry registryJSON
-	if err := json.Unmarshal(data, &registry); err != nil {
-		return nil, fmt.Errorf("invalid registry: %w", err)
+	registry, err := readRegistry(data)
+	if err != nil {
+		return nil, err
 	}
 	known := make(map[chainhash.Hash]*Metadata, len(registry.Identities))
 	for authbase, history := range registry.Identities {
@@ -139,7 +162,7 @@ func snapshotMetadata(history map[string]json.RawMessage, category chainhash.Has
 	now time.Time) (*Metadata, error) {
 
 	var current json.RawMessage
-	var currentTime, oldestTime time.Time
+	var currentTime, oldestTime, nextTime time.Time
 	var oldest json.RawMessage
 	for stamp, raw := range history {
 		t, err := time.Parse(time.RFC3339Nano, stamp)
@@ -151,6 +174,9 @@ func snapshotMetadata(history map[string]json.RawMessage, category chainhash.Has
 		}
 		if !t.After(now) && (current == nil || t.After(currentTime)) {
 			current, currentTime = raw, t
+		}
+		if t.After(now) && (nextTime.IsZero() || t.Before(nextTime)) {
+			nextTime = t
 		}
 	}
 	if current == nil {
@@ -164,7 +190,12 @@ func snapshotMetadata(history map[string]json.RawMessage, category chainhash.Has
 	if err := json.Unmarshal(current, &snapshot); err != nil {
 		return nil, fmt.Errorf("invalid snapshot: %w", err)
 	}
-	return metadataOf(&snapshot, category)
+	metadata, err := metadataOf(&snapshot, category)
+	if err != nil {
+		return nil, err
+	}
+	metadata.NextSnapshot = nextTime
+	return metadata, nil
 }
 
 // metadataOf checks a snapshot.  A value that would mislead, as a symbol or

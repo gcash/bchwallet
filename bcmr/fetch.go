@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,12 @@ const (
 	// fetchTimeout bounds one download, which has to leave a slow connection
 	// time for the largest registry.
 	fetchTimeout = 5 * time.Minute
+
+	// fetchDeadline bounds all the downloads of one Fetch, and maxLocations
+	// how many it tries, as the URIs come from strangers and a publication
+	// can hold many, and other tokens wait for it.
+	fetchDeadline = 10 * time.Minute
+	maxLocations  = 12
 
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
@@ -121,11 +128,41 @@ func refusePrivate(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// RefuseLocal refuses an address that names this device or its network outright,
+// for connections through a proxy, which resolves names itself and would reach
+// such an address from where it stands.
+func RefuseLocal(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSuffix(strings.ToLower(host), ".")
+	ip := net.ParseIP(host)
+	if name == "localhost" || strings.HasSuffix(name, ".localhost") || numericHost(name) ||
+		(ip != nil && !publicAddress(ip)) {
+
+		return fmt.Errorf("%w: %s", errPrivateAddress, host)
+	}
+	return nil
+}
+
+// numericHost returns whether a host reads as a number, as 127.1 and 2130706433
+// do to some resolvers, though they aren't IP addresses as Go reads them.
+func numericHost(host string) bool {
+	last := host[strings.LastIndexByte(host, '.')+1:]
+	if last == "" || net.ParseIP(host) != nil {
+		return false
+	}
+	_, err := strconv.ParseUint(last, 0, 64)
+	return err == nil
+}
+
 // nonPublicRanges are the ranges that Go's checks leave out but that don't lead
 // to the public internet, as carrier-grade NAT, which tailnets use too, and the
 // IPv6 prefixes that wrap an IPv4 address, which could be a private one.
 var nonPublicRanges = mustParseCIDRs("0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24",
-	"198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "2002::/16", "fec0::/10")
+	"198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "64:ff9b:1::/48", "2001::/32",
+	"2002::/16", "fec0::/10")
 
 func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 	nets := make([]*net.IPNet, len(cidrs))
@@ -164,11 +201,17 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 	if data := f.cached(hash); data != nil {
 		return data, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, fetchDeadline)
+	defer cancel()
 	var last error
 	var changed []byte
+	tries := 0
 	for _, uri := range uris {
 		for _, location := range f.locations(uri) {
-			data, final, err := f.download(ctx, location)
+			if tries++; tries > maxLocations {
+				break
+			}
+			data, final, err := f.download(ctx, location, maxRegistrySize)
 			if err == nil && sha256.Sum256(data) != hash {
 				err = fmt.Errorf("%s doesn't match the published hash", location)
 				if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
@@ -254,9 +297,9 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 	return locations
 }
 
-// download reads a URL, up to the size limit, and returns the file and where it
-// came from after any redirects.
-func (f *Fetcher) download(ctx context.Context, location string) ([]byte, *url.URL, error) {
+// download reads a URL, up to limit bytes, and returns the file and where it came
+// from after any redirects.
+func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
@@ -271,12 +314,12 @@ func (f *Fetcher) download(ctx context.Context, location string) ([]byte, *url.U
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("%s: %s", location, resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistrySize+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(data) > maxRegistrySize {
-		return nil, nil, fmt.Errorf("%s is over %d bytes", location, maxRegistrySize)
+	if int64(len(data)) > limit {
+		return nil, nil, fmt.Errorf("%s is over %d bytes", location, limit)
 	}
 	return data, resp.Request.URL, nil
 }

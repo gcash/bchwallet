@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchwallet/walletdb"
@@ -190,4 +191,41 @@ func typesState() *State {
 		types[string(rune('a'+i))] = NFTType{Name: "N"}
 	}
 	return &State{Metadata: &Metadata{Name: "T", NFTTypes: types}}
+}
+
+// TestStoreSnapshotTakesOver ensures the types of a snapshot that took over are
+// written, though the registry and the number of types are the same.
+func TestStoreSnapshotTakesOver(t *testing.T) {
+	db := testDB(t)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{3}
+	state.Metadata.NextSnapshot = time.Unix(1000, 0)
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	revealed := *state.Metadata
+	revealed.NextSnapshot = time.Time{}
+	revealed.NFTTypes = make(map[string]NFTType)
+	for name := range state.Metadata.NFTTypes {
+		revealed.NFTTypes[name] = NFTType{Name: "Revealed"}
+	}
+	state.Metadata = &revealed
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category].Metadata.NFTTypes["a"]; got.Name != "Revealed" {
+		t.Fatalf("%+v", got)
+	}
 }

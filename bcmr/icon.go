@@ -47,11 +47,9 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)
 		for _, location := range f.locations(candidate) {
-			data, _, err := f.download(ctx, location)
+			data, _, err := f.download(ctx, location, maxIconSize)
 			switch {
 			case err != nil:
-			case len(data) > maxIconSize:
-				err = fmt.Errorf("%s is over %d bytes", location, maxIconSize)
 			case checked && sha256.Sum256(data) != digest:
 				err = fmt.Errorf("%s doesn't match the hash of the URI", location)
 			}
