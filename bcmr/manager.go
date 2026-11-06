@@ -88,6 +88,13 @@ type Config struct {
 	Tip func() (*chainhash.Hash, error)
 }
 
+// retryKey is a token's registry, as tokens can publish the same one and fail on
+// it apart.
+type retryKey struct {
+	category chainhash.Hash
+	hash     [32]byte
+}
+
 // retry is a registry that couldn't be read.
 type retry struct {
 	last  time.Time
@@ -111,7 +118,7 @@ type Manager struct {
 
 	// The rest belongs to the run goroutine.
 	states   map[chainhash.Hash]*State
-	tried    map[[32]byte]retry
+	tried    map[retryKey]retry
 	lastTip  chainhash.Hash
 	lastFull time.Time
 
@@ -139,7 +146,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		wanted: make(map[chainhash.Hash]bool),
 		states: states,
 		asked:  make(map[chainhash.Hash]struct{}),
-		tried:  make(map[[32]byte]retry),
+		tried:  make(map[retryKey]retry),
 		reread: make(map[chainhash.Hash]struct{}),
 		wake:   make(chan struct{}, 1),
 	}
@@ -322,12 +329,15 @@ func (m *Manager) takeWanted() bool {
 		}
 		if refresh {
 			m.reread[category] = struct{}{}
+			if backend, ok := m.cfg.Backend.(interface{ Forget(chainhash.Hash) }); ok {
+				backend.Forget(category)
+			}
 			state.RegistryFailed = false
 			if state.Status == StatusFailed || state.Status == StatusUnavailable {
 				state.Status = StatusSearching
 			}
 			if pub := state.CurrentPublication(); pub != nil {
-				delete(m.tried, pub.Hash)
+				delete(m.tried, retryKey{category, pub.Hash})
 			}
 		}
 	}
@@ -370,7 +380,8 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			state.clearRegistry()
 			m.save(state)
 		}
-		if failed, ok := m.tried[pub.Hash]; ok && time.Since(failed.last) < retryWait(failed.tries) {
+		key := retryKey{state.Category, pub.Hash}
+		if failed, ok := m.tried[key]; ok && time.Since(failed.last) < retryWait(failed.tries) {
 			continue
 		}
 		data, err := m.cfg.Fetcher.Fetch(ctx, pub.Hash, pub.URIs)
@@ -413,8 +424,8 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			}
 		}
 		if err != nil {
-			failed := m.tried[pub.Hash]
-			m.tried[pub.Hash] = retry{time.Now(), failed.tries + 1}
+			failed := m.tried[key]
+			m.tried[key] = retry{time.Now(), failed.tries + 1}
 			log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
 			if state.Metadata == nil && !state.RegistryFailed {
 				state.RegistryFailed = true
@@ -422,7 +433,7 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			}
 			continue
 		}
-		delete(m.tried, pub.Hash)
+		delete(m.tried, key)
 		delete(m.reread, state.Category)
 		state.RegistryHash, state.Metadata = pub.Hash, metadata
 		state.RegistryChanged, state.RegistryFailed = changed, metadata == nil

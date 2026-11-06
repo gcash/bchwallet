@@ -757,3 +757,61 @@ func TestSPVReorgDuringScan(t *testing.T) {
 		t.Fatalf("scanned to %d", state.ScannedTo)
 	}
 }
+
+// TestSPVFailedSearchWaits ensures a genesis search that fails doesn't stop the
+// cycle, and leaves the token to try later, or when it's asked for.
+func TestSPVFailedSearchWaits(t *testing.T) {
+	c := newFakeChain(100)
+	c.failAt = 90
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	searched := &State{Category: chainhash.Hash{2}}
+	if err := b.Prepare(context.Background(), []*State{searched}); err != nil {
+		t.Fatal(err)
+	}
+	if searched.Status == StatusFailed {
+		t.Fatalf("%+v", searched)
+	}
+	if _, ok := b.waiting[searched.Category]; !ok {
+		t.Fatal("the token doesn't wait")
+	}
+	b.Forget(searched.Category)
+	if _, ok := b.waiting[searched.Category]; ok {
+		t.Fatal("the token still waits")
+	}
+}
+
+// TestSPVReorgDuringGenesisSearch ensures a search that a reorg ran through doesn't
+// fail a token whose genesis it may have moved past.
+func TestSPVReorgDuringGenesisSearch(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	c.duringSearch = func(height int32) {
+		c.duringSearch = nil
+		c.replaceFrom(95, 3000)
+	}
+	state := &State{Category: chainhash.Hash{3}}
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status == StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVNewBlockDuringGenesisSearch ensures a block that comes during a search,
+// which can hold the genesis, doesn't fail the token.
+func TestSPVNewBlockDuringGenesisSearch(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	c.duringSearch = func(height int32) {
+		c.duringSearch = nil
+		c.addBlock(1)
+	}
+	state := &State{Category: chainhash.Hash{4}}
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status == StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+}

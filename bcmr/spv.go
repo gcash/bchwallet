@@ -94,7 +94,19 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 	if len(search) == 0 {
 		return nil
 	}
-	return b.searchGeneses(ctx, search)
+
+	// A search that fails holds up only the tokens it's for, which try again
+	// later, and the others go on.
+	if err := b.searchGeneses(ctx, search); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		log.Warnf("Unable to search for token geneses: %v", err)
+		for _, state := range search {
+			b.waiting[state.Category] = time.Now()
+		}
+	}
+	return nil
 }
 
 // startFromHint sets a state from the table.  Everything is read first, so that
@@ -164,7 +176,7 @@ func newLink(tx *wire.MsgTx, height int32, blockHash chainhash.Hash) *Link {
 // mean it was minted above the table's height, so a genesis that isn't there
 // leaves the token Failed rather than sending the search further down.
 func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
-	_, tip, err := b.source.GetBestBlock()
+	tipHash, tip, err := b.source.GetBestBlock()
 	if err != nil {
 		return err
 	}
@@ -173,6 +185,8 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		return nil
 	}
 
+	// unknown holds the tokens whose genesis was found but couldn't be used.
+	unknown := make(map[chainhash.Hash]struct{})
 	byOutPoint := make(map[wire.OutPoint]*State, len(states))
 	outpoints := make([]wire.OutPoint, 0, len(states))
 	for _, state := range states {
@@ -190,6 +204,7 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		before, err := b.source.GetBlockHash(int64(spend.Height) - 1)
 		if err != nil {
 			log.Debugf("Unable to read the block before %v: %v", spend.BlockHash, err)
+			unknown[state.Category] = struct{}{}
 			return nil
 		}
 		state.Links = []Link{*newLink(spend.Tx, spend.Height, spend.BlockHash)}
@@ -201,10 +216,22 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 	if err != nil {
 		return err
 	}
+	// A chain that changed or grew under the search can have put a genesis
+	// where it had already looked, so finding nothing says nothing.
+	nowHash, _, err := b.source.GetBestBlock()
+	if err != nil {
+		return err
+	}
+	same := *nowHash == *tipHash
 	for _, state := range states {
-		if len(state.Links) == 0 {
-			state.Status = StatusFailed
+		if len(state.Links) != 0 {
+			continue
 		}
+		if _, ok := unknown[state.Category]; ok || !same {
+			b.waiting[state.Category] = time.Now()
+			continue
+		}
+		state.Status = StatusFailed
 	}
 	return nil
 }
@@ -217,6 +244,12 @@ func createsCategory(tx *wire.MsgTx, category chainhash.Hash) bool {
 		}
 	}
 	return false
+}
+
+// Forget has a token that waits try again at the next cycle, as asking for it
+// does.
+func (b *SPVBackend) Forget(category chainhash.Hash) {
+	delete(b.waiting, category)
 }
 
 // Advance checks each state against the chain, then follows every head that can

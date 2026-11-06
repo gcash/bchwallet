@@ -774,3 +774,17 @@ func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {
 		t.Fatalf("%d more reads", f.hits.Load()-hits)
 	}
 }
+
+// TestManagerRetriesApart ensures tokens that publish one registry don't share a
+// failure.
+func TestManagerRetriesApart(t *testing.T) {
+	coin, collection := chainhash.Hash{0x3e}, chainhash.Hash{0x3f}
+	f := newManagerFixture(t, collection, collectionFor(collection, "Host"), nil, always)
+	pub := &Publication{Hash: sha256.Sum256([]byte("the whole set")), URIs: f.backend.pubs[collection].URIs}
+	coinState := &State{Category: coin, Links: []Link{{Height: 1, Publication: pub}}}
+	state := &State{Category: collection, Links: []Link{{Height: 1, Publication: pub}}}
+	f.m.fetchRegistries(context.Background(), []*State{coinState, state})
+	if coinState.Metadata != nil || state.Metadata == nil {
+		t.Fatalf("%+v, %+v", coinState.Metadata, state.Metadata)
+	}
+}
