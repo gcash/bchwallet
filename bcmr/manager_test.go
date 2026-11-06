@@ -725,6 +725,29 @@ func TestManagerZeroHash(t *testing.T) {
 	}
 }
 
+// TestManagerPeek ensures Peek says what's known and has nothing load.
+func TestManagerPeek(t *testing.T) {
+	category := chainhash.Hash{0x3c}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	if info := f.m.Peek([]chainhash.Hash{category})[0]; info.Metadata != nil {
+		t.Fatalf("%+v", info)
+	}
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 0 || len(f.m.asked) != 0 {
+		t.Fatal("Peek had the token load")
+	}
+
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if info := f.m.Peek([]chainhash.Hash{category})[0]; info.Metadata == nil || info.Metadata.Name != "Coin" {
+		t.Fatalf("%+v", info)
+	}
+}
+
 // TestManagerNoAutoLoadLeavesStoredTokens ensures a token stored earlier neither
 // loads nor is followed with nothing loading by itself, but still shows.
 func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {

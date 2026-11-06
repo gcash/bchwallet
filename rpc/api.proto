@@ -213,6 +213,7 @@ message BalanceResponse {
 message TokenMetadataRequest {
 	repeated string categories = 1; // Hex, in the byte order of transaction IDs.
 	bool include_nft_types = 2; // Ask for few tokens with this, as a type list can be large.
+	bool peek = 3; // Say what's known of the tokens, without having any of them load.
 }
 message TokenMetadataResponse {
 	enum Status {

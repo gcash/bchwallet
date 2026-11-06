@@ -194,6 +194,22 @@ func (m *Manager) Tokens(categories []chainhash.Hash) []TokenInfo {
 	return infos
 }
 
+// Peek returns what's known of the categories, without having any of them load
+// or be followed, as for tokens the wallet no longer holds.
+func (m *Manager) Peek(categories []chainhash.Hash) []TokenInfo {
+	infos := make([]TokenInfo, 0, len(categories))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, category := range categories {
+		info, tracked := m.views[category]
+		if !tracked {
+			info = m.viewOf(&State{Category: category})
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
 // Refresh fetches a token's metadata again, or for the first time, whether it
 // loads by itself or not.
 func (m *Manager) Refresh(category chainhash.Hash) {

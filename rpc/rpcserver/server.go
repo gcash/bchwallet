@@ -554,9 +554,11 @@ func (s *walletServer) TokenMetadata(ctx context.Context, req *pb.TokenMetadataR
 	if manager == nil {
 		return &pb.TokenMetadataResponse{}, nil
 	}
-	return &pb.TokenMetadataResponse{
-		Tokens: marshalTokenInfos(manager.Tokens(categories), req.IncludeNftTypes),
-	}, nil
+	infos := manager.Peek(categories)
+	if !req.Peek {
+		infos = manager.Tokens(categories)
+	}
+	return &pb.TokenMetadataResponse{Tokens: marshalTokenInfos(infos, req.IncludeNftTypes)}, nil
 }
 
 func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.RefreshTokenMetadataRequest) (
