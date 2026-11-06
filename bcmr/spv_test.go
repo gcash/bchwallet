@@ -798,20 +798,35 @@ func TestSPVReorgDuringGenesisSearch(t *testing.T) {
 	}
 }
 
-// TestSPVNewBlockDuringGenesisSearch ensures a block that comes during a search,
-// which can hold the genesis, doesn't fail the token.
+// TestSPVNewBlockDuringGenesisSearch ensures blocks that come during a search are
+// searched too, so that the search reaches an answer, and finds a genesis in one.
 func TestSPVNewBlockDuringGenesisSearch(t *testing.T) {
 	c := newFakeChain(100)
+	category := chainhash.Hash{4}
 	b := NewSPVBackend(c, hintsFor(t, 50))
+	c.duringSearch = func(height int32) {
+		c.duringSearch = nil
+		c.addBlock(1, genesisOf(1, category))
+	}
+	state := &State{Category: category}
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Links) != 1 || state.Status != StatusSearching {
+		t.Fatalf("%+v", state)
+	}
+
+	c = newFakeChain(100)
+	b = NewSPVBackend(c, hintsFor(t, 50))
 	c.duringSearch = func(height int32) {
 		c.duringSearch = nil
 		c.addBlock(1)
 	}
-	state := &State{Category: chainhash.Hash{4}}
-	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+	none := &State{Category: chainhash.Hash{5}}
+	if err := b.Prepare(context.Background(), []*State{none}); err != nil {
 		t.Fatal(err)
 	}
-	if state.Status == StatusFailed {
-		t.Fatalf("%+v", state)
+	if none.Status != StatusFailed {
+		t.Fatalf("%+v", none)
 	}
 }

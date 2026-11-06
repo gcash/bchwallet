@@ -38,6 +38,9 @@ type SpendFound struct {
 	BlockHash chainhash.Hash
 }
 
+// maxNewBlockSearches bounds the passes over blocks that came during a search.
+const maxNewBlockSearches = 5
+
 // SPVBackend finds and follows identities over the P2P layer alone, with block
 // filters.  The hints table says where each token stood at its height, so no
 // scan ever goes below that height: a token in the table starts from its entry,
@@ -194,7 +197,7 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		byOutPoint[outpoint] = state
 		outpoints = append(outpoints, outpoint)
 	}
-	_, err = b.source.SearchSpends(outpoints, tip, bottom, func(spend SpendFound) []wire.OutPoint {
+	found := func(spend SpendFound) []wire.OutPoint {
 		state := byOutPoint[spend.OutPoint]
 		if !createsCategory(spend.Tx, state.Category) {
 			return nil
@@ -212,17 +215,14 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		state.ScannedTo, state.ScannedHash = spend.Height-1, *before
 		state.Status = StatusSearching
 		return nil
-	}, nil, ctx.Done())
+	}
+	if _, err = b.source.SearchSpends(outpoints, tip, bottom, found, nil, ctx.Done()); err != nil {
+		return err
+	}
+	same, err := b.searchNewBlocks(ctx, states, tip, tipHash, found)
 	if err != nil {
 		return err
 	}
-	// A chain that changed or grew under the search can have put a genesis
-	// where it had already looked, so finding nothing says nothing.
-	nowHash, _, err := b.source.GetBestBlock()
-	if err != nil {
-		return err
-	}
-	same := *nowHash == *tipHash
 	for _, state := range states {
 		if len(state.Links) != 0 {
 			continue
@@ -234,6 +234,42 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		state.Status = StatusFailed
 	}
 	return nil
+}
+
+// searchNewBlocks searches the blocks that came during a search, for the states
+// it didn't find, until no more come.  It returns whether the search covers the
+// chain as it stands: a chain that changed can have put a genesis where the
+// search had already looked, so finding nothing says nothing.
+func (b *SPVBackend) searchNewBlocks(ctx context.Context, states []*State, tip int32,
+	tipHash *chainhash.Hash, found func(SpendFound) []wire.OutPoint) (bool, error) {
+
+	for range maxNewBlockSearches {
+		nowHash, now, err := b.source.GetBestBlock()
+		if err != nil {
+			return false, err
+		}
+		if *nowHash == *tipHash {
+			return true, nil
+		}
+		same, err := b.sameChain(tip, tipHash)
+		if err != nil || !same || now < tip {
+			return false, err
+		}
+		outpoints := make([]wire.OutPoint, 0, len(states))
+		for _, state := range states {
+			if len(state.Links) == 0 {
+				outpoints = append(outpoints, wire.OutPoint{Hash: state.Category})
+			}
+		}
+		if len(outpoints) != 0 {
+			_, err = b.source.SearchSpends(outpoints, tip+1, now, found, nil, ctx.Done())
+			if err != nil {
+				return false, err
+			}
+		}
+		tip, tipHash = now, nowHash
+	}
+	return false, nil
 }
 
 // createsCategory returns whether tx is the genesis of the category.
