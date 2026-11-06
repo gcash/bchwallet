@@ -626,6 +626,7 @@ func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadat
 					Name:        nft.Name,
 					Description: nft.Description,
 					IconUri:     nft.IconURI,
+					Attributes:  nft.Attributes,
 				})
 			}
 		}

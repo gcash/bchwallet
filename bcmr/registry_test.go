@@ -167,6 +167,28 @@ func TestParseRegistryEmptyBytecode(t *testing.T) {
 	}
 }
 
+// TestParseRegistryAttributes ensures an NFT's attributes are kept, and that one
+// that can't show only loses itself.
+func TestParseRegistryAttributes(t *testing.T) {
+	data := testRegistry(`{"name":"T","token":{"category":"%s","symbol":"T","nfts":{"parse":{"types":{
+		"01":{"name":"One","extensions":{"attributes":{"Eyes":"Red","Level":7,"None":null,"Bad":"a\u202eb"}}},
+		"02":{"name":"Two","extensions":{"attributes":"not a map"}},
+		"03":{"name":"Three","extensions":[]}}}}}}`)
+	m, err := ParseRegistry(data, testCategory, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.NFTTypes["01"].Attributes; len(got) != 1 || got["Eyes"] != "Red" {
+		t.Fatalf("%+v", got)
+	}
+	if two := m.NFTTypes["02"]; two.Name != "Two" || two.Attributes != nil {
+		t.Fatalf("%+v", two)
+	}
+	if three := m.NFTTypes["03"]; three.Name != "Three" || three.Attributes != nil {
+		t.Fatalf("%+v", three)
+	}
+}
+
 // TestParseKnownList ensures each usable token of a list is read under its
 // category, and the rest are left out.
 func TestParseKnownList(t *testing.T) {

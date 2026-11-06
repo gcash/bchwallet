@@ -45,6 +45,9 @@ type NFTType struct {
 	Name        string
 	Description string
 	IconURI     string
+
+	// Attributes are the NFT's traits, by name.
+	Attributes map[string]string
 }
 
 // Metadata is what a registry says of a token, in the snapshot that is current.
@@ -83,6 +86,7 @@ type snapshotJSON struct {
 					Name        string            `json:"name"`
 					Description string            `json:"description"`
 					URIs        map[string]string `json:"uris"`
+					Extensions  json.RawMessage   `json:"extensions"`
 				} `json:"types"`
 			} `json:"parse"`
 		} `json:"nfts"`
@@ -217,8 +221,12 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 			if displayable(nft.Description, maxDescriptionRunes) {
 				nftType.Description = nft.Description
 			}
+			nftType.Attributes = attributesOf(nft.Extensions)
 			size += len(commitment) + len(nftType.Name) + len(nftType.Description) +
 				len(nftType.IconURI)
+			for name, value := range nftType.Attributes {
+				size += len(name) + len(value)
+			}
 			if size > maxNFTTypesSize {
 				break
 			}
@@ -226,6 +234,33 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 		}
 	}
 	return metadata, nil
+}
+
+// attributesOf returns the attributes in an NFT's extensions that can show.  The
+// CHIP has them as strings, and a registry that gives something else only loses
+// what it gave.
+func attributesOf(extensions json.RawMessage) map[string]string {
+	var fields struct {
+		Attributes map[string]json.RawMessage `json:"attributes"`
+	}
+	if json.Unmarshal(extensions, &fields) != nil {
+		return nil
+	}
+	values := fields.Attributes
+	var attributes map[string]string
+	for name, rawValue := range values {
+		var value string
+		if json.Unmarshal(rawValue, &value) != nil || name == "" || value == "" ||
+			!displayable(name, maxNameRunes) || !displayable(value, maxNameRunes) {
+
+			continue
+		}
+		if attributes == nil {
+			attributes = make(map[string]string)
+		}
+		attributes[name] = value
+	}
+	return attributes
 }
 
 // firstLine returns text up to its first newline, as the CHIP has interfaces
