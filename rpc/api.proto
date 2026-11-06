@@ -246,6 +246,7 @@ message TokenMetadataResponse {
 		bool publication_stale = 15; // The publication isn't on the head.
 		bool registry_changed = 16; // The fields above are from a file other than the published one.
 		bool registry_failed = 17; // A registry was published, but nothing could be read from it.
+		bool reserved_symbol = 18; // A look_alike that is one for its reserved symbol.
 	}
 	repeated Token tokens = 1; // In the order of the request.
 }

@@ -648,11 +648,19 @@ func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
 // a look-alike, also with no Known list, and that a class of a Known token's
 // symbol is too.
 func TestManagerReservedSymbol(t *testing.T) {
-	m := &Manager{cfg: Config{Known: map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}}}}
-	for symbol, want := range map[string]bool{"BCH": true, "BCH-X": true, "MUSD-A": true, "OTHER": false} {
-		if m.looksKnown(&Metadata{Name: "N", Symbol: symbol}) != want {
-			t.Errorf("%q", symbol)
+	m := &Manager{cfg: Config{Known: map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}, {2}: {Name: "Listed", Symbol: "USDT"}}}}
+	for symbol, want := range map[string][2]bool{"BCH": {true, true}, "BCH-X": {true, true}, "USD": {true, true},
+		"DOGE": {true, true}, "MUSD-A": {true, false}, "OTHER": {false, false}, "TOP": {false, false}} {
+
+		state := &State{Category: chainhash.Hash{9}, Metadata: &Metadata{Name: "N", Symbol: symbol}}
+		info := m.viewOf(state)
+		if info.LookAlike != want[0] || info.ReservedSymbol != want[1] {
+			t.Errorf("%q: %+v", symbol, info)
 		}
+	}
+	state := &State{Category: chainhash.Hash{2}, Metadata: &Metadata{Name: "Listed", Symbol: "USDT"}}
+	if info := m.viewOf(state); info.LookAlike || info.ReservedSymbol {
+		t.Errorf("a Known token: %+v", info)
 	}
 }
 

@@ -50,8 +50,11 @@ type TokenInfo struct {
 	Stale bool
 
 	// LookAlike reports that the token has the name or symbol of a Known
-	// token, under another category.
+	// token, under another category, or a reserved symbol.
 	LookAlike bool
+
+	// ReservedSymbol reports that a LookAlike is one for its reserved symbol.
+	ReservedSymbol bool
 
 	Burned bool
 
@@ -462,7 +465,8 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 		info.RegistryChanged, info.RegistryFailed = false, false
 	}
 	if !info.Known && info.Metadata != nil {
-		info.LookAlike = m.looksKnown(info.Metadata)
+		info.ReservedSymbol = reservedSymbols[baseSymbol(info.Metadata.Symbol)]
+		info.LookAlike = info.ReservedSymbol || m.looksKnown(info.Metadata)
 	}
 	return info
 }
@@ -470,9 +474,6 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 // looksKnown returns whether metadata has the name or symbol of a Known token.
 func (m *Manager) looksKnown(metadata *Metadata) bool {
 	symbol := baseSymbol(metadata.Symbol)
-	if reservedSymbols[symbol] {
-		return true
-	}
 	for _, known := range m.cfg.Known {
 		if strings.EqualFold(known.Name, metadata.Name) || baseSymbol(known.Symbol) == symbol {
 			return true
@@ -480,10 +481,6 @@ func (m *Manager) looksKnown(metadata *Metadata) bool {
 	}
 	return false
 }
-
-// reservedSymbols are the base symbols no token can have for itself, which the
-// CHIP has wallets keep, as an amount of them reads as money.
-var reservedSymbols = map[string]bool{"BCH": true, "XBCH": true, "BTC": true, "XBT": true}
 
 // baseSymbol returns a symbol up to its first hyphen, which is what the CHIP has
 // be unique.
