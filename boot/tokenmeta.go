@@ -23,6 +23,15 @@ type spvSource struct {
 	*chain.NeutrinoClient
 }
 
+// GetBlock asks neutrino, for a read that can give up.
+func (s spvSource) GetBlock(hash *chainhash.Hash, quit <-chan struct{}) (*wire.MsgBlock, error) {
+	block, err := s.CS.GetBlock(*hash, neutrino.QueryQuit(quit))
+	if err != nil {
+		return nil, err
+	}
+	return block.MsgBlock(), nil
+}
+
 // SearchSpends asks neutrino.
 func (s spvSource) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 	found func(bcmr.SpendFound) []wire.OutPoint, progress func(height int32),

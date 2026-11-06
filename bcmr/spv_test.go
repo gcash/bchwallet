@@ -70,7 +70,7 @@ func (c *fakeChain) GetBlockHash(height int64) (*chainhash.Hash, error) {
 	return &hash, nil
 }
 
-func (c *fakeChain) GetBlock(hash *chainhash.Hash) (*wire.MsgBlock, error) {
+func (c *fakeChain) GetBlock(hash *chainhash.Hash, _ <-chan struct{}) (*wire.MsgBlock, error) {
 	if c.failBlock {
 		return nil, errors.New("no peer sent the block")
 	}
@@ -854,5 +854,126 @@ func TestSPVFailedFindsGenesisInNewBlock(t *testing.T) {
 	resolve(t, b, state)
 	if state.Status != StatusVerified || state.Head().Txid != genesis.TxHash() {
 		t.Fatalf("%+v", state)
+	}
+}
+
+// failedState is a token that wasn't found, up to the tip.
+func failedState(t *testing.T, b *SPVBackend, category chainhash.Hash) *State {
+	t.Helper()
+	state := &State{Category: category}
+	resolve(t, b, state)
+	if state.Status != StatusFailed || state.ScannedTo == 0 {
+		t.Fatalf("%+v", state)
+	}
+	return state
+}
+
+// TestSPVFailedOnBlocksGone ensures a token that wasn't found on blocks a reorg
+// took is searched as new, and that one with nothing kept is too.
+func TestSPVFailedOnBlocksGone(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	gone := failedState(t, b, chainhash.Hash{7})
+	gone.ScannedHash = chainhash.Hash{0xee}
+	old := failedState(t, b, chainhash.Hash{8})
+	old.ScannedTo, old.ScannedHash = 0, chainhash.Hash{}
+	stays := failedState(t, b, chainhash.Hash{9})
+	if err := b.checkFailed(context.Background(), []*State{gone, old, stays}, noSave); err != nil {
+		t.Fatal(err)
+	}
+	if gone.Status != StatusSearching || old.Status != StatusSearching ||
+		stays.Status != StatusFailed {
+
+		t.Fatalf("%+v, %+v, %+v", gone, old, stays)
+	}
+}
+
+// TestSPVFailedSearchError ensures a search of new blocks that fails moves no token
+// on, so that the blocks are searched again.
+func TestSPVFailedSearchError(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := failedState(t, b, chainhash.Hash{10})
+	scanned := state.ScannedTo
+	c.addBlock(int32(len(c.blocks) + 1))
+	c.failAt = 101
+	if err := b.checkFailed(context.Background(), []*State{state}, noSave); err == nil {
+		t.Fatal("no error")
+	}
+	if state.ScannedTo != scanned || state.Status != StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVFailedDifferentScans ensures tokens searched up to different blocks each
+// get the blocks they missed, and all end up at the tip.
+func TestSPVFailedDifferentScans(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	first := failedState(t, b, chainhash.Hash{11})
+	c.addBlock(int32(len(c.blocks) + 1))
+	c.addBlock(int32(len(c.blocks) + 1))
+	second := failedState(t, b, chainhash.Hash{12})
+	c.addBlock(int32(len(c.blocks) + 1))
+	c.searches = nil
+	if err := b.checkFailed(context.Background(), []*State{first, second}, noSave); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.searches, [][2]int32{{101, 103}}) {
+		t.Fatalf("%v", c.searches)
+	}
+	if first.ScannedTo != 103 || second.ScannedTo != 103 {
+		t.Fatalf("%+v, %+v", first, second)
+	}
+}
+
+// TestSPVNewBlocksKeepComing ensures a token isn't called failed while blocks keep
+// coming faster than the search can finish them.
+func TestSPVNewBlocksKeepComing(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	c.duringSearch = func(int32) { c.addBlock(int32(len(c.blocks) + 1)) }
+	state := &State{Category: chainhash.Hash{13}}
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status == StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVFailedFoundFollowsOn ensures a token found in a new block is followed from
+// there, and not from the tip the search reached, so that a spend in a block after
+// its genesis counts.
+func TestSPVFailedFoundFollowsOn(t *testing.T) {
+	c := newFakeChain(100)
+	category := chainhash.Hash{14}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := failedState(t, b, category)
+	genesis := genesisOf(1, category)
+	next := spendOf(2, genesis.TxHash())
+	c.addBlock(101, genesis)
+	c.addBlock(102, next)
+	c.addBlock(103)
+	resolve(t, b, state)
+	if state.Head() == nil || state.Head().Txid != next.TxHash() {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVFailedSavesSearch ensures what a search of new blocks did is saved at once,
+// as the rest of the cycle can be ended and take it along.
+func TestSPVFailedSavesSearch(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := failedState(t, b, chainhash.Hash{15})
+	c.addBlock(101)
+	var saved int32
+	err := b.checkFailed(context.Background(), []*State{state}, func(s *State) { saved = s.ScannedTo })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved != 101 {
+		t.Fatalf("saved at %d", saved)
 	}
 }

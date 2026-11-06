@@ -430,7 +430,10 @@ func (m *Manager) registryDue(state *State) *registryRead {
 	read := state.RegistryHash != [32]byte{} || state.Metadata != nil || state.RegistryFailed
 	same := pub.Hash == state.RegistryHash && read
 	_, reread := m.reread[state.Category]
-	if same && !reread && state.RegistryParser == registryParser && !snapshotDue(state) &&
+	// A file that isn't the published one is read daily, whatever snapshot it
+	// claims is due, as its host could otherwise have it read at every block.
+	due := snapshotDue(state) && !state.RegistryChanged
+	if same && !reread && state.RegistryParser == registryParser && !due &&
 		(!state.RegistryChanged || time.Since(state.RegistryRead) < changedRegistryInterval) {
 
 		// A state from before failures were kept has nothing to show.

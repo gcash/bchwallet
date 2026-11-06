@@ -365,9 +365,6 @@ func TestRefuseLocal(t *testing.T) {
 // TestDownloadTooSlow ensures a host that drips a file loses the download, and
 // that one that sends it doesn't.
 func TestDownloadTooSlow(t *testing.T) {
-	old := rateWindow
-	rateWindow = time.Second
-	defer func() { rateWindow = old }()
 	stop := make(chan struct{})
 	defer close(stop)
 	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +373,14 @@ func TestDownloadTooSlow(t *testing.T) {
 			return
 		}
 		flusher := w.(http.Flusher)
+		if r.URL.Path == "/steady" {
+			for range 70 {
+				_, _ = w.Write(make([]byte, 1024))
+				flusher.Flush()
+				time.Sleep(100 * time.Millisecond)
+			}
+			return
+		}
 		for {
 			_, _ = w.Write([]byte("x"))
 			flusher.Flush()
@@ -391,11 +396,63 @@ func TestDownloadTooSlow(t *testing.T) {
 	if _, _, err := f.download(context.Background(), server.URL+"/fast", 100); err != nil {
 		t.Fatal(err)
 	}
+	old := rateWindow
+	rateWindow = time.Second
+	defer func() { rateWindow = old }()
 	start := time.Now()
 	if _, _, err := f.download(context.Background(), server.URL+"/drip", 1000); err == nil {
 		t.Fatal("no error")
 	}
-	if time.Since(start) > 10*time.Second {
+
+	// Left alone, the drip takes 100 seconds.
+	if time.Since(start) > 60*time.Second {
 		t.Fatalf("took %v", time.Since(start))
+	}
+
+	// A host that keeps to the rate gets through windows, here three of them.
+	rateWindow = 2 * time.Second
+	data, _, err := f.download(context.Background(), server.URL+"/steady", 1<<20)
+	if err != nil || len(data) != 70*1024 {
+		t.Fatalf("%d bytes, %v", len(data), err)
+	}
+}
+
+// TestFetchKeepsFileWhenTimeRunsOut ensures a file that was found counts when a
+// later location uses up the Fetch's time, as a host can.
+func TestFetchKeepsFileWhenTimeRunsOut(t *testing.T) {
+	old := fetchDeadline
+	fetchDeadline = 2 * time.Second
+	defer func() { fetchDeadline = old }()
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/partial" {
+			_, _ = w.Write([]byte(`{"part":1}`))
+			return
+		}
+		<-r.Context().Done()
+	})
+	data, err := f.Fetch(context.Background(), sha256.Sum256([]byte("the whole set")),
+		[]string{server.URL + "/partial", server.URL + "/hangs"})
+	if !errors.Is(err, ErrRegistryChanged) || string(data) != `{"part":1}` {
+		t.Fatalf("%q, %v", data, err)
+	}
+}
+
+// TestRateCheck ensures a download ends after two slow windows in a row, and only
+// then.
+func TestRateCheck(t *testing.T) {
+	check := rateCheck{least: 100}
+	for i, step := range []struct {
+		read int64
+		want bool
+	}{
+		{100, false}, // Fast enough.
+		{100, false}, // Slow, once.
+		{200, false}, // Fast enough, so what's slow starts over.
+		{299, false}, // Slow, once.
+		{300, true},  // Slow again.
+	} {
+		if got := check.tooSlow(step.read); got != step.want {
+			t.Fatalf("window %d: %v", i, got)
+		}
 	}
 }

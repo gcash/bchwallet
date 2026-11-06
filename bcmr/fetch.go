@@ -361,15 +361,16 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// watchRate ends a download that's slower than minDownloadRate, as a host can
-// drip a file to use up the time of a download that other tokens wait behind.  A
-// slow connection is far faster than that.
+// watchRate ends a download that's slower than minDownloadRate, so that a host that
+// stalls or barely drips a file doesn't use up the time of a download that other
+// tokens wait behind.  A slow connection is far faster than that.  A host that keeps
+// to the rate still has the download's whole time.
 func watchRate(ctx context.Context, body *countingReader, cancel func(), window time.Duration) func() {
 	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(window)
 		defer ticker.Stop()
-		last := int64(0)
+		check := rateCheck{least: int64(window/time.Second) * minDownloadRate}
 		for {
 			select {
 			case <-done:
@@ -377,16 +378,30 @@ func watchRate(ctx context.Context, body *countingReader, cancel func(), window 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				read := body.read.Load()
-				if read-last < int64(window/time.Second)*minDownloadRate {
+				if check.tooSlow(body.read.Load()) {
 					cancel()
 					return
 				}
-				last = read
 			}
 		}
 	}()
 	return func() { close(done) }
+}
+
+// rateCheck tells a download that read less than least in two windows in a row, as
+// a healthy one can stall for a moment, when the phone changes networks.
+type rateCheck struct {
+	least int64
+	last  int64
+	slow  bool
+}
+
+// tooSlow takes what was read so far, at the end of a window.
+func (c *rateCheck) tooSlow(read int64) bool {
+	slow := read-c.last < c.least
+	again := slow && c.slow
+	c.last, c.slow = read, slow
+	return again
 }
 
 // cachePath returns the file of a hash.

@@ -24,7 +24,7 @@ const (
 type spvSource interface {
 	GetBestBlock() (*chainhash.Hash, int32, error)
 	GetBlockHash(height int64) (*chainhash.Hash, error)
-	GetBlock(hash *chainhash.Hash) (*wire.MsgBlock, error)
+	GetBlock(hash *chainhash.Hash, quit <-chan struct{}) (*wire.MsgBlock, error)
 	SearchSpends(outpoints []wire.OutPoint, from, to int32,
 		found func(SpendFound) []wire.OutPoint, progress func(height int32),
 		quit <-chan struct{}) (int32, error)
@@ -69,17 +69,12 @@ func (b *SPVBackend) floor() int32 {
 
 // Prepare gives each state that has no links its starting point: the table's
 // entry, or the genesis from a search down to just above the table's height.  A
-// token that can't be read waits and doesn't hold up the others, and a Failed one
-// is looked for in the blocks that came since.
+// token that can't be read waits and doesn't hold up the others.
 func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
-	var search, failed []*State
+	var search []*State
 	for _, state := range states {
 		if err := ctx.Err(); err != nil {
 			return err
-		}
-		if state.Status == StatusFailed && len(state.Links) == 0 {
-			failed = append(failed, state)
-			continue
 		}
 		if len(state.Links) != 0 || state.Status == StatusFailed {
 			continue
@@ -89,7 +84,7 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 		}
 		if b.hints != nil {
 			if hint, ok := b.hints.Lookup(state.Category); ok {
-				if err := b.startFromHint(state, &hint); err != nil {
+				if err := b.startFromHint(ctx, state, &hint); err != nil {
 					log.Debugf("Unable to start token %v: %v", state.Category, err)
 					b.waiting[state.Category] = time.Now()
 				}
@@ -97,12 +92,6 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 			}
 		}
 		search = append(search, state)
-	}
-	if err := b.checkFailed(ctx, failed); err != nil {
-		if ctx.Err() != nil {
-			return err
-		}
-		log.Warnf("Unable to look for tokens in new blocks: %v", err)
 	}
 	if len(search) == 0 {
 		return nil
@@ -125,12 +114,12 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 // startFromHint sets a state from the table.  Everything is read first, so that
 // a block that can't be read leaves the state to try again rather than start
 // without its publication.
-func (b *SPVBackend) startFromHint(state *State, hint *chainbcmr.Hint) error {
+func (b *SPVBackend) startFromHint(ctx context.Context, state *State, hint *chainbcmr.Hint) error {
 	hash, err := b.source.GetBlockHash(int64(hint.HeadHeight))
 	if err != nil {
 		return err
 	}
-	head, err := b.readLink(hint.Head, hint.HeadHeight, hash)
+	head, err := b.readLink(ctx, hint.Head, hint.HeadHeight, hash)
 	if err != nil {
 		return err
 	}
@@ -144,7 +133,7 @@ func (b *SPVBackend) startFromHint(state *State, hint *chainbcmr.Hint) error {
 		if err != nil {
 			return err
 		}
-		older, err = b.readLink(hint.Publication.Txid, hint.Publication.Height, pubHash)
+		older, err = b.readLink(ctx, hint.Publication.Txid, hint.Publication.Height, pubHash)
 		if err != nil {
 			return err
 		}
@@ -163,8 +152,10 @@ func (b *SPVBackend) startFromHint(state *State, hint *chainbcmr.Hint) error {
 }
 
 // readLink reads a transaction from its block, with its publication.
-func (b *SPVBackend) readLink(txid chainhash.Hash, height int32, hash *chainhash.Hash) (*Link, error) {
-	block, err := b.source.GetBlock(hash)
+func (b *SPVBackend) readLink(ctx context.Context, txid chainhash.Hash, height int32,
+	hash *chainhash.Hash) (*Link, error) {
+
+	block, err := b.source.GetBlock(hash, ctx.Done())
 	if err != nil {
 		return nil, err
 	}
@@ -257,27 +248,39 @@ func (b *SPVBackend) genesisFinder(states []*State, unknown map[chainhash.Hash]s
 
 // checkFailed looks for the genesis of tokens that weren't found in the blocks
 // that came since, as one that was still unconfirmed comes in one of those.  They
-// are few, and their filters are the ones the wallet has just read.
-func (b *SPVBackend) checkFailed(ctx context.Context, states []*State) error {
+// are few, and it comes after what's published has shown, as a wallet that was off
+// for a while has many blocks to search.
+func (b *SPVBackend) checkFailed(ctx context.Context, all []*State, save func(*State)) error {
+	var states []*State
+	for _, state := range all {
+		if state.Status == StatusFailed && len(state.Links) == 0 {
+			states = append(states, state)
+		}
+	}
 	if len(states) == 0 {
 		return nil
 	}
+
+	// What comes after this can take long, and what was searched stays searched.
+	defer func() {
+		for _, state := range states {
+			save(state)
+		}
+	}()
 	tipHash, tip, err := b.source.GetBestBlock()
 	if err != nil {
 		return err
 	}
 	from := tip + 1
 	for _, state := range states {
-		// A state from before this kept nothing, and starts from here.  One
-		// on blocks that are gone starts again from the floor, by being
+		// A state from before this kept nothing, and one can be on blocks
+		// that are gone.  Either starts again from the floor, by being
 		// searched as new.
-		if state.ScannedTo == 0 {
-			state.ScannedTo, state.ScannedHash = tip, *tipHash
-			continue
-		}
-		on, err := b.onChain(state.ScannedTo, state.ScannedHash)
-		if err != nil {
-			return err
+		on := state.ScannedTo != 0
+		if on {
+			if on, err = b.onChain(state.ScannedTo, state.ScannedHash); err != nil {
+				return err
+			}
 		}
 		if !on {
 			state.Status = StatusSearching
@@ -358,6 +361,13 @@ func (b *SPVBackend) Forget(category chainhash.Hash) {
 // still move up to the tip, in one pass.  A head the pass doesn't see spent is
 // proven unspent, and its state Verified.
 func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*State)) error {
+	if err := b.checkFailed(ctx, states, save); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		log.Warnf("Unable to look for tokens in new blocks: %v", err)
+	}
+
 	// The tip comes first, so that a reorg from here on shows as a changed chain.
 	tipHash, tip, err := b.source.GetBestBlock()
 	if err != nil {

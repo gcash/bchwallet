@@ -1066,3 +1066,25 @@ func TestManagerStopsDuringReads(t *testing.T) {
 		t.Fatalf("%d failures", len(m.tried))
 	}
 }
+
+// TestManagerChangedFileClaimsSnapshot ensures a host can't have a file that isn't
+// the published one read at every block by saying a snapshot is due.
+func TestManagerChangedFileClaimsSnapshot(t *testing.T) {
+	category := chainhash.Hash{0x3b}
+	f := changedFixture(t, category, collectionFor(category, "Set"))
+	state := f.m.states[category]
+	if !state.RegistryChanged || state.Metadata == nil {
+		t.Fatalf("%+v", state)
+	}
+	hits := f.hits.Load()
+	state.Metadata.NextSnapshot = time.Now().Add(-time.Hour)
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits {
+		t.Fatal("read for its snapshot")
+	}
+	state.RegistryRead = time.Now().Add(-2 * changedRegistryInterval)
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits+1 {
+		t.Fatal("not read the next day")
+	}
+}
