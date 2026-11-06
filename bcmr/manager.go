@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,21 @@ type retryKey struct {
 type retry struct {
 	last  time.Time
 	tries uint
+}
+
+// maxRegistryReads is how many registries are read at once.
+const maxRegistryReads = 4
+
+// registryRead is the read of a token's registry, and what it found.
+type registryRead struct {
+	state *State
+	pub   *Publication
+
+	// same is whether the state already has this publication.
+	same bool
+
+	data []byte
+	err  error
 }
 
 // Manager keeps the metadata of the tokens the app asks about.  The app asks
@@ -344,106 +360,162 @@ func (m *Manager) takeWanted() bool {
 	return asked || len(wanted) != 0
 }
 
-// fetchRegistries reads the registry of each state whose publication changed.
+// fetchRegistries reads the registry of each state whose publication changed,
+// a few at once so that a slow host doesn't hold up the tokens behind it.  Only
+// the download leaves this goroutine, which the states and what's tried belong to.
 func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
+	results := make(chan *registryRead)
+
+	// Tokens can share a registry, so each download has the reads that wait
+	// for it.  A file that matches the hash serves them all, while anything
+	// else only says something of the URIs that were tried.
+	reading := make(map[[32]byte][]*registryRead)
+	var later []*State
+	use := func() {
+		read := <-results
+		sharers := reading[read.pub.Hash]
+		delete(reading, read.pub.Hash)
+		m.useRegistry(ctx, read)
+		for _, sharer := range sharers {
+			if read.err != nil && !slices.Equal(sharer.pub.URIs, read.pub.URIs) {
+				later = append(later, sharer.state)
+				continue
+			}
+			sharer.data, sharer.err = read.data, read.err
+			m.useRegistry(ctx, sharer)
+		}
+	}
+
 	for _, state := range states {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		pub := state.CurrentPublication()
-		if pub == nil {
-			if state.Metadata != nil || state.RegistryHash != [32]byte{} || state.RegistryFailed {
-				state.clearRegistry()
-				m.save(state)
-			}
+		read := m.registryDue(state)
+		if read == nil {
 			continue
 		}
-		// A hash of zeros is what nothing read yet has too, so it takes what
-		// was read to tell them apart.
-		read := state.RegistryHash != [32]byte{} || state.Metadata != nil || state.RegistryFailed
-		same := pub.Hash == state.RegistryHash && read
-		_, reread := m.reread[state.Category]
-		if same && !reread && state.RegistryParser == registryParser && !snapshotDue(state) &&
-			(!state.RegistryChanged || time.Since(state.RegistryRead) < changedRegistryInterval) {
-
-			// A state from before failures were kept has nothing to show.
-			if state.Metadata == nil && !state.RegistryFailed {
-				state.RegistryFailed = true
-				m.save(state)
-			}
+		if sharers, ok := reading[read.pub.Hash]; ok {
+			reading[read.pub.Hash] = append(sharers, read)
 			continue
 		}
+		for len(reading) == maxRegistryReads {
+			use()
+		}
+		reading[read.pub.Hash] = nil
+		go func() {
+			read.data, read.err = m.cfg.Fetcher.Fetch(ctx, read.pub.Hash, read.pub.URIs)
+			results <- read
+		}()
+	}
+	for len(reading) != 0 {
+		use()
+	}
+	if len(later) != 0 {
+		m.fetchRegistries(ctx, later)
+	}
+}
 
-		// What showed was from another publication, which this one
-		// replaced, so it no longer counts.
-		if !same && state.Metadata != nil {
+// registryDue returns the read a state's registry needs, if any.
+func (m *Manager) registryDue(state *State) *registryRead {
+	pub := state.CurrentPublication()
+	if pub == nil {
+		if state.Metadata != nil || state.RegistryHash != [32]byte{} || state.RegistryFailed {
 			state.clearRegistry()
 			m.save(state)
 		}
-		key := retryKey{state.Category, pub.Hash}
-		if failed, ok := m.tried[key]; ok && time.Since(failed.last) < retryWait(failed.tries) {
-			continue
-		}
-		data, err := m.cfg.Fetcher.Fetch(ctx, pub.Hash, pub.URIs)
-		if ctx.Err() != nil {
-			return
-		}
-		changed := errors.Is(err, ErrRegistryChanged)
-		var metadata *Metadata
-		if err == nil || changed {
-			var parseErr error
-			metadata, parseErr = ParseRegistry(data, state.Category, time.Now())
-			if parseErr != nil {
-				log.Debugf("Registry of token %v: %v", state.Category, parseErr)
-				metadata = nil
-			}
-		}
+		return nil
+	}
+	// A hash of zeros is what nothing read yet has too, so it takes what
+	// was read to tell them apart.
+	read := state.RegistryHash != [32]byte{} || state.Metadata != nil || state.RegistryFailed
+	same := pub.Hash == state.RegistryHash && read
+	_, reread := m.reread[state.Category]
+	if same && !reread && state.RegistryParser == registryParser && !snapshotDue(state) &&
+		(!state.RegistryChanged || time.Since(state.RegistryRead) < changedRegistryInterval) {
 
-		// A file that can't be used on a second reading loses nothing that
-		// shows, as a parser that changed could be at fault.
-		if err == nil && metadata == nil && same && state.Metadata != nil {
-			err = ErrNoMetadata
+		// A state from before failures were kept has nothing to show.
+		if state.Metadata == nil && !state.RegistryFailed {
+			state.RegistryFailed = true
+			m.save(state)
 		}
+		return nil
+	}
 
-		// Only a collection adds to its registry as it goes, so a file that
-		// isn't the published one counts for nothing else.  Its decimals
-		// don't count either, as they would change how amounts read.
-		if changed {
-			switch {
-			case metadata == nil || len(metadata.NFTTypes) == 0:
-				err, metadata = fmt.Errorf("%w, for a token that isn't a collection", err), nil
-
-			// What was read of the published file stays, when reading it
-			// again gets another.
-			case same && state.Metadata != nil && !state.RegistryChanged:
-				metadata = nil
-
-			default:
-				err = nil
-				metadata.Decimals = 0
-			}
-		}
-		if err != nil {
-			failed := m.tried[key]
-			m.tried[key] = retry{time.Now(), failed.tries + 1}
-			log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
-			if state.Metadata == nil && !state.RegistryFailed {
-				state.RegistryFailed = true
-				m.save(state)
-			}
-			continue
-		}
-		delete(m.tried, key)
-		delete(m.reread, state.Category)
-		state.RegistryHash, state.Metadata = pub.Hash, metadata
-		state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
-		state.RegistryParser = registryParser
-		state.RegistryRead = time.Time{}
-		if changed {
-			state.RegistryRead = time.Now()
-		}
+	// What showed was from another publication, which this one
+	// replaced, so it no longer counts.
+	if !same && state.Metadata != nil {
+		state.clearRegistry()
 		m.save(state)
 	}
+	key := retryKey{state.Category, pub.Hash}
+	if failed, ok := m.tried[key]; ok && time.Since(failed.last) < retryWait(failed.tries) {
+		return nil
+	}
+	return &registryRead{state: state, pub: pub, same: same}
+}
+
+// useRegistry keeps what a read found.
+func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
+	if ctx.Err() != nil {
+		return
+	}
+	state, pub, same, data, err := read.state, read.pub, read.same, read.data, read.err
+	key := retryKey{state.Category, pub.Hash}
+	changed := errors.Is(err, ErrRegistryChanged)
+	var metadata *Metadata
+	if err == nil || changed {
+		var parseErr error
+		metadata, parseErr = ParseRegistry(data, state.Category, time.Now())
+		if parseErr != nil {
+			log.Debugf("Registry of token %v: %v", state.Category, parseErr)
+			metadata = nil
+		}
+	}
+
+	// A file that can't be used on a second reading loses nothing that
+	// shows, as a parser that changed could be at fault.
+	if err == nil && metadata == nil && same && state.Metadata != nil {
+		err = ErrNoMetadata
+	}
+
+	// Only a collection adds to its registry as it goes, so a file that
+	// isn't the published one counts for nothing else.  Its decimals
+	// don't count either, as they would change how amounts read.
+	if changed {
+		switch {
+		case metadata == nil || len(metadata.NFTTypes) == 0:
+			err, metadata = fmt.Errorf("%w, for a token that isn't a collection", err), nil
+
+		// What was read of the published file stays, when reading it
+		// again gets another.
+		case same && state.Metadata != nil && !state.RegistryChanged:
+			metadata = nil
+
+		default:
+			err = nil
+			metadata.Decimals = 0
+		}
+	}
+	if err != nil {
+		failed := m.tried[key]
+		m.tried[key] = retry{time.Now(), failed.tries + 1}
+		log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
+		if state.Metadata == nil && !state.RegistryFailed {
+			state.RegistryFailed = true
+			m.save(state)
+		}
+		return
+	}
+	delete(m.tried, key)
+	delete(m.reread, state.Category)
+	state.RegistryHash, state.Metadata = pub.Hash, metadata
+	state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
+	state.RegistryParser = registryParser
+	state.RegistryRead = time.Time{}
+	if changed {
+		state.RegistryRead = time.Now()
+	}
+	m.save(state)
 }
 
 // snapshotDue returns whether a snapshot that was still to come has taken over.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -786,5 +787,282 @@ func TestManagerRetriesApart(t *testing.T) {
 	f.m.fetchRegistries(context.Background(), []*State{coinState, state})
 	if coinState.Metadata != nil || state.Metadata == nil {
 		t.Fatalf("%+v, %+v", coinState.Metadata, state.Metadata)
+	}
+}
+
+// readsFixture is a Manager with a token for each registry, served by category
+// after hold returns, and the number of downloads.
+func readsFixture(t *testing.T, registries map[chainhash.Hash][]byte,
+	hold func(chainhash.Hash)) (*Manager, *atomic.Int32) {
+
+	t.Helper()
+	hits := new(atomic.Int32)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		category, err := chainhash.NewHashFromStr(strings.TrimPrefix(r.URL.Path, "/"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		hits.Add(1)
+		hold(*category)
+		_, _ = w.Write(registries[*category])
+	}))
+	t.Cleanup(server.Close)
+	store, err := NewStore(testDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubs := make(map[chainhash.Hash]*Publication)
+	for category, registry := range registries {
+		pubs[category] = &Publication{
+			Hash: sha256.Sum256(registry),
+			URIs: []string{server.URL + "/" + category.String()},
+		}
+	}
+	m, err := NewManager(Config{
+		Backend:  &fakeBackend{pubs: pubs},
+		Store:    store,
+		Fetcher:  newFetcher(nil, t.TempDir(), server.Client().Transport),
+		AutoLoad: always,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, hits
+}
+
+// TestManagerSlowHostHoldsNoOthers ensures a token shows while the host of
+// another one is still answering, whichever is read first.
+func TestManagerSlowHostHoldsNoOthers(t *testing.T) {
+	slow, fast := chainhash.Hash{1}, chainhash.Hash{2}
+	release := make(chan struct{})
+
+	// Each is only served once both are being read, so that reading them one
+	// at a time can't pass, whichever comes first.
+	slowReading := make(chan struct{})
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{
+		slow: registryFor(slow, "Slow", "SLOW"),
+		fast: registryFor(fast, "Fast", "FAST"),
+	}, func(category chainhash.Hash) {
+		if category == slow {
+			close(slowReading)
+			<-release
+			return
+		}
+		select {
+		case <-slowReading:
+		case <-release:
+		}
+	})
+	m.Tokens([]chainhash.Hash{slow, fast})
+	done := make(chan error)
+	go func() { done <- m.cycle(context.Background()) }()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for m.Peek([]chainhash.Hash{fast})[0].Metadata == nil {
+		if time.Now().After(deadline) {
+			close(release)
+			<-done
+			t.Fatal("a slow host held up another token")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if m.Peek([]chainhash.Hash{slow})[0].Metadata != nil {
+		t.Fatal("the slow host's token showed early")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if m.Peek([]chainhash.Hash{slow})[0].Metadata == nil {
+		t.Fatal("the slow host's token didn't show")
+	}
+}
+
+// TestManagerLimitsReads ensures only so many registries are read at once, and
+// that all of them are.
+func TestManagerLimitsReads(t *testing.T) {
+	registries := make(map[chainhash.Hash][]byte)
+	var categories []chainhash.Hash
+	for i := range maxRegistryReads * 3 {
+		category := chainhash.Hash{byte(i + 1)}
+		registries[category] = registryFor(category, "Token", "TOK")
+		categories = append(categories, category)
+	}
+	arrived := make(chan struct{}, len(categories))
+	release := make(chan struct{})
+	var reading, most atomic.Int32
+	m, _ := readsFixture(t, registries, func(chainhash.Hash) {
+		now := reading.Add(1)
+		for {
+			seen := most.Load()
+			if now <= seen || most.CompareAndSwap(seen, now) {
+				break
+			}
+		}
+		arrived <- struct{}{}
+		<-release
+		reading.Add(-1)
+	})
+	m.Tokens(categories)
+	done := make(chan error)
+	go func() { done <- m.cycle(context.Background()) }()
+
+	for range maxRegistryReads {
+		select {
+		case <-arrived:
+		case <-time.After(30 * time.Second):
+			close(release)
+			<-done
+			t.Fatal("fewer reads at once than the limit")
+		}
+	}
+
+	// A wait that can only give reads over the limit time to show themselves.
+	time.Sleep(50 * time.Millisecond)
+	if most.Load() != maxRegistryReads {
+		t.Errorf("%d reads at once", most.Load())
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if most.Load() != maxRegistryReads {
+		t.Errorf("%d reads at once", most.Load())
+	}
+	for i, info := range m.Peek(categories) {
+		if info.Metadata == nil {
+			t.Errorf("token %d didn't show", i)
+		}
+	}
+}
+
+// sharedRegistry is a registry of both tokens.
+func sharedRegistry(first, second chainhash.Hash) []byte {
+	return []byte(fmt.Sprintf(`{"identities":{
+		"%[1]s":{"2024-01-01T00:00:00.000Z":{"name":"One","token":{"category":"%[1]s","symbol":"ONE"}}},
+		"%[2]s":{"2024-01-01T00:00:00.000Z":{"name":"Two","token":{"category":"%[2]s","symbol":"TWO"}}}}}`,
+		first, second))
+}
+
+// TestManagerSharedRegistryReadOnce ensures tokens with one registry don't each
+// download it, with no cache to find it in, and that it serves them all.
+func TestManagerSharedRegistryReadOnce(t *testing.T) {
+	first, second := chainhash.Hash{1}, chainhash.Hash{2}
+	shared := sharedRegistry(first, second)
+	m, hits := readsFixture(t, map[chainhash.Hash][]byte{first: shared, second: shared},
+		func(chainhash.Hash) {})
+	m.cfg.Fetcher.CacheDir = ""
+	m.Tokens([]chainhash.Hash{first, second})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("%d downloads", hits.Load())
+	}
+	infos := m.Peek([]chainhash.Hash{first, second})
+	if infos[0].Metadata == nil || infos[0].Metadata.Name != "One" ||
+		infos[1].Metadata == nil || infos[1].Metadata.Name != "Two" {
+
+		t.Fatalf("%+v", infos)
+	}
+}
+
+// TestManagerSharedRegistryFailing ensures a failed read counts for a token with the
+// same URIs, without a download of its own, and not for one with others.
+func TestManagerSharedRegistryFailing(t *testing.T) {
+	first, second := chainhash.Hash{1}, chainhash.Hash{2}
+	shared := sharedRegistry(first, second)
+	registries := map[chainhash.Hash][]byte{first: shared, second: shared}
+	m, hits := readsFixture(t, registries, func(chainhash.Hash) {})
+	pubs := m.cfg.Backend.(*fakeBackend).pubs
+	wrong := sha256.Sum256([]byte("not this file"))
+	pubs[first].Hash, pubs[second].Hash = wrong, wrong
+	m.Tokens([]chainhash.Hash{first, second})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("%d downloads with other URIs", hits.Load())
+	}
+
+	m, hits = readsFixture(t, registries, func(chainhash.Hash) {})
+	pubs = m.cfg.Backend.(*fakeBackend).pubs
+	pubs[first].Hash = wrong
+	pubs[second].Hash, pubs[second].URIs = wrong, pubs[first].URIs
+	m.Tokens([]chainhash.Hash{first, second})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("%d downloads with the same URIs", hits.Load())
+	}
+	if len(m.tried) != 2 {
+		t.Fatalf("%d failures kept", len(m.tried))
+	}
+}
+
+// TestManagerChangedFileNotShared ensures a file that isn't the published one, which
+// counts only for where it came from, isn't taken for a token with other URIs.
+func TestManagerChangedFileNotShared(t *testing.T) {
+	first, second := chainhash.Hash{1}, chainhash.Hash{2}
+	collection := []byte(fmt.Sprintf(`{"identities":{
+		"%[1]s":{"2024-01-01T00:00:00.000Z":{"name":"One","token":{"category":"%[1]s","symbol":"ONE",
+			"nfts":{"parse":{"bytecode":"","types":{"01":{"name":"A"}}}}}}},
+		"%[2]s":{"2024-01-01T00:00:00.000Z":{"name":"Two","token":{"category":"%[2]s","symbol":"TWO",
+			"nfts":{"parse":{"bytecode":"","types":{"01":{"name":"A"}}}}}}}}}`, first, second))
+	m, hits := readsFixture(t, map[chainhash.Hash][]byte{first: collection, second: collection},
+		func(chainhash.Hash) {})
+	pubs := m.cfg.Backend.(*fakeBackend).pubs
+	wrong := sha256.Sum256([]byte("the whole set"))
+	pubs[first].Hash, pubs[second].Hash = wrong, wrong
+	m.Tokens([]chainhash.Hash{first, second})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("%d downloads", hits.Load())
+	}
+	for _, info := range m.Peek([]chainhash.Hash{first, second}) {
+		if info.Metadata == nil {
+			t.Fatalf("%+v", info)
+		}
+	}
+}
+
+// TestManagerStopsDuringReads ensures stopping doesn't wait for hosts, and that
+// reads it ended don't count as failures.
+func TestManagerStopsDuringReads(t *testing.T) {
+	category := chainhash.Hash{1}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	// Before the server closes, which waits for its handlers.
+	defer close(release)
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{
+		category: registryFor(category, "Token", "TOK"),
+	}, func(chainhash.Hash) {
+		arrived <- struct{}{}
+		<-release
+	})
+	m.Start()
+	m.Tokens([]chainhash.Hash{category})
+	select {
+	case <-arrived:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the registry wasn't read")
+	}
+	stopped := make(chan struct{})
+	go func() {
+		m.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(30 * time.Second):
+		t.Fatal("a read held up stopping")
+	}
+	if len(m.tried) != 0 {
+		t.Fatalf("%d failures", len(m.tried))
 	}
 }
