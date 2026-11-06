@@ -85,3 +85,29 @@ func TestFetchIconRefusesOtherSchemes(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchIconCIDAlone ensures an icon with a file name on a CID that's the file
+// itself is found by its CID, with the hash the CID names checked.
+func TestFetchIconCIDAlone(t *testing.T) {
+	icon := []byte("icon")
+	digest := sha256.Sum256(icon)
+	raw := append([]byte{0x01, 0x55, 0x12, 0x20}, digest[:]...)
+	cid := "b" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw))
+	serve := icon
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/"+cid) {
+			_, _ = w.Write(serve)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	f.Gateways = []string{server.URL}
+	data, err := f.FetchIcon(context.Background(), "ipfs://"+cid+"/logo.png")
+	if err != nil || string(data) != "icon" {
+		t.Fatalf("got %q, %v", data, err)
+	}
+	serve = []byte("tampered")
+	if _, err := f.FetchIcon(context.Background(), "ipfs://"+cid+"/logo.png"); !errors.Is(err, ErrIconUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+}

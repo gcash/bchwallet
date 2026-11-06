@@ -43,30 +43,46 @@ func ipfsRawDigest(uri string) ([32]byte, bool) {
 // URI names, if it names one.  Connections have the limits of a registry's, and
 // a smaller size.
 func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
-	digest, checked := ipfsRawDigest(uri)
 	var last error
-	for _, location := range f.locations(uri) {
-		data, _, err := f.download(ctx, location)
-		switch {
-		case err != nil:
-		case len(data) > maxIconSize:
-			err = fmt.Errorf("%s is over %d bytes", location, maxIconSize)
-		case checked && sha256.Sum256(data) != digest:
-			err = fmt.Errorf("%s doesn't match the hash of the URI", location)
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+	for _, candidate := range iconURIs(uri) {
+		digest, checked := ipfsRawDigest(candidate)
+		for _, location := range f.locations(candidate) {
+			data, _, err := f.download(ctx, location)
+			switch {
+			case err != nil:
+			case len(data) > maxIconSize:
+				err = fmt.Errorf("%s is over %d bytes", location, maxIconSize)
+			case checked && sha256.Sum256(data) != digest:
+				err = fmt.Errorf("%s doesn't match the hash of the URI", location)
 			}
-			last = err
-			continue
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				last = err
+				continue
+			}
+			return data, nil
 		}
-		return data, nil
 	}
 	if last != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
 	}
 	return nil, ErrIconUnavailable
+}
+
+// iconURIs returns the URIs to try for an icon.  An ipfs URI with a file name on
+// a CID that's the file itself, as Gambling Apes Club and Punk Apes Club publish,
+// finds nothing, so its CID alone follows it.
+func iconURIs(uri string) []string {
+	rest, ok := strings.CutPrefix(uri, "ipfs://")
+	if !ok {
+		return []string{uri}
+	}
+	if cid, _, found := strings.Cut(rest, "/"); found && cid != "" {
+		return []string{uri, "ipfs://" + cid}
+	}
+	return []string{uri}
 }
 
 // Icon returns the file of an icon's URI.  It's only for icons the user chose
