@@ -10,8 +10,9 @@ import (
 	"strings"
 )
 
-// maxIconSize bounds an icon.
-const maxIconSize = 1 << 20
+// maxIconSize bounds an icon.  Many collections' icons are their full art, of up
+// to about 6 MB, and the app scales them down.
+const maxIconSize = 8 << 20
 
 // ErrIconUnavailable is the error of an icon no source gave.
 var ErrIconUnavailable = errors.New("no source gave the icon")
