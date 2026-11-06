@@ -64,8 +64,11 @@ func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn
 }
 
 // autoLoad returns what loads by itself: the tokens in the table, with either
-// backend, as a token a stranger sends could otherwise have the wallet reach a
-// host of their choosing.  Any other token waits for the user to ask.
+// backend.  Any other token waits for the user to ask.  The table holds every
+// token up to its height, so this keeps a token minted since from reaching out,
+// but one in the table reaches the host it publishes, which sees who asks, and
+// someone who runs that host can send it to an address to learn the address's IP.
+// Those who mind turn it off with bcmrnoautoload, or use a proxy.
 func autoLoad(hints *chainbcmr.Hints) func(chainhash.Hash) bool {
 	return func(category chainhash.Hash) bool {
 		if hints == nil {
@@ -121,7 +124,9 @@ func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager
 			return nil, err
 		}
 	}
-	config.AutoLoad = autoLoad(hints)
+	if !cfg.BcmrManual {
+		config.AutoLoad = autoLoad(hints)
+	}
 	switch c := client.(type) {
 	case *chain.NeutrinoClient:
 		config.Backend = bcmr.NewSPVBackend(spvSource{c}, hints)

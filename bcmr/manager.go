@@ -176,7 +176,9 @@ func (m *Manager) Tokens(categories []chainhash.Hash) []TokenInfo {
 			info = m.viewOf(&State{Category: category})
 		}
 		_, asked := m.asked[category]
-		if (tracked || info.InHints) && !asked {
+		// With nothing loading by itself, a token stored earlier waits to be
+		// asked for too, as following it would reach the host it publishes.
+		if (info.InHints || (tracked && m.cfg.AutoLoad != nil)) && !asked {
 			m.asked[category] = struct{}{}
 			wake = true
 			if !tracked {

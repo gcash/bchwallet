@@ -57,6 +57,7 @@ type config struct {
 	TestNet4      bool                    `long:"testnet4" description:"Use the test Bitcoin Cash network (version 4) (default mainnet)"`
 	BcmrHints     string                  `long:"bcmrhints" description:"The table of tokens from bcmrhints, for an SPV wallet"`
 	BcmrKnown     string                  `long:"bcmrknown" description:"The BCMR registry of the tokens to mark as Known"`
+	BcmrManual    bool                    `long:"bcmrnoautoload" description:"Load no token's metadata until asked to, as reading a registry shows its host who asks"`
 	BcmrGateways  []string                `long:"bcmrgateway" description:"An HTTP gateway for ipfs:// registries, as https://host; can be given more than once"`
 	ChipNet       bool                    `long:"chipnet" description:"Use chipnet, the test network that activates upgrades early (default mainnet)"`
 	Regtest       bool                    `long:"regtest" description:"Use the regression test network (default mainnet)"`

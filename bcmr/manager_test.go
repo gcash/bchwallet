@@ -724,3 +724,30 @@ func TestManagerZeroHash(t *testing.T) {
 		t.Fatalf("%d more reads, %+v", f.hits.Load()-hits, state.Metadata)
 	}
 }
+
+// TestManagerNoAutoLoadLeavesStoredTokens ensures a token stored earlier neither
+// loads nor is followed with nothing loading by itself, but still shows.
+func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {
+	category := chainhash.Hash{0x3d}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(Config{Backend: f.backend, Store: f.m.cfg.Store, Fetcher: f.m.cfg.Fetcher})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := f.hits.Load()
+	info := m.Tokens([]chainhash.Hash{category})[0]
+	if info.Metadata == nil || info.Metadata.Name != "Coin" {
+		t.Fatalf("%+v", info)
+	}
+	m.states[category].RegistryParser = 0
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != hits || len(m.asked) != 0 {
+		t.Fatalf("%d more reads", f.hits.Load()-hits)
+	}
+}
