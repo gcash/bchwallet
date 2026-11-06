@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -34,6 +35,10 @@ const (
 	// can hold many, and other tokens wait for it.
 	fetchDeadline = 10 * time.Minute
 	maxLocations  = 12
+
+	// minDownloadRate is the slowest a download can be, in bytes a second over
+	// rateWindow.
+	minDownloadRate = 1024
 
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
@@ -127,6 +132,10 @@ func refusePrivate(_, address string, _ syscall.RawConn) error {
 	}
 	return nil
 }
+
+// rateWindow is how long a download has to reach minDownloadRate, a variable for
+// the tests.
+var rateWindow = 30 * time.Second
 
 // RefuseLocal refuses an address that names this device or its network outright,
 // for connections through a proxy, which resolves names itself and would reach
@@ -314,7 +323,10 @@ func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("%s: %s", location, resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	body := &countingReader{reader: resp.Body}
+	stopWatching := watchRate(ctx, body, cancel, rateWindow)
+	defer stopWatching()
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -322,6 +334,46 @@ func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([
 		return nil, nil, fmt.Errorf("%s is over %d bytes", location, limit)
 	}
 	return data, resp.Request.URL, nil
+}
+
+// countingReader counts what's read through it.
+type countingReader struct {
+	reader io.Reader
+	read   atomic.Int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read.Add(int64(n))
+	return n, err
+}
+
+// watchRate ends a download that's slower than minDownloadRate, as a host can
+// drip a file to use up the time of a download that other tokens wait behind.  A
+// slow connection is far faster than that.
+func watchRate(ctx context.Context, body *countingReader, cancel func(), window time.Duration) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(window)
+		defer ticker.Stop()
+		last := int64(0)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				read := body.read.Load()
+				if read-last < int64(window/time.Second)*minDownloadRate {
+					cancel()
+					return
+				}
+				last = read
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // cachePath returns the file of a hash.

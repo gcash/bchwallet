@@ -361,3 +361,41 @@ func TestRefuseLocal(t *testing.T) {
 		}
 	}
 }
+
+// TestDownloadTooSlow ensures a host that drips a file loses the download, and
+// that one that sends it doesn't.
+func TestDownloadTooSlow(t *testing.T) {
+	old := rateWindow
+	rateWindow = time.Second
+	defer func() { rateWindow = old }()
+	stop := make(chan struct{})
+	defer close(stop)
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fast" {
+			_, _ = w.Write([]byte("registry"))
+			return
+		}
+		flusher := w.(http.Flusher)
+		for {
+			_, _ = w.Write([]byte("x"))
+			flusher.Flush()
+			select {
+			case <-stop:
+				return
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	})
+	if _, _, err := f.download(context.Background(), server.URL+"/fast", 100); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, _, err := f.download(context.Background(), server.URL+"/drip", 1000); err == nil {
+		t.Fatal("no error")
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("took %v", time.Since(start))
+	}
+}
