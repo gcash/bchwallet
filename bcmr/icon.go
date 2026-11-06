@@ -45,7 +45,7 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	digest, checked := ipfsRawDigest(uri)
 	var last error
 	for _, location := range f.locations(uri) {
-		data, err := f.download(ctx, location)
+		data, _, err := f.download(ctx, location)
 		switch {
 		case err != nil:
 		case len(data) > maxIconSize:

@@ -77,3 +77,29 @@ func TestStateHeadAndPublication(t *testing.T) {
 		t.Fatal("the older publication wasn't used")
 	}
 }
+
+// TestStoreSkipsUnchangedTypes ensures a state with NFT types costs no write when
+// it didn't change, though gob writes a map in a random order.
+func TestStoreSkipsUnchangedTypes(t *testing.T) {
+	first, err := digest(typesState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		next, err := digest(typesState())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next != first {
+			t.Fatal("the digest of an unchanged state changed")
+		}
+	}
+}
+
+func typesState() *State {
+	types := make(map[string]NFTType)
+	for i := range 50 {
+		types[string(rune('a'+i))] = NFTType{Name: "N"}
+	}
+	return &State{Metadata: &Metadata{Name: "T", NFTTypes: types}}
+}

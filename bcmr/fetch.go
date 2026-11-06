@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,10 @@ var (
 	// ErrRegistryUnavailable is the error of a registry none of whose URIs
 	// gave the published file.
 	ErrRegistryUnavailable = errors.New("no URI gave the registry")
+
+	// ErrRegistryChanged is the error of a registry whose host gave a file
+	// other than the published one.  Fetch returns the file with it.
+	ErrRegistryChanged = errors.New("the registry isn't the published one")
 
 	// errPrivateAddress refuses a connection to this device or its network.
 	errPrivateAddress = errors.New("refusing a private address")
@@ -150,17 +155,27 @@ func publicAddress(ip net.IP) bool {
 }
 
 // Fetch returns the file with the published hash, from the cache or from the
-// first of the URIs that gives it.
+// first of the URIs that gives it.  If none does, but a host gave another file,
+// it returns that file with ErrRegistryChanged: a collection that's still being
+// minted publishes the hash of the whole set, and serves the part minted so far.
+// A gateway only ever has a file to lose, so another file from one doesn't count,
+// even after a redirect, and neither does what isn't JSON, such as a host's page.
 func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]byte, error) {
 	if data := f.cached(hash); data != nil {
 		return data, nil
 	}
 	var last error
+	var changed []byte
 	for _, uri := range uris {
 		for _, location := range f.locations(uri) {
-			data, err := f.download(ctx, location)
+			data, final, err := f.download(ctx, location)
 			if err == nil && sha256.Sum256(data) != hash {
 				err = fmt.Errorf("%s doesn't match the published hash", location)
+				if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
+					ipfsPath(final) == "" && json.Valid(data) {
+
+					changed = data
+				}
 			}
 			if err != nil {
 				if ctx.Err() != nil {
@@ -172,6 +187,9 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 			f.keep(hash, data)
 			return data, nil
 		}
+	}
+	if changed != nil {
+		return changed, ErrRegistryChanged
 	}
 	if last != nil {
 		return nil, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
@@ -236,30 +254,31 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 	return locations
 }
 
-// download reads a URL, up to the size limit.
-func (f *Fetcher) download(ctx context.Context, location string) ([]byte, error) {
+// download reads a URL, up to the size limit, and returns the file and where it
+// came from after any redirects.
+func (f *Fetcher) download(ctx context.Context, location string) ([]byte, *url.URL, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: %s", location, resp.Status)
+		return nil, nil, fmt.Errorf("%s: %s", location, resp.Status)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistrySize+1))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(data) > maxRegistrySize {
-		return nil, fmt.Errorf("%s is over %d bytes", location, maxRegistrySize)
+		return nil, nil, fmt.Errorf("%s is over %d bytes", location, maxRegistrySize)
 	}
-	return data, nil
+	return data, resp.Request.URL, nil
 }
 
 // cachePath returns the file of a hash.

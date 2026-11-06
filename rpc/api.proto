@@ -243,6 +243,8 @@ message TokenMetadataResponse {
 		bool burned = 13; // Its identity ended, so its metadata can't change.
 		repeated NftType nft_types = 14; // Sorted by commitment, with include_nft_types.
 		bool publication_stale = 15; // The publication isn't on the head.
+		bool registry_changed = 16; // The fields above are from a file other than the published one.
+		bool registry_failed = 17; // A registry was published, but nothing could be read from it.
 	}
 	repeated Token tokens = 1; // In the order of the request.
 }

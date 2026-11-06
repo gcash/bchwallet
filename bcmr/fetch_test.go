@@ -32,7 +32,11 @@ func TestFetchChecksHash(t *testing.T) {
 	good := []byte(`{"good":true}`)
 	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/bad" {
-			_, _ = w.Write([]byte("tampered"))
+			_, _ = w.Write([]byte(`{"tampered":true}`))
+			return
+		}
+		if r.URL.Path == "/page" {
+			_, _ = w.Write([]byte("<html>Not here</html>"))
 			return
 		}
 		_, _ = w.Write(good)
@@ -43,8 +47,15 @@ func TestFetchChecksHash(t *testing.T) {
 	if err != nil || string(data) != string(good) {
 		t.Fatalf("got %q, %v", data, err)
 	}
-	_, err = f.Fetch(context.Background(), hash, []string{server.URL + "/bad"})
-	if !errors.Is(err, ErrRegistryUnavailable) {
+	data, err = f.Fetch(context.Background(), hash, []string{server.URL + "/bad"})
+	if !errors.Is(err, ErrRegistryChanged) || string(data) != `{"tampered":true}` {
+		t.Fatalf("got %q, %v", data, err)
+	}
+	data, err = f.Fetch(context.Background(), hash, []string{server.URL + "/page", server.URL + "/bad"})
+	if !errors.Is(err, ErrRegistryChanged) || string(data) != `{"tampered":true}` {
+		t.Fatalf("a page got in the way: %q, %v", data, err)
+	}
+	if _, err = f.Fetch(context.Background(), hash, []string{server.URL + "/page"}); !errors.Is(err, ErrRegistryUnavailable) {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := f.Fetch(context.Background(), hash, nil); !errors.Is(err, ErrRegistryUnavailable) {
@@ -84,6 +95,44 @@ func TestFetchLocations(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%q: got %v, want %v", uri, got, want)
 		}
+	}
+}
+
+// TestFetchChangedOnIPFS ensures another file from a gateway, or from a URL with
+// an ipfs path, is refused outright, as ipfs names its content.
+func TestFetchChangedOnIPFS(t *testing.T) {
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			http.Redirect(w, r, "/ipfs/bafkrei1", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"tampered":true}`))
+	})
+	f.Gateways = []string{server.URL}
+	hash := sha256.Sum256([]byte("good"))
+	for _, uri := range []string{"ipfs://bafkrei1", server.URL + "/ipfs/bafkrei1", server.URL + "/moved"} {
+		data, err := f.Fetch(context.Background(), hash, []string{uri})
+		if !errors.Is(err, ErrRegistryUnavailable) || data != nil {
+			t.Fatalf("%s: got %q, %v", uri, data, err)
+		}
+	}
+}
+
+// TestFetchGatewayAfterClosedHost ensures a URL with an ipfs path falls back on
+// the wallet's gateways, as nftstorage.link made necessary.
+func TestFetchGatewayAfterClosedHost(t *testing.T) {
+	good := []byte("registry")
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/gw/") {
+			_, _ = w.Write(good)
+			return
+		}
+		http.Error(w, "closed", http.StatusTooManyRequests)
+	})
+	f.Gateways = []string{server.URL + "/gw"}
+	data, err := f.Fetch(context.Background(), sha256.Sum256(good), []string{server.URL + "/ipfs/bafkrei1"})
+	if err != nil || string(data) != "registry" {
+		t.Fatalf("got %q, %v", data, err)
 	}
 }
 

@@ -3,6 +3,7 @@ package bcmr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,10 @@ const (
 
 	// maxRetryInterval is the longest a registry that keeps failing waits.
 	maxRetryInterval = 24 * time.Hour
+
+	// changedRegistryInterval is how often a registry that isn't the published
+	// one is read again, as a collection still being minted adds to it.
+	changedRegistryInterval = 24 * time.Hour
 )
 
 // TokenInfo is what the wallet can say of a token.
@@ -44,6 +49,14 @@ type TokenInfo struct {
 	LookAlike bool
 
 	Burned bool
+
+	// RegistryChanged reports that Metadata is from a file that isn't the
+	// published one, so nothing vouches for it.
+	RegistryChanged bool
+
+	// RegistryFailed reports that the token published a registry, but there's
+	// nothing to show from it.
+	RegistryFailed bool
 }
 
 // Config is what a Manager needs.
@@ -94,6 +107,10 @@ type Manager struct {
 	lastTip  chainhash.Hash
 	lastFull time.Time
 
+	// reread holds the tokens whose registry Refresh has read again, which
+	// keep what shows until then.
+	reread map[chainhash.Hash]struct{}
+
 	// lastAsked is how many tokens had been asked about at the last cycle.
 	lastAsked int
 
@@ -115,6 +132,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		states: states,
 		asked:  make(map[chainhash.Hash]struct{}),
 		tried:  make(map[[32]byte]retry),
+		reread: make(map[chainhash.Hash]struct{}),
 		wake:   make(chan struct{}, 1),
 	}
 	for _, state := range states {
@@ -259,8 +277,8 @@ func (m *Manager) askedStates() []*State {
 	return states
 }
 
-// takeWanted turns what was asked for into states.  A Refresh forgets the
-// registry, so that it's read again, and a failure, so that it's tried again.
+// takeWanted turns what was asked for into states.  A Refresh has the registry
+// read again, and forgets a failure, so that it's tried again.
 // It returns whether there was anything to take.
 func (m *Manager) takeWanted() bool {
 	m.mu.Lock()
@@ -277,7 +295,8 @@ func (m *Manager) takeWanted() bool {
 			m.save(state)
 		}
 		if refresh {
-			state.RegistryHash = [32]byte{}
+			m.reread[category] = struct{}{}
+			state.RegistryFailed = false
 			if state.Status == StatusFailed || state.Status == StatusUnavailable {
 				state.Status = StatusSearching
 			}
@@ -297,39 +316,75 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 		}
 		pub := state.CurrentPublication()
 		if pub == nil {
-			if state.Metadata != nil || state.RegistryHash != [32]byte{} {
-				state.Metadata, state.RegistryHash = nil, [32]byte{}
+			if state.Metadata != nil || state.RegistryHash != [32]byte{} || state.RegistryFailed {
+				state.clearRegistry()
 				m.save(state)
 			}
 			continue
 		}
-		if pub.Hash == state.RegistryHash && state.RegistryHash != [32]byte{} {
+		same := pub.Hash == state.RegistryHash && state.RegistryHash != [32]byte{}
+		_, reread := m.reread[state.Category]
+		if same && !reread && (!state.RegistryChanged ||
+			time.Since(state.RegistryRead) < changedRegistryInterval) {
+
+			// A state from before failures were kept has nothing to show.
+			if state.Metadata == nil && !state.RegistryFailed {
+				state.RegistryFailed = true
+				m.save(state)
+			}
 			continue
 		}
 
 		// What showed was from another publication, which this one
 		// replaced, so it no longer counts.
-		if state.Metadata != nil {
-			state.Metadata = nil
+		if !same && state.Metadata != nil {
+			state.clearRegistry()
 			m.save(state)
 		}
 		if failed, ok := m.tried[pub.Hash]; ok && time.Since(failed.last) < retryWait(failed.tries) {
 			continue
 		}
 		data, err := m.cfg.Fetcher.Fetch(ctx, pub.Hash, pub.URIs)
+		changed := errors.Is(err, ErrRegistryChanged)
+		var metadata *Metadata
+		if err == nil || changed {
+			var parseErr error
+			metadata, parseErr = ParseRegistry(data, state.Category, time.Now())
+			if parseErr != nil {
+				log.Debugf("Registry of token %v: %v", state.Category, parseErr)
+				metadata = nil
+			}
+		}
+
+		// Only a collection adds to its registry as it goes, so a file that
+		// isn't the published one counts for nothing else.  Its decimals
+		// don't count either, as they would change how amounts read.
+		if changed {
+			if metadata == nil || len(metadata.NFTTypes) == 0 {
+				err, metadata = fmt.Errorf("%w, for a token that isn't a collection", err), nil
+			} else {
+				err = nil
+				metadata.Decimals = 0
+			}
+		}
 		if err != nil {
 			failed := m.tried[pub.Hash]
 			m.tried[pub.Hash] = retry{time.Now(), failed.tries + 1}
 			log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
+			if state.Metadata == nil && !state.RegistryFailed {
+				state.RegistryFailed = true
+				m.save(state)
+			}
 			continue
 		}
 		delete(m.tried, pub.Hash)
-		metadata, err := ParseRegistry(data, state.Category, time.Now())
-		if err != nil {
-			log.Debugf("Registry of token %v: %v", state.Category, err)
-			metadata = nil
-		}
+		delete(m.reread, state.Category)
 		state.RegistryHash, state.Metadata = pub.Hash, metadata
+		state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
+		state.RegistryRead = time.Time{}
+		if changed {
+			state.RegistryRead = time.Now()
+		}
 		m.save(state)
 	}
 }
@@ -361,15 +416,19 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 		Status:   state.Status,
 		Burned:   state.Burned,
 		Stale:    state.Metadata != nil && state.PublicationStale(),
+
+		RegistryChanged: state.RegistryChanged,
+		RegistryFailed:  state.RegistryFailed,
 	}
 	if m.cfg.AutoLoad != nil {
 		info.InHints = m.cfg.AutoLoad(state.Category)
 	}
 	if known, ok := m.cfg.Known[state.Category]; ok {
 		info.Known = true
-		if info.Metadata == nil {
+		if info.Metadata == nil || info.RegistryChanged {
 			info.Metadata = known
 		}
+		info.RegistryChanged, info.RegistryFailed = false, false
 	}
 	if !info.Known && info.Metadata != nil {
 		info.LookAlike = m.looksKnown(info.Metadata)

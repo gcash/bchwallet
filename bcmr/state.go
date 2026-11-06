@@ -77,6 +77,15 @@ type State struct {
 	// RegistryHash is the hash of the registry Metadata came from.
 	RegistryHash [32]byte
 	Metadata     *Metadata
+
+	// RegistryChanged reports that Metadata is from a file that isn't the
+	// published one, and RegistryRead when that file was read.
+	RegistryChanged bool
+	RegistryRead    time.Time
+
+	// RegistryFailed reports that there's no metadata to show because the
+	// publication's registry couldn't be read or had nothing to use.
+	RegistryFailed bool
 }
 
 // Head returns the head, or nil if none is known yet.
@@ -96,6 +105,13 @@ func (s *State) CurrentPublication() *Publication {
 		}
 	}
 	return s.Older
+}
+
+// clearRegistry forgets what was read of a registry.
+func (s *State) clearRegistry() {
+	s.RegistryHash, s.Metadata = [32]byte{}, nil
+	s.RegistryChanged, s.RegistryFailed = false, false
+	s.RegistryRead = time.Time{}
 }
 
 // retryInterval is how long something that couldn't be read waits.
@@ -157,17 +173,38 @@ func NewStore(db walletdb.DB) (*Store, error) {
 	return &Store{db: db, last: make(map[chainhash.Hash][sha256.Size]byte)}, nil
 }
 
+// digest returns what tells whether a state changed.  It leaves out the NFT
+// types, which gob writes in a random order, and which only change with the
+// registry's hash or when it was read.  A collection's can be megabytes, so a
+// state that didn't change shouldn't cost encoding them either.
+func digest(state *State) ([sha256.Size]byte, error) {
+	light := *state
+	if state.Metadata != nil {
+		metadata := *state.Metadata
+		metadata.NFTTypes = nil
+		light.Metadata = &metadata
+	}
+	var value bytes.Buffer
+	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return sha256.Sum256(value.Bytes()), nil
+}
+
 // Put stores a state.
 func (s *Store) Put(state *State) error {
+	digest, err := digest(state)
+	if err != nil {
+		return err
+	}
+	if last, ok := s.last[state.Category]; ok && last == digest {
+		return nil
+	}
 	var value bytes.Buffer
 	if err := gob.NewEncoder(&value).Encode(state); err != nil {
 		return err
 	}
-	digest := sha256.Sum256(value.Bytes())
-	if last, ok := s.last[state.Category]; ok && last == digest {
-		return nil
-	}
-	err := walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
+	err = walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
 		return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], value.Bytes())
 	})
 	if err == nil {

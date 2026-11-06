@@ -452,3 +452,153 @@ func TestManagerStartStop(t *testing.T) {
 	}
 	f.m.Stop()
 }
+
+// collectionFor is a registry of a collection with decimals it shouldn't have.
+func collectionFor(category chainhash.Hash, name string) []byte {
+	return []byte(fmt.Sprintf(`{"identities":{"%s":{"2024-01-01T00:00:00.000Z":
+		{"name":"%s","token":{"category":"%s","symbol":"C","decimals":8,
+		"nfts":{"parse":{"types":{"01":{"name":"One"}}}}}}}}}`, category, name, category))
+}
+
+// changedFixture is a fixture whose host serves file under a hash of another.
+func changedFixture(t *testing.T, category chainhash.Hash, file []byte) *managerFixture {
+	t.Helper()
+	f := newManagerFixture(t, category, file, nil, always)
+	f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// TestManagerChangedCollection ensures a collection's registry that isn't the
+// published one shows, marked, with no decimals, and is read again only later
+// or when asked.
+func TestManagerChangedCollection(t *testing.T) {
+	category := chainhash.Hash{0x31}
+	f := changedFixture(t, category, collectionFor(category, "Minting"))
+	info := f.m.Tokens([]chainhash.Hash{category})[0]
+	if info.Metadata == nil || !info.RegistryChanged || info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+	if info.Metadata.Decimals != 0 || info.Metadata.NFTTypes["01"].Name != "One" {
+		t.Fatalf("%+v", info.Metadata)
+	}
+
+	hits := f.hits.Load()
+	state := f.m.states[category]
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits {
+		t.Fatal("read again right away")
+	}
+	state.RegistryRead = time.Now().Add(-changedRegistryInterval - time.Minute)
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits+1 {
+		t.Fatal("not read again after the interval")
+	}
+
+	f.m.Refresh(category)
+	f.m.takeWanted()
+	if state.Metadata == nil {
+		t.Fatal("Refresh dropped what shows, which no cache can bring back")
+	}
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if f.hits.Load() != hits+2 {
+		t.Fatal("not read again when asked")
+	}
+}
+
+// TestManagerChangedFungible ensures a registry that isn't the published one
+// counts for nothing if the token isn't a collection.
+func TestManagerChangedFungible(t *testing.T) {
+	category := chainhash.Hash{0x32}
+	f := changedFixture(t, category, registryFor(category, "Coin", "COIN"))
+	info := f.m.Tokens([]chainhash.Hash{category})[0]
+	if info.Metadata != nil || info.RegistryChanged || !info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerRegistryFailed ensures a registry that can't be read is reported,
+// and that the report ends once it can be.
+func TestManagerRegistryFailed(t *testing.T) {
+	category := chainhash.Hash{0x33}
+	file := registryFor(category, "Coin", "COIN")
+	f := newManagerFixture(t, category, file, nil, always)
+	uris := f.backend.pubs[category].URIs
+	f.backend.pubs[category].URIs = []string{"https://127.0.0.1:1/r"}
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; !info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+	state := f.m.states[category]
+	for i := range state.Links {
+		state.Links[i].Publication.URIs = uris
+	}
+	f.m.Refresh(category)
+	f.m.takeWanted()
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; info.RegistryFailed || info.Metadata == nil {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerKnownOverChanged ensures the Known list wins over a file that isn't
+// the published one.
+func TestManagerKnownOverChanged(t *testing.T) {
+	category := chainhash.Hash{0x34}
+	known := map[chainhash.Hash]*Metadata{category: {Name: "Listed", Symbol: "L"}}
+	f := newManagerFixture(t, category, collectionFor(category, "Host"), known, always)
+	f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info := f.m.Tokens([]chainhash.Hash{category})[0]
+	if info.Metadata == nil || info.Metadata.Name != "Listed" || info.RegistryChanged {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerRefreshKeepsWhatShows ensures a Refresh that can't read the registry
+// again leaves a token as it was.
+func TestManagerRefreshKeepsWhatShows(t *testing.T) {
+	category := chainhash.Hash{0x35}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	for i := range state.Links {
+		state.Links[i].Publication.URIs = []string{"https://127.0.0.1:1/r"}
+	}
+	f.m.Refresh(category)
+	f.m.takeWanted()
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	info := f.m.Tokens([]chainhash.Hash{category})[0]
+	if info.Metadata == nil || info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerOldFailure ensures a state saved with a registry that had nothing
+// to use, from before such failures were kept, reports one.
+func TestManagerOldFailure(t *testing.T) {
+	category := chainhash.Hash{0x36}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state := f.m.states[category]
+	state.Metadata = nil
+	f.m.fetchRegistries(context.Background(), []*State{state})
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; !info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+}
