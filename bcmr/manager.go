@@ -350,6 +350,9 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			continue
 		}
 		data, err := m.cfg.Fetcher.Fetch(ctx, pub.Hash, pub.URIs)
+		if ctx.Err() != nil {
+			return
+		}
 		changed := errors.Is(err, ErrRegistryChanged)
 		var metadata *Metadata
 		if err == nil || changed {

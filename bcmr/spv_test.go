@@ -15,6 +15,9 @@ import (
 
 // fakeChain is a chain of blocks, from height 1, that searches them directly.
 type fakeChain struct {
+	// duringSearch is told of each block a search has read.
+	duringSearch func(height int32)
+
 	blocks   []*wire.MsgBlock
 	searches [][2]int32
 	failAt   int32
@@ -99,6 +102,9 @@ func (c *fakeChain) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 		}
 		c.searchBlock(h, watched, found, step > 0)
 		reached = h
+		if c.duringSearch != nil {
+			c.duringSearch(h)
+		}
 		if progress != nil {
 			progress(h)
 		}
@@ -719,5 +725,35 @@ func TestSPVLinksStayBounded(t *testing.T) {
 	}
 	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "first.example" {
 		t.Fatalf("publication %+v", pub)
+	}
+}
+
+// TestSPVReorgDuringScan ensures a chain that changes during a scan marks nothing
+// as scanned, so that the next pass goes back over what it may have missed.
+func TestSPVReorgDuringScan(t *testing.T) {
+	c := newFakeChain(100)
+	category := chainhash.Hash{1}
+	c.put(80, genesisOf(1, category))
+	state := &State{Category: category}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+		t.Fatal(err)
+	}
+	scanned, hash := state.ScannedTo, state.ScannedHash
+	for range 3 {
+		c.addBlock(1)
+	}
+	c.duringSearch = func(height int32) {
+		c.duringSearch = nil
+		c.replaceFrom(height, 2000)
+	}
+	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+		t.Fatal(err)
+	}
+	if state.ScannedTo != scanned || state.ScannedHash != hash {
+		t.Fatalf("scanned to %d", state.ScannedTo)
 	}
 }

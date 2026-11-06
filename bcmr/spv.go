@@ -223,14 +223,15 @@ func createsCategory(tx *wire.MsgTx, category chainhash.Hash) bool {
 // still move up to the tip, in one pass.  A head the pass doesn't see spent is
 // proven unspent, and its state Verified.
 func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*State)) error {
+	// The tip comes first, so that a reorg from here on shows as a changed chain.
+	tipHash, tip, err := b.source.GetBestBlock()
+	if err != nil {
+		return err
+	}
 	for _, state := range states {
 		if err := b.rewind(state); err != nil {
 			return err
 		}
-	}
-	_, tip, err := b.source.GetBestBlock()
-	if err != nil {
-		return err
 	}
 
 	from := tip + 1
@@ -266,12 +267,19 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 		}
 		lastSave := from
 
-		// spent holds the spends found.  Chains that merge share what
-		// follows, and one can get there after the other has gone
-		// further, when they merge in a block where the links go on, so
-		// it follows the rest from here.
+		// spent holds the spends found in the block being read.  Chains
+		// that merge share what follows, and one can get there after the
+		// other has gone further, when they merge in a block where the
+		// links go on, so it follows the rest from here.  A later block
+		// can't hold what an earlier one spent, and a chain through a
+		// busy contract has any number of links, so it keeps one block's.
 		spent := make(map[wire.OutPoint]SpendFound)
+		var spentHeight int32
 		follow := func(spend SpendFound) []wire.OutPoint {
+			if spend.Height != spentHeight {
+				clear(spent)
+				spentHeight = spend.Height
+			}
 			spent[spend.OutPoint] = spend
 			followers := watching[spend.OutPoint]
 			delete(watching, spend.OutPoint)
@@ -304,19 +312,26 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 				return
 			}
 			lastSave = height
-			if err := b.markScanned(active, height, save); err != nil {
+			if err := b.markScanned(active, height, tip, tipHash, save); err != nil {
 				log.Warnf("Unable to save a token search: %v", err)
 			}
 		}
 		reached, err := b.source.SearchSpends(outpoints, from, tip, follow, progress, ctx.Done())
 		if err != nil {
 			if reached >= from {
-				_ = b.markScanned(active, reached, save)
+				_ = b.markScanned(active, reached, tip, tipHash, save)
 			}
 			return err
 		}
 	}
-	if err := b.markScanned(active, tip, save); err != nil {
+	same, err := b.sameChain(tip, tipHash)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return nil
+	}
+	if err := b.markScanned(active, tip, tip, tipHash, save); err != nil {
 		return err
 	}
 	for _, state := range active {
@@ -328,8 +343,27 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 	return nil
 }
 
-// markScanned records that the heads of the states were unspent up to height.
-func (b *SPVBackend) markScanned(states []*State, height int32, save func(*State)) error {
+// sameChain returns whether the block at height is still hash, so that what was
+// scanned up to it is still the chain.
+func (b *SPVBackend) sameChain(height int32, hash *chainhash.Hash) (bool, error) {
+	current, err := b.source.GetBlockHash(int64(height))
+	if err != nil {
+		return false, err
+	}
+	return *current == *hash, nil
+}
+
+// markScanned records that the heads of the states were unspent up to height.  A
+// chain that changed since the scan began to tip leaves them as they were, for
+// the next pass to go back from: the blocks it read may not be the ones there
+// now, and the old hash is what tells so.
+func (b *SPVBackend) markScanned(states []*State, height, tip int32, tipHash *chainhash.Hash,
+	save func(*State)) error {
+
+	same, err := b.sameChain(tip, tipHash)
+	if err != nil || !same {
+		return err
+	}
 	hash, err := b.source.GetBlockHash(int64(height))
 	if err != nil {
 		return err
