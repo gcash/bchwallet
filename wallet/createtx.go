@@ -599,7 +599,7 @@ func (w *Wallet) eligibleOutputs(dbtx walletdb.ReadTx, account uint32, minconf i
 
 		// Outputs carrying CashTokens are only spent to send their
 		// tokens, since spending them otherwise burns the tokens.
-		if output.HasTokens() != tokens {
+		if output.HasTokens() != tokens || w.forgedToken(output) {
 			continue
 		}
 

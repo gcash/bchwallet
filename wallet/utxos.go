@@ -8,6 +8,7 @@ package wallet
 import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
 )
 
@@ -80,6 +81,10 @@ func (w *Wallet) UnspentOutputs(policy OutputSelectionPolicy) ([]*TransactionOut
 				continue
 			}
 			_, outputAcct, err := w.Manager.AddrAccount(addrmgrNs, addrs[0])
+			if waddrmgr.IsError(err, waddrmgr.ErrAddressNotFound) {
+				// A multisig can name a stranger's key first.
+				continue
+			}
 			if err != nil {
 				return err
 			}

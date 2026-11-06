@@ -248,6 +248,9 @@ func (p *Pool) isCreditEligible(c Credit, minConf int, chainHeight int32,
 	if p.isCharterOutput(c) {
 		return false
 	}
+	if c.HasTokens() {
+		return false
+	}
 
 	return true
 }

@@ -83,3 +83,61 @@ func TestUnspentOutputsTokenData(t *testing.T) {
 		}
 	}
 }
+
+// TestRollbackKeepsZeroValueCredit checks that a spent token output of no value
+// is unspent again after a rollback, as its amount can't tell it from one that's
+// gone.
+func TestRollbackKeepsZeroValueCredit(t *testing.T) {
+	t.Parallel()
+
+	s, db, teardown, err := testStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teardown()
+
+	dbtx, err := db.BeginReadWriteTx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dbtx.Commit() }()
+	ns := dbtx.ReadWriteBucket(namespaceKey)
+
+	received := spendOutput(&chainhash.Hash{0x02}, 0, 0)
+	rec, err := NewTxRecordFromMsgTx(received, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := makeBlockMeta(100)
+	if err := s.InsertTx(ns, rec, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddCredit(ns, rec, &first, 0, false); err != nil {
+		t.Fatal(err)
+	}
+
+	spendRec, err := NewTxRecordFromMsgTx(spendOutput(&rec.Hash, 0, 0), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := makeBlockMeta(101)
+	if err := s.InsertTx(ns, spendRec, &second); err != nil {
+		t.Fatal(err)
+	}
+	unspents, err := s.UnspentOutputs(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unspents) != 0 {
+		t.Fatalf("%d unspent before the rollback", len(unspents))
+	}
+
+	if err := s.Rollback(ns, 101); err != nil {
+		t.Fatal(err)
+	}
+	// The spender is unmined now, so the output counts as spent, but it's back
+	// among the unspent for when the spender goes.
+	if existsRawUnspent(ns, canonicalOutPoint(&rec.Hash, 0)) == nil {
+		t.Fatal("the credit is gone")
+	}
+}

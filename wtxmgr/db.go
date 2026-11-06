@@ -669,13 +669,14 @@ func spendCredit(ns walletdb.ReadWriteBucket, k []byte, spender *indexedIncidenc
 }
 
 // unspendRawCredit rewrites the credit for the given key as unspent.  The
-// output amount of the credit is returned.  It returns without error if no
-// credit exists for the key.
-func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (bchutil.Amount, error) {
+// output amount of the credit is returned, and whether it exists, as an output
+// that carries tokens can have an amount of zero.  It returns without error if
+// no credit exists for the key.
+func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (bchutil.Amount, bool, error) {
 	b := ns.NestedReadWriteBucket(bucketCredits)
 	v := b.Get(k)
 	if v == nil {
-		return 0, nil
+		return 0, false, nil
 	}
 	newv := make([]byte, 9)
 	copy(newv, v)
@@ -684,9 +685,9 @@ func unspendRawCredit(ns walletdb.ReadWriteBucket, k []byte) (bchutil.Amount, er
 	err := b.Put(k, newv)
 	if err != nil {
 		str := "failed to put credit"
-		return 0, storeError(ErrDatabase, str, err)
+		return 0, false, storeError(ErrDatabase, str, err)
 	}
-	return bchutil.Amount(byteOrder.Uint64(v[0:8])), nil
+	return bchutil.Amount(byteOrder.Uint64(v[0:8])), true, nil
 }
 
 func existsCredit(ns walletdb.ReadBucket, txHash *chainhash.Hash, index uint32, block *Block) (k, v []byte) {

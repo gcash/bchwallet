@@ -590,8 +590,7 @@ func (s *Store) rollback(ns walletdb.ReadWriteBucket, height int32) error {
 				// may have already been removed from a
 				// previously removed transaction record in
 				// this rollback.
-				var amt bchutil.Amount
-				amt, err = unspendRawCredit(ns, credKey)
+				amt, found, err := unspendRawCredit(ns, credKey)
 				if err != nil {
 					return err
 				}
@@ -600,11 +599,10 @@ func (s *Store) rollback(ns walletdb.ReadWriteBucket, height int32) error {
 					return err
 				}
 
-				// If the credit was previously removed in the
-				// rollback, the credit amount is zero.  Only
-				// mark the previously spent credit as unspent
-				// if it still exists.
-				if amt == 0 {
+				// Only mark the previously spent credit as
+				// unspent if it still exists, as it may have
+				// been removed in the rollback.
+				if !found {
 					continue
 				}
 				unspentVal, err := fetchRawCreditUnspentValue(credKey)

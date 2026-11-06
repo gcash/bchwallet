@@ -1838,6 +1838,13 @@ type TokenOutput struct {
 	Token    wire.TokenData
 }
 
+// forgedToken returns whether an output is from before CashTokens activated, when
+// its token prefix meant nothing, so that the network won't let it be spent as a
+// token.
+func (w *Wallet) forgedToken(output *wtxmgr.Credit) bool {
+	return output.HasTokens() && output.Height >= 0 && output.Height <= w.chainParams.Upgrade9ForkHeight
+}
+
 // TokenBalances returns the tokens in the account's unspent outputs that have
 // at least confirms confirmations, by category, sorted by category.  The NFTs
 // and the outputs of a category are sorted by outpoint.
@@ -1854,17 +1861,21 @@ func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, 
 		}
 		for i := range unspent {
 			output := &unspent[i]
-			if !output.HasTokens() ||
+			if !output.HasTokens() || w.forgedToken(output) ||
 				!confirmed(confirms, output.Height, tip.Height) {
 				continue
 			}
 
+			// As for spending: an output with more than one address, as a
+			// multisig with a stranger's key, isn't the wallet's to send,
+			// and the stranger can take it back.
 			var outputAcct uint32
 			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
 				output.PkScript, w.chainParams)
-			if err == nil && len(addrs) > 0 {
-				_, outputAcct, err = w.Manager.AddrAccount(addrmgrNs, addrs[0])
+			if err != nil || len(addrs) != 1 {
+				continue
 			}
+			_, outputAcct, err = w.Manager.AddrAccount(addrmgrNs, addrs[0])
 			if err != nil || outputAcct != account {
 				continue
 			}
@@ -1876,7 +1887,9 @@ func (w *Wallet) TokenBalances(account uint32, confirms int32) ([]TokenBalance, 
 				byCategory[token.CategoryID] = bal
 			}
 			if token.HasAmount() {
-				bal.Amount += token.Amount
+				// Consensus holds a category to this, but not an unconfirmed
+				// output a peer made up.
+				bal.Amount = min(bal.Amount+token.Amount, wire.MAX_FT_AMOUNT)
 			}
 			if token.HasNFT() {
 				bal.NFTs = append(bal.NFTs, TokenNFT{

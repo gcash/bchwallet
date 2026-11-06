@@ -1174,3 +1174,57 @@ func TestListUnspentTokens(t *testing.T) {
 			"tokens spendable", len(results), spendable)
 	}
 }
+
+// TestTokenBalancesLeavesOutWhatIsntTheWallets ensures a token in a multisig with
+// a stranger's key, or from before tokens activated, isn't shown as held.
+func TestTokenBalancesLeavesOutWhatIsntTheWallets(t *testing.T) {
+	w := newRegtestWallet(t)
+	setSyncedTo(t, w, testBlock.Height)
+	script := walletScript(t, w)
+	token := wire.TokenData{CategoryID: [32]byte{9}, Amount: 5, BitField: wire.HAS_AMOUNT}
+
+	var keys []*bchutil.AddressPubKey
+	for range 2 {
+		key, err := bchec.NewPrivateKey(bchec.S256())
+		if err != nil {
+			t.Fatal(err)
+		}
+		address, err := bchutil.NewAddressPubKey(key.PubKey().SerializeCompressed(), w.chainParams)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, address)
+	}
+	multisig, err := txscript.MultiSigScript(keys, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addCredit(t, w, wire.NewTxOut(1000, multisig, token))
+	bals, err := w.TokenBalances(waddrmgr.DefaultAccountNum, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bals) != 0 {
+		t.Fatalf("%+v", bals)
+	}
+
+	addCredit(t, w, wire.NewTxOut(1000, script, token))
+	bals, err = w.TokenBalances(waddrmgr.DefaultAccountNum, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bals) != 1 {
+		t.Fatalf("%+v", bals)
+	}
+
+	params := *w.chainParams
+	params.Upgrade9ForkHeight = testBlock.Height + 1
+	w.chainParams = &params
+	bals, err = w.TokenBalances(waddrmgr.DefaultAccountNum, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bals) != 0 {
+		t.Fatalf("%+v", bals)
+	}
+}
