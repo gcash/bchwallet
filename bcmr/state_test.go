@@ -1,6 +1,8 @@
 package bcmr
 
 import (
+	"bytes"
+	"encoding/gob"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -78,21 +80,107 @@ func TestStateHeadAndPublication(t *testing.T) {
 	}
 }
 
-// TestStoreSkipsUnchangedTypes ensures a state with NFT types costs no write when
-// it didn't change, though gob writes a map in a random order.
-func TestStoreSkipsUnchangedTypes(t *testing.T) {
-	first, err := digest(typesState())
+// storedTypes returns what the types bucket holds for a state.
+func storedTypes(t *testing.T, db walletdb.DB, category chainhash.Hash) []byte {
+	t.Helper()
+	var stored []byte
+	err := walletdb.View(db, func(tx walletdb.ReadTx) error {
+		stored = append(stored, tx.ReadBucket(bcmrNFTsBucket).Get(category[:])...)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 20 {
-		next, err := digest(typesState())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if next != first {
-			t.Fatal("the digest of an unchanged state changed")
-		}
+	return stored
+}
+
+// TestStoreKeepsTypesApart ensures a state's NFT types come back, and that a save
+// for a new block doesn't write them.
+func TestStoreKeepsTypesApart(t *testing.T) {
+	db := testDB(t)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{1}
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	first := storedTypes(t, db, state.Category)
+	if len(first) == 0 {
+		t.Fatal("no types stored")
+	}
+
+	// Writing other bytes under the key shows whether the next save writes them.
+	mark := []byte("unchanged")
+	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		return tx.ReadWriteBucket(bcmrNFTsBucket).Put(state.Category[:], mark)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ScannedTo = 100
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedTypes(t, db, state.Category), mark) {
+		t.Fatal("a new block wrote the types")
+	}
+
+	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		return tx.ReadWriteBucket(bcmrNFTsBucket).Put(state.Category[:], first)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := all[state.Category]
+	if got == nil || got.ScannedTo != 100 || !reflect.DeepEqual(got.Metadata.NFTTypes, state.Metadata.NFTTypes) {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// TestStoreReadsTypesKeptWithTheState ensures a state saved before the types were
+// kept apart keeps them, and moves them at its next save.
+func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
+	db := testDB(t)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{2}
+	var old bytes.Buffer
+	if err := gob.NewEncoder(&old).Encode(state); err != nil {
+		t.Fatal(err)
+	}
+	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], old.Bytes())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := all[state.Category]
+	if got == nil || len(got.Metadata.NFTTypes) != 50 {
+		t.Fatalf("%+v", got)
+	}
+	if err := store.Put(got); err != nil {
+		t.Fatal(err)
+	}
+	if len(storedTypes(t, db, state.Category)) == 0 {
+		t.Fatal("the types weren't moved")
 	}
 }
 

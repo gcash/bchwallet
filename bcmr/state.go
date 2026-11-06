@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -148,86 +149,140 @@ func (s *State) PublicationStale() bool {
 	return head != nil && head.Publication == nil && s.CurrentPublication() != nil
 }
 
-// bcmrBucket is the wallet database's bucket for token identities.
-var bcmrBucket = []byte("bcmr")
+// bcmrBucket is the wallet database's bucket for token identities, and
+// bcmrNFTsBucket the one for the NFT types of their metadata.  The types can be
+// megabytes, and a state changes with every block, so they're kept apart.
+var (
+	bcmrBucket     = []byte("bcmr")
+	bcmrNFTsBucket = []byte("bcmrnfts")
+)
 
 // Store keeps states in the wallet's database.
 type Store struct {
 	db walletdb.DB
 
-	// last holds what was last written of each state, so that a state that
-	// didn't change costs no write.  It belongs to the Manager's goroutine.
-	last map[chainhash.Hash][sha256.Size]byte
+	// last and lastTypes hold what was last written of each state and of its
+	// NFT types, so that what didn't change costs no write.  They belong to
+	// the Manager's goroutine.
+	last      map[chainhash.Hash][sha256.Size]byte
+	lastTypes map[chainhash.Hash][sha256.Size]byte
 }
 
-// NewStore returns a store in the database, adding its bucket to a wallet that
-// doesn't have it yet.
+// NewStore returns a store in the database, adding its buckets to a wallet that
+// doesn't have them yet.
 func NewStore(db walletdb.DB) (*Store, error) {
 	err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
-		_, err := tx.CreateTopLevelBucket(bcmrBucket)
-		if errors.Is(err, walletdb.ErrBucketExists) {
-			return nil
+		for _, bucket := range [][]byte{bcmrBucket, bcmrNFTsBucket} {
+			_, err := tx.CreateTopLevelBucket(bucket)
+			if err != nil && !errors.Is(err, walletdb.ErrBucketExists) {
+				return err
+			}
 		}
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, last: make(map[chainhash.Hash][sha256.Size]byte)}, nil
+	return &Store{
+		db:        db,
+		last:      make(map[chainhash.Hash][sha256.Size]byte),
+		lastTypes: make(map[chainhash.Hash][sha256.Size]byte),
+	}, nil
 }
 
-// digest returns what tells whether a state changed.  It leaves out the NFT
-// types, which gob writes in a random order, and which only change with the
-// registry's hash or when it was read.  A collection's can be megabytes, so a
-// state that didn't change shouldn't cost encoding them either.
-func digest(state *State) ([sha256.Size]byte, error) {
-	light := *state
+// typesVersion returns what tells whether a state's NFT types changed, which
+// they only do when a registry is read.  It doesn't look at the types, as gob
+// writes a map in a random order, and they can be megabytes.
+func typesVersion(state *State) [sha256.Size]byte {
+	types := 0
 	if state.Metadata != nil {
-		metadata := *state.Metadata
-		metadata.NFTTypes = nil
-		light.Metadata = &metadata
+		types = len(state.Metadata.NFTTypes)
 	}
-	var value bytes.Buffer
-	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
-		return [sha256.Size]byte{}, err
-	}
-	return sha256.Sum256(value.Bytes()), nil
+	version := fmt.Sprintf("%x %d %d %d", state.RegistryHash, state.RegistryRead.UnixNano(),
+		state.RegistryParser, types)
+	return sha256.Sum256([]byte(version))
 }
 
 // Put stores a state.
 func (s *Store) Put(state *State) error {
-	digest, err := digest(state)
-	if err != nil {
-		return err
-	}
-	if last, ok := s.last[state.Category]; ok && last == digest {
-		return nil
+	light := *state
+	var types map[string]NFTType
+	if state.Metadata != nil {
+		metadata := *state.Metadata
+		types, metadata.NFTTypes = metadata.NFTTypes, nil
+		light.Metadata = &metadata
 	}
 	var value bytes.Buffer
-	if err := gob.NewEncoder(&value).Encode(state); err != nil {
+	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
 		return err
 	}
-	err = walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
-		return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], value.Bytes())
+	digest := sha256.Sum256(value.Bytes())
+	version := typesVersion(state)
+	last, stored := s.last[state.Category]
+	lastTypes, storedTypes := s.lastTypes[state.Category]
+	sameState := stored && last == digest
+	sameTypes := storedTypes && lastTypes == version
+	if sameState && sameTypes {
+		return nil
+	}
+	var typesValue bytes.Buffer
+	if !sameTypes && len(types) != 0 {
+		if err := gob.NewEncoder(&typesValue).Encode(types); err != nil {
+			return err
+		}
+	}
+	err := walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
+		if !sameState {
+			err := tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], value.Bytes())
+			if err != nil {
+				return err
+			}
+		}
+		if sameTypes {
+			return nil
+		}
+		bucket := tx.ReadWriteBucket(bcmrNFTsBucket)
+		if len(types) == 0 {
+			return bucket.Delete(state.Category[:])
+		}
+		return bucket.Put(state.Category[:], typesValue.Bytes())
 	})
 	if err == nil {
-		s.last[state.Category] = digest
+		s.last[state.Category], s.lastTypes[state.Category] = digest, version
 	}
 	return err
 }
 
 // All returns every state.  A state that can't be read is left out, and is
-// found again.
+// found again, and NFT types that can't be read are read from the registry
+// again.
 func (s *Store) All() (map[chainhash.Hash]*State, error) {
 	states := make(map[chainhash.Hash]*State)
 	err := walletdb.View(s.db, func(tx walletdb.ReadTx) error {
+		nfts := tx.ReadBucket(bcmrNFTsBucket)
 		return tx.ReadBucket(bcmrBucket).ForEach(func(key, value []byte) error {
 			var state State
 			err := gob.NewDecoder(bytes.NewReader(value)).Decode(&state)
-			if err == nil && len(key) == chainhash.HashSize {
-				copy(state.Category[:], key)
-				states[state.Category] = &state
+			if err != nil || len(key) != chainhash.HashSize {
+				return nil
 			}
+			copy(state.Category[:], key)
+			states[state.Category] = &state
+
+			// A state from before the types were kept apart has them with
+			// it, and is written anew at its first save.
+			stored := nfts.Get(key)
+			if state.Metadata == nil || stored == nil {
+				return nil
+			}
+			var types map[string]NFTType
+			if gob.NewDecoder(bytes.NewReader(stored)).Decode(&types) != nil {
+				state.RegistryParser = 0
+				return nil
+			}
+			state.Metadata.NFTTypes = types
+			s.last[state.Category] = sha256.Sum256(value)
+			s.lastTypes[state.Category] = typesVersion(&state)
 			return nil
 		})
 	})
