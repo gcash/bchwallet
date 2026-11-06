@@ -53,6 +53,9 @@ type NFTType struct {
 	Description string
 	IconURI     string
 
+	// ImageURI is the NFT's art in full, if the registry gives it.
+	ImageURI string
+
 	// Attributes are the NFT's traits, by name.
 	Attributes map[string]string
 }
@@ -248,13 +251,14 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 			if metadata.NFTTypes == nil {
 				metadata.NFTTypes = make(map[string]NFTType)
 			}
-			nftType := NFTType{Name: nftName, IconURI: usableURI(nft.URIs["icon"])}
+			nftType := NFTType{Name: nftName, IconURI: usableURI(nft.URIs["icon"]),
+				ImageURI: usableURI(nft.URIs["image"])}
 			if displayable(nft.Description, maxDescriptionRunes) {
 				nftType.Description = nft.Description
 			}
 			nftType.Attributes = attributesOf(nft.Extensions)
 			size += len(commitment) + len(nftType.Name) + len(nftType.Description) +
-				len(nftType.IconURI)
+				len(nftType.IconURI) + len(nftType.ImageURI)
 			for name, value := range nftType.Attributes {
 				size += len(name) + len(value)
 			}

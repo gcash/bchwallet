@@ -70,12 +70,16 @@ func (b *SPVBackend) floor() int32 {
 // Prepare gives each state that has no links its starting point: the table's
 // entry, or the genesis from a search down to just above the table's height.  A
 // token that can't be read waits and doesn't hold up the others, and a Failed one
-// waits to be asked for again.
+// is looked for in the blocks that came since.
 func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
-	var search []*State
+	var search, failed []*State
 	for _, state := range states {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if state.Status == StatusFailed && len(state.Links) == 0 {
+			failed = append(failed, state)
+			continue
 		}
 		if len(state.Links) != 0 || state.Status == StatusFailed {
 			continue
@@ -93,6 +97,12 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 			}
 		}
 		search = append(search, state)
+	}
+	if err := b.checkFailed(ctx, failed); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		log.Warnf("Unable to look for tokens in new blocks: %v", err)
 	}
 	if len(search) == 0 {
 		return nil
@@ -190,6 +200,33 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 
 	// unknown holds the tokens whose genesis was found but couldn't be used.
 	unknown := make(map[chainhash.Hash]struct{})
+	outpoints, found := b.genesisFinder(states, unknown)
+	if _, err = b.source.SearchSpends(outpoints, tip, bottom, found, nil, ctx.Done()); err != nil {
+		return err
+	}
+	covered, coveredHash, same, err := b.searchNewBlocks(ctx, states, tip, tipHash, found)
+	if err != nil {
+		return err
+	}
+	for _, state := range states {
+		if len(state.Links) != 0 {
+			continue
+		}
+		if _, ok := unknown[state.Category]; ok || !same {
+			b.waiting[state.Category] = time.Now()
+			continue
+		}
+		state.Status = StatusFailed
+		state.ScannedTo, state.ScannedHash = covered, *coveredHash
+	}
+	return nil
+}
+
+// genesisFinder returns the outpoints whose spends are the states' geneses, and
+// what takes one up.  A genesis that can't be used goes in unknown.
+func (b *SPVBackend) genesisFinder(states []*State, unknown map[chainhash.Hash]struct{}) (
+	[]wire.OutPoint, func(SpendFound) []wire.OutPoint) {
+
 	byOutPoint := make(map[wire.OutPoint]*State, len(states))
 	outpoints := make([]wire.OutPoint, 0, len(states))
 	for _, state := range states {
@@ -197,7 +234,7 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		byOutPoint[outpoint] = state
 		outpoints = append(outpoints, outpoint)
 	}
-	found := func(spend SpendFound) []wire.OutPoint {
+	return outpoints, func(spend SpendFound) []wire.OutPoint {
 		state := byOutPoint[spend.OutPoint]
 		if !createsCategory(spend.Tx, state.Category) {
 			return nil
@@ -216,44 +253,73 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 		state.Status = StatusSearching
 		return nil
 	}
-	if _, err = b.source.SearchSpends(outpoints, tip, bottom, found, nil, ctx.Done()); err != nil {
-		return err
+}
+
+// checkFailed looks for the genesis of tokens that weren't found in the blocks
+// that came since, as one that was still unconfirmed comes in one of those.  They
+// are few, and their filters are the ones the wallet has just read.
+func (b *SPVBackend) checkFailed(ctx context.Context, states []*State) error {
+	if len(states) == 0 {
+		return nil
 	}
-	same, err := b.searchNewBlocks(ctx, states, tip, tipHash, found)
+	tipHash, tip, err := b.source.GetBestBlock()
 	if err != nil {
 		return err
 	}
+	from := tip + 1
 	for _, state := range states {
-		if len(state.Links) != 0 {
+		// A state from before this kept nothing, and starts from here.  One
+		// on blocks that are gone starts again from the floor, by being
+		// searched as new.
+		if state.ScannedTo == 0 {
+			state.ScannedTo, state.ScannedHash = tip, *tipHash
 			continue
 		}
-		if _, ok := unknown[state.Category]; ok || !same {
-			b.waiting[state.Category] = time.Now()
+		on, err := b.onChain(state.ScannedTo, state.ScannedHash)
+		if err != nil {
+			return err
+		}
+		if !on {
+			state.Status = StatusSearching
 			continue
 		}
-		state.Status = StatusFailed
+		from = min(from, state.ScannedTo+1)
+	}
+	if from > tip {
+		return nil
+	}
+	unknown := make(map[chainhash.Hash]struct{})
+	outpoints, found := b.genesisFinder(states, unknown)
+	if _, err := b.source.SearchSpends(outpoints, from, tip, found, nil, ctx.Done()); err != nil {
+		return err
+	}
+	for _, state := range states {
+		// A genesis that was found but couldn't be used is looked for again.
+		if _, ok := unknown[state.Category]; !ok && state.Status == StatusFailed {
+			state.ScannedTo, state.ScannedHash = tip, *tipHash
+		}
 	}
 	return nil
 }
 
 // searchNewBlocks searches the blocks that came during a search, for the states
-// it didn't find, until no more come.  It returns whether the search covers the
-// chain as it stands: a chain that changed can have put a genesis where the
-// search had already looked, so finding nothing says nothing.
+// it didn't find, until no more come.  It returns the block the search reached,
+// and whether it covers the chain as it stands: a chain that changed can have put
+// a genesis where the search had already looked, so finding nothing says nothing.
 func (b *SPVBackend) searchNewBlocks(ctx context.Context, states []*State, tip int32,
-	tipHash *chainhash.Hash, found func(SpendFound) []wire.OutPoint) (bool, error) {
+	tipHash *chainhash.Hash, found func(SpendFound) []wire.OutPoint) (int32, *chainhash.Hash, bool, error) {
 
 	for range maxNewBlockSearches {
 		nowHash, now, err := b.source.GetBestBlock()
 		if err != nil {
-			return false, err
+			return tip, tipHash, false, err
 		}
 		if *nowHash == *tipHash {
-			return true, nil
+			return tip, tipHash, true, nil
 		}
 		same, err := b.sameChain(tip, tipHash)
 		if err != nil || !same || now < tip {
-			return false, err
+			return tip, tipHash, false, err
 		}
 		outpoints := make([]wire.OutPoint, 0, len(states))
 		for _, state := range states {
@@ -264,12 +330,12 @@ func (b *SPVBackend) searchNewBlocks(ctx context.Context, states []*State, tip i
 		if len(outpoints) != 0 {
 			_, err = b.source.SearchSpends(outpoints, tip+1, now, found, nil, ctx.Done())
 			if err != nil {
-				return false, err
+				return tip, tipHash, false, err
 			}
 		}
 		tip, tipHash = now, nowHash
 	}
-	return false, nil
+	return tip, tipHash, false, nil
 }
 
 // createsCategory returns whether tx is the genesis of the category.

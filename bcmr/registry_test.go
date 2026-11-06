@@ -264,3 +264,16 @@ func TestSymbolPattern(t *testing.T) {
 		}
 	}
 }
+
+// TestParseRegistryNFTImage ensures an NFT's image is kept beside its icon.
+func TestParseRegistryNFTImage(t *testing.T) {
+	data := testRegistry(`{"name":"T","token":{"category":"%s","symbol":"T","nfts":{"parse":{"types":{
+		"01":{"name":"One","uris":{"icon":"ipfs://icon","image":"ipfs://image"}}}}}}}`)
+	m, err := ParseRegistry(data, testCategory, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.NFTTypes["01"]; got.IconURI != "ipfs://icon" || got.ImageURI != "ipfs://image" {
+		t.Fatalf("%+v", got)
+	}
+}

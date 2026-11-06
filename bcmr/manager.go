@@ -21,7 +21,7 @@ const (
 	// registryParser numbers what the wallet reads from a registry.  Raising it
 	// has the registries read again, as what was kept from them can't show
 	// what the parser has learned since.
-	registryParser = 3
+	registryParser = 4
 
 	// changedRegistryInterval is how often a registry that isn't the published
 	// one is read again, as a collection still being minted adds to it.

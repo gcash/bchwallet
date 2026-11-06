@@ -830,3 +830,29 @@ func TestSPVNewBlockDuringGenesisSearch(t *testing.T) {
 		t.Fatalf("%+v", none)
 	}
 }
+
+// TestSPVFailedFindsGenesisInNewBlock ensures a token that wasn't found, as its
+// genesis was unconfirmed, loads when a new block holds it, reading only the new
+// blocks.
+func TestSPVFailedFindsGenesisInNewBlock(t *testing.T) {
+	c := newFakeChain(100)
+	category := chainhash.Hash{6}
+	state := &State{Category: category}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	resolve(t, b, state)
+	if state.Status != StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+	c.searches = nil
+	c.addBlock(1)
+	resolve(t, b, state)
+	if state.Status != StatusFailed || !reflect.DeepEqual(c.searches, [][2]int32{{101, 101}}) {
+		t.Fatalf("%v, %+v", c.searches, state)
+	}
+	genesis := genesisOf(1, category)
+	c.addBlock(2, genesis)
+	resolve(t, b, state)
+	if state.Status != StatusVerified || state.Head().Txid != genesis.TxHash() {
+		t.Fatalf("%+v", state)
+	}
+}

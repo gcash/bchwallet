@@ -228,6 +228,7 @@ message TokenMetadataResponse {
 		string description = 3;
 		string icon_uri = 4;
 		map<string, string> attributes = 5; // Its traits, by name.
+		string image_uri = 6; // Its art in full, for TokenIcon.
 	}
 	message Token {
 		string category = 1; // Hex, in the byte order of transaction IDs.
