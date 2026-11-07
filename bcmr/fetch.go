@@ -41,6 +41,13 @@ const (
 	// neither kind waits behind the other.
 	maxPerHost = 4
 
+	// gatewayRestFirst and gatewayRestMost are how long a gateway that failed
+	// is out of rotation: the first, doubling with each failure in a row, up to
+	// the most.  It's back afterwards, as a gateway that fails now is often
+	// fine later.
+	gatewayRestFirst = 30 * time.Second
+	gatewayRestMost  = 5 * time.Minute
+
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
 
@@ -59,6 +66,10 @@ var (
 	// ErrRegistryChanged is the error of a registry whose host gave a file
 	// other than the published one.  Fetch returns the file with it.
 	ErrRegistryChanged = errors.New("the registry isn't the published one")
+
+	// errGatewayFault is a failure that's the host's: one that doesn't connect,
+	// answers with a 5xx, or stalls.
+	errGatewayFault = errors.New("the host failed")
 
 	// errPrivateAddress refuses a connection to this device or its network.
 	errPrivateAddress = errors.New("refusing a private address")
@@ -81,6 +92,14 @@ type Fetcher struct {
 	// registries and icons are the slots at each host for each kind.
 	registries *hostSlots
 	icons      *hostSlots
+
+	// now is the time, apart for tests.
+	now func() time.Time
+
+	// healthMu guards out, the gateways out of rotation, by host.  Only memory
+	// keeps them, so they start afresh with the wallet.
+	healthMu sync.Mutex
+	out      map[string]gatewayOut
 
 	// keepMu lets one download at a time change the cache, as trimming it
 	// counts and removes the files there.
@@ -114,6 +133,8 @@ func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper)
 		CacheDir:   cacheDir,
 		registries: newHostSlots(maxPerHost),
 		icons:      newHostSlots(maxPerHost),
+		now:        time.Now,
+		out:        make(map[string]gatewayOut),
 		client: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -239,6 +260,7 @@ uris:
 				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
 				if err == nil && sha256.Sum256(data) != hash {
 					err = fmt.Errorf("%s doesn't match the published hash", location)
+					f.failed(hostOf(location))
 					if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
 						ipfsPath(final) == "" && json.Valid(data) {
 
@@ -365,7 +387,7 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	for i, location := range locations {
 		hosts[i] = hostOf(location)
 	}
-	host, release, err := slots.takeAny(ctx, hosts)
+	host, release, err := slots.takeAny(ctx, f.inRotation(hosts))
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -375,8 +397,84 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	return data, final, location, err
 }
 
-// get reads a URL, up to limit bytes.
+// gatewayOut is a gateway out of rotation: its failures in a row, and until when.
+type gatewayOut struct {
+	failures int
+	until    time.Time
+}
+
+// inRotation returns the hosts but the gateways out of rotation, in their order,
+// or all of them if that leaves none.
+func (f *Fetcher) inRotation(hosts []string) []string {
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	now := f.now()
+	var in []string
+	for _, host := range hosts {
+		if out, ok := f.out[host]; !ok || !now.Before(out.until) {
+			in = append(in, host)
+		}
+	}
+	if len(in) == 0 {
+		return hosts
+	}
+	return in
+}
+
+// failed takes a gateway that failed out of rotation, for longer the more times
+// in a row it has.  A host that isn't a gateway has no rotation to leave.
+func (f *Fetcher) failed(host string) {
+	if !f.isGateway(host) {
+		return
+	}
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	out := f.out[host]
+	out.failures++
+	rest := gatewayRestMost
+	if out.failures < 10 {
+		rest = min(gatewayRestFirst<<(out.failures-1), gatewayRestMost)
+	}
+	out.until = f.now().Add(rest)
+	f.out[host] = out
+}
+
+// worked puts a gateway back in rotation, with no failures counted.
+func (f *Fetcher) worked(host string) {
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	delete(f.out, host)
+}
+
+// isGateway returns whether a host is one of the gateways.
+func (f *Fetcher) isGateway(host string) bool {
+	for _, gateway := range f.Gateways {
+		if hostOf(gateway) == host {
+			return true
+		}
+	}
+	return false
+}
+
+// get reads a URL, up to limit bytes, and keeps count of a gateway's failures:
+// not connecting, a 5xx, or a file that stalls.  A 404 only says that gateway
+// doesn't have that file, and a caller that gave up says nothing of the host.
 func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
+	host := hostOf(location)
+	data, final, err := f.read(ctx, location, limit)
+	switch {
+	case err == nil:
+		f.worked(host)
+	case ctx.Err() != nil:
+	case errors.Is(err, errGatewayFault):
+		f.failed(host)
+	}
+	return data, final, err
+}
+
+// read reads a URL, up to limit bytes, and wraps errGatewayFault in what's the
+// host's fault.
+func (f *Fetcher) read(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
@@ -385,9 +483,12 @@ func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", errGatewayFault, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return nil, nil, fmt.Errorf("%w: %s: %s", errGatewayFault, location, resp.Status)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("%s: %s", location, resp.Status)
 	}
@@ -396,7 +497,7 @@ func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte
 	defer stopWatching()
 	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", errGatewayFault, err)
 	}
 	if int64(len(data)) > limit {
 		return nil, nil, fmt.Errorf("%s is over %d bytes", location, limit)

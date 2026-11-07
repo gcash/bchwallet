@@ -708,3 +708,173 @@ func TestFreedSlotGoesToWhoCanUseIt(t *testing.T) {
 		t.Fatalf("%s", host)
 	}
 }
+
+// gatewayPair is a Fetcher with two gateways, the first answering with status
+// until it's changed, and a clock the test moves.
+type gatewayPair struct {
+	f       *Fetcher
+	status  atomic.Int32
+	hits    atomic.Int32
+	first   string
+	clock   time.Time
+	clockMu sync.Mutex
+}
+
+func newGatewayPair(t *testing.T) *gatewayPair {
+	t.Helper()
+	p := &gatewayPair{clock: time.Unix(1_800_000_000, 0)}
+	p.status.Store(http.StatusOK)
+	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		p.hits.Add(1)
+		if code := int(p.status.Load()); code != http.StatusOK {
+			w.WriteHeader(code)
+			return
+		}
+		_, _ = w.Write([]byte("first"))
+	}))
+	t.Cleanup(first.Close)
+	second, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("second"))
+	})
+	f.Gateways = []string{first.URL, second.URL}
+	f.now = func() time.Time {
+		p.clockMu.Lock()
+		defer p.clockMu.Unlock()
+		return p.clock
+	}
+	p.f, p.first = f, hostOf(first.URL)
+	return p
+}
+
+func (p *gatewayPair) pass(d time.Duration) {
+	p.clockMu.Lock()
+	p.clock = p.clock.Add(d)
+	p.clockMu.Unlock()
+}
+
+func (p *gatewayPair) icon(t *testing.T) string {
+	t.Helper()
+	data, err := p.f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestFailingGatewayRests ensures a gateway that fails is out of rotation for longer
+// each time in a row, up to five minutes, comes back after, and that one success
+// puts it back for good.
+func TestFailingGatewayRests(t *testing.T) {
+	p := newGatewayPair(t)
+	p.status.Store(http.StatusBadGateway)
+	for _, rest := range []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute,
+		4 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
+
+		// It fails, and the second gateway has the file.
+		if got := p.icon(t); got != "second" {
+			t.Fatalf("%s", got)
+		}
+		// Out until the rest is over, so the first asked is the second.
+		p.pass(rest - time.Second)
+		if p.f.inRotation([]string{p.first})[0] != p.first || len(p.f.inRotation([]string{p.first, "x"})) != 1 {
+			t.Fatalf("back before %v", rest)
+		}
+		p.pass(time.Second)
+		if in := p.f.inRotation([]string{p.first, "x"}); len(in) != 2 {
+			t.Fatalf("not back after %v", rest)
+		}
+	}
+	p.status.Store(http.StatusOK)
+	if got := p.icon(t); got != "first" {
+		t.Fatalf("%s", got)
+	}
+	if len(p.f.out) != 0 {
+		t.Fatal("a success didn't put it back")
+	}
+}
+
+// TestWhatIsAFailure ensures a 404, or a caller giving up, leaves a gateway in, and a
+// file that doesn't match its hash takes it out.
+func TestWhatIsAFailure(t *testing.T) {
+	p := newGatewayPair(t)
+	p.status.Store(http.StatusNotFound)
+	if got := p.icon(t); got != "second" {
+		t.Fatalf("%s", got)
+	}
+	if len(p.f.out) != 0 {
+		t.Fatal("a 404 took the gateway out")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = p.f.FetchIcon(ctx, "ipfs://bafy1/icon.png")
+	if len(p.f.out) != 0 {
+		t.Fatal("giving up took the gateway out")
+	}
+
+	p.status.Store(http.StatusOK)
+	raw := "ipfs://bafkreicqqq3tkq5tkbtg3vhbhw6urybothpoedsszuejs5baq2k25mhgvu"
+	_, _ = p.f.FetchIcon(context.Background(), raw)
+	if _, ok := p.f.out[p.first]; !ok {
+		t.Fatal("a file that failed its hash left the gateway in")
+	}
+}
+
+// TestAllGatewaysOutStillTried ensures gateways that are all out are tried anyway,
+// as there's nothing else.
+func TestAllGatewaysOutStillTried(t *testing.T) {
+	p := newGatewayPair(t)
+	for _, gateway := range p.f.Gateways {
+		p.f.failed(hostOf(gateway))
+	}
+	if got := p.icon(t); got != "first" {
+		t.Fatalf("%s", got)
+	}
+}
+
+// TestOnlyGatewaysRest ensures a host that isn't a gateway has no rotation to leave.
+func TestOnlyGatewaysRest(t *testing.T) {
+	p := newGatewayPair(t)
+	p.f.failed("stranger.example")
+	if len(p.f.out) != 0 {
+		t.Fatal("a stranger's host was counted")
+	}
+}
+
+// TestStallRestsGateway ensures a file that stalls takes its gateway out.
+func TestStallRestsGateway(t *testing.T) {
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte("short"))
+	})
+	f.Gateways = []string{server.URL}
+	if _, _, err := f.download(context.Background(), f.icons, server.URL+"/x", 1000); err == nil {
+		t.Fatal("no error")
+	}
+	if _, ok := f.out[hostOf(server.URL)]; !ok {
+		t.Fatal("a file that broke off left the gateway in")
+	}
+}
+
+// TestFetchSkipsGatewayOut ensures a gateway out of rotation isn't asked until it's
+// back, while another is.
+func TestFetchSkipsGatewayOut(t *testing.T) {
+	p := newGatewayPair(t)
+	p.status.Store(http.StatusBadGateway)
+	if got := p.icon(t); got != "second" {
+		t.Fatalf("%s", got)
+	}
+	for range 3 {
+		if got := p.icon(t); got != "second" {
+			t.Fatalf("%s", got)
+		}
+	}
+	if n := p.hits.Load(); n != 1 {
+		t.Fatalf("asked %d times while out", n)
+	}
+	p.pass(gatewayRestFirst)
+	p.status.Store(http.StatusOK)
+	if got := p.icon(t); got != "first" {
+		t.Fatalf("%s", got)
+	}
+}

@@ -56,6 +56,7 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
 				if err == nil && checked && sha256.Sum256(data) != digest {
 					err = fmt.Errorf("%s doesn't match the hash of the URI", location)
+					f.failed(hostOf(location))
 				}
 				if err != nil {
 					if ctx.Err() != nil {
