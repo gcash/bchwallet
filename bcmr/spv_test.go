@@ -1,16 +1,19 @@
 package bcmr
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	chainbcmr "github.com/gcash/bchd/bcmr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
+	"github.com/gcash/bchutil"
 )
 
 // fakeChain is a chain of blocks, from height 1, that searches them directly.
@@ -20,7 +23,12 @@ type fakeChain struct {
 
 	blocks   []*wire.MsgBlock
 	searches [][2]int32
-	failAt   int32
+
+	// outputSearches are the ranges searched for output scripts, and
+	// outputReached where the last one stopped.
+	outputSearches [][2]int32
+	outputReached  int32
+	failAt         int32
 
 	failBlock bool
 }
@@ -80,6 +88,41 @@ func (c *fakeChain) GetBlock(hash *chainhash.Hash, _ <-chan struct{}) (*wire.Msg
 		}
 	}
 	return nil, errors.New("no such block")
+}
+
+func (c *fakeChain) SearchOutputs(scripts [][]byte, from, to int32, found func(OutputFound) bool,
+	_ <-chan struct{}) (int32, error) {
+
+	c.outputSearches = append(c.outputSearches, [2]int32{from, to})
+	if from < 1 || to < 1 {
+		return 0, errors.New("no such block")
+	}
+	step := int32(1)
+	if from > to {
+		step = -1
+	}
+	reached := from - step
+	for h := from; h != to+step; h += step {
+		if h == c.failAt {
+			return reached, errors.New("no peer sent the filter")
+		}
+		block := c.blocks[h-1]
+		for _, tx := range block.Transactions {
+			for _, out := range tx.TxOut {
+				if !slices.ContainsFunc(scripts, func(s []byte) bool { return bytes.Equal(s, out.PkScript) }) {
+					continue
+				}
+				if !found(OutputFound{Tx: tx, Height: h, BlockHash: block.BlockHash()}) {
+					c.outputReached = h
+					return h, nil
+				}
+				break
+			}
+		}
+		reached = h
+	}
+	c.outputReached = reached
+	return reached, nil
 }
 
 func (c *fakeChain) SearchSpends(outpoints []wire.OutPoint, from, to int32,
@@ -1053,6 +1096,231 @@ func TestSPVAuthbaseBlockUnread(t *testing.T) {
 	c.failBlock = false
 	delete(b.waiting, category)
 	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// authbaseKey is the public key an authbase in these tests pays to.
+var authbaseKey = append([]byte{0x02}, bytes.Repeat([]byte{7}, 32)...)
+
+// p2pkhAuthbase returns an authbase whose output 0 pays to authbaseKey, with a
+// publication if publishes, and the token's genesis spending it as that key does.
+func p2pkhAuthbase(t *testing.T, id int64, publishes bool) (*wire.MsgTx, *wire.MsgTx, chainhash.Hash) {
+	t.Helper()
+	authbase := wire.NewMsgTx(2)
+	authbase.AddTxIn(wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{0xab, byte(id)}}, nil))
+	authbase.AddTxOut(wire.NewTxOut(id, p2pkh(bchutil.Hash160(authbaseKey)), wire.TokenData{}))
+	if publishes {
+		authbase = withPublication(t, authbase, 0x79, "authbase.example")
+	}
+	category := authbase.TxHash()
+	genesis := genesisOf(id+1, category)
+	sigScript, err := txscript.NewScriptBuilder().AddData(bytes.Repeat([]byte{9}, 65)).AddData(authbaseKey).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis.TxIn[0].SignatureScript = sigScript
+	return authbase, genesis, category
+}
+
+// TestSPVAuthbaseSearch ensures a token with no publication on its chain has its
+// authbase looked for in the week before its genesis, once, and that one found
+// there gives the token its publication.
+func TestSPVAuthbaseSearch(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	c.put(75, authbase)
+	c.put(80, genesis)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{Category: category}
+	resolve(t, b, state)
+	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {
+		t.Fatalf("%+v", state)
+	}
+	if !state.AuthbaseSearched || !reflect.DeepEqual(c.outputSearches, [][2]int32{{79, 1}}) || c.outputReached != 75 {
+		t.Fatalf("searched %v to %v, %+v", c.outputSearches, c.outputReached, state)
+	}
+	c.outputSearches = nil
+	resolve(t, b, state)
+	if len(c.outputSearches) != 0 {
+		t.Fatalf("searched again: %v", c.outputSearches)
+	}
+}
+
+// TestSPVAuthbaseSearchReach ensures the search goes back a week and no further, and
+// that a token whose authbase is further back has no publication, for good.
+func TestSPVAuthbaseSearchReach(t *testing.T) {
+	c := newFakeChain(1200)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	c.put(100, authbase)
+	c.put(1150, genesis)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{Category: category}
+	resolve(t, b, state)
+	if state.CurrentPublication() != nil || !state.AuthbaseSearched {
+		t.Fatalf("%+v", state)
+	}
+	if !reflect.DeepEqual(c.outputSearches, [][2]int32{{1149, 1150 - authbaseReach}}) {
+		t.Fatalf("searched %v", c.outputSearches)
+	}
+	c.outputSearches = nil
+	resolve(t, b, state)
+	if len(c.outputSearches) != 0 {
+		t.Fatalf("searched again: %v", c.outputSearches)
+	}
+}
+
+// TestSPVAuthbaseSearchNotNeeded ensures no search for a token with a publication on
+// its chain, from the table, with an authbase in its genesis block, or whose
+// authbase's script can't be rebuilt.
+func TestSPVAuthbaseSearchNotNeeded(t *testing.T) {
+	// A publication on the genesis.
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	genesis = withPublication(t, genesis, 0x7a, "genesis.example")
+	c.put(75, authbase)
+	c.put(80, genesis)
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if len(c.outputSearches) != 0 {
+		t.Fatalf("searched with a publication: %v", c.outputSearches)
+	}
+
+	// In the genesis block, which the free check reads.
+	c = newFakeChain(100)
+	authbase, genesis, category = p2pkhAuthbase(t, 2, true)
+	c.put(80, authbase, genesis)
+	state = &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if len(c.outputSearches) != 0 || state.CurrentPublication() == nil {
+		t.Fatalf("searched %v, %+v", c.outputSearches, state)
+	}
+
+	// In the genesis block, with no publication.
+	c = newFakeChain(100)
+	authbase, genesis, category = p2pkhAuthbase(t, 4, false)
+	c.put(80, authbase, genesis)
+	state = &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if len(c.outputSearches) != 0 || !state.AuthbaseSearched {
+		t.Fatalf("searched %v, %+v", c.outputSearches, state)
+	}
+
+	// A script that can't be rebuilt.
+	c = newFakeChain(100)
+	authbase, genesis, category = p2pkhAuthbase(t, 3, true)
+	genesis.TxIn[0].SignatureScript = []byte{txscript.OP_DUP}
+	c.put(75, authbase)
+	c.put(80, genesis)
+	state = &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if len(c.outputSearches) != 0 || !state.AuthbaseSearched {
+		t.Fatalf("searched %v, %+v", c.outputSearches, state)
+	}
+
+	// From the table, which has the publication.
+	c = newFakeChain(100)
+	head := spendOf(9, chainhash.Hash{0x99})
+	c.put(10, head)
+	hints := hintsFor(t, 50, chainbcmr.Hint{Category: chainhash.Hash{0x98}, Head: head.TxHash(), HeadHeight: 10})
+	state = &State{Category: chainhash.Hash{0x98}}
+	resolve(t, NewSPVBackend(c, hints), state)
+	if len(c.outputSearches) != 0 {
+		t.Fatalf("searched for a token from the table: %v", c.outputSearches)
+	}
+}
+
+// TestSPVAuthbaseSearchFails ensures a search that fails is tried again later, and
+// that a reorg that takes the genesis away forgets the authbase.
+func TestSPVAuthbaseSearchFails(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	c.put(75, authbase)
+	c.put(80, genesis)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{Category: category}
+	c.failAt = 77
+	resolve(t, b, state)
+	if state.AuthbaseSearched || state.CurrentPublication() != nil {
+		t.Fatalf("%+v", state)
+	}
+	c.failAt = 0
+	resolve(t, b, state)
+	if !state.AuthbaseSearched || state.CurrentPublication() == nil {
+		t.Fatalf("%+v", state)
+	}
+
+	c.replaceFrom(60, 1000)
+	if err := b.rewind(state); err != nil {
+		t.Fatal(err)
+	}
+	if state.AuthbaseSearched || state.AuthbaseScripts != nil || state.GenesisHeight != 0 || state.Older != nil {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVAuthbaseSearchOtherPayments ensures payments to the authbase's script
+// that aren't the authbase are passed over, publication or not.
+func TestSPVAuthbaseSearchOtherPayments(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	other := wire.NewMsgTx(2)
+	other.AddTxIn(wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{0xcd}}, nil))
+	other.AddTxOut(wire.NewTxOut(5, p2pkh(bchutil.Hash160(authbaseKey)), wire.TokenData{}))
+	other = withPublication(t, other, 0x7b, "other.example")
+	c.put(75, authbase)
+	c.put(78, other)
+	c.put(80, genesis)
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVAuthbaseSearchWaitsForTheWalk ensures a token whose walk hasn't reached
+// the tip isn't searched, as a publication may still be ahead.
+func TestSPVAuthbaseSearchWaitsForTheWalk(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	c.put(75, authbase)
+	c.put(80, genesis)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{Category: category}
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != StatusSearching || len(state.AuthbaseScripts) == 0 {
+		t.Fatalf("%+v", state)
+	}
+	if err := b.searchAuthbases(context.Background(), []*State{state}, noSave); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.outputSearches) != 0 || state.AuthbaseSearched {
+		t.Fatalf("searched %v, %+v", c.outputSearches, state)
+	}
+}
+
+// TestSPVAuthbaseSearchBurned ensures a burned token has its authbase looked for,
+// as what it published still names it, even on a pass with nothing to watch.
+func TestSPVAuthbaseSearchBurned(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
+	c.put(75, authbase)
+	c.put(80, genesis)
+	c.put(85, burnOf(genesis.TxHash()))
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{Category: category}
+	c.failAt = 77
+	resolve(t, b, state)
+	if !state.Burned || state.AuthbaseSearched {
+		t.Fatalf("%+v", state)
+	}
+	c.failAt = 0
+	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
 		t.Fatal(err)
 	}
 	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {

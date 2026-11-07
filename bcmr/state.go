@@ -67,6 +67,14 @@ type State struct {
 	// Burned reports that the head ended the authchain.
 	Burned bool
 
+	// AuthbaseScripts are what the authbase's output 0 can pay to, rebuilt
+	// from the genesis at GenesisHeight, to look for the authbase before it
+	// for a publication on it, once, which AuthbaseSearched records.  A token
+	// started from the hints has none, as the hints have its publication.
+	AuthbaseScripts  [][]byte
+	GenesisHeight    int32
+	AuthbaseSearched bool
+
 	// ScannedTo and ScannedHash are the height and hash of the block the
 	// head is known unspent through.
 	ScannedTo   int32

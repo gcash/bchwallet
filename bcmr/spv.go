@@ -28,7 +28,20 @@ type spvSource interface {
 	SearchSpends(outpoints []wire.OutPoint, from, to int32,
 		found func(SpendFound) []wire.OutPoint, progress func(height int32),
 		quit <-chan struct{}) (int32, error)
+	SearchOutputs(scripts [][]byte, from, to int32, found func(OutputFound) bool,
+		quit <-chan struct{}) (int32, error)
 }
+
+// OutputFound is a transaction a search for output scripts found.
+type OutputFound struct {
+	Tx        *wire.MsgTx
+	Height    int32
+	BlockHash chainhash.Hash
+}
+
+// authbaseReach is how far before its genesis a token's authbase is looked for,
+// a week, which finds it 93% of the time, the genesis block itself 60%.
+const authbaseReach = 1008
 
 // SpendFound is a spend a search found.
 type SpendFound struct {
@@ -250,15 +263,19 @@ func (b *SPVBackend) genesisFinder(ctx context.Context, states []*State,
 		state.Burned = chainbcmr.IsBurn(spend.Tx)
 		state.ScannedTo, state.ScannedHash = spend.Height-1, *before
 		state.Status = StatusSearching
-		keepAuthbase(state, block, spend)
+		state.AuthbaseScripts, state.GenesisHeight = nil, spend.Height
+		state.AuthbaseSearched = keepAuthbase(state, block, spend)
+		if !state.AuthbaseSearched {
+			state.AuthbaseScripts = authbaseScripts(spend.Tx, state.Category)
+			state.AuthbaseSearched = len(state.AuthbaseScripts) == 0
+		}
 		return nil
 	}
 }
 
 // keepAuthbase keeps a publication on the authbase, if it's in the block of the
-// genesis.  Some tokens publish only there.  One further down isn't found, as a
-// filter can't tell where a txid is.
-func keepAuthbase(state *State, block *wire.MsgBlock, spend SpendFound) {
+// genesis, and returns whether it's there.  Some tokens publish only there.
+func keepAuthbase(state *State, block *wire.MsgBlock, spend SpendFound) bool {
 	for _, tx := range block.Transactions {
 		if tx.TxHash() != state.Category {
 			continue
@@ -267,8 +284,9 @@ func keepAuthbase(state *State, block *wire.MsgBlock, spend SpendFound) {
 			state.OlderTxid, state.OlderHeight = &link.Txid, link.Height
 			state.Older = link.Publication
 		}
-		return
+		return true
 	}
+	return false
 }
 
 // checkFailed looks for the genesis of tokens that weren't found in the blocks
@@ -423,7 +441,7 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 		from = min(from, state.ScannedTo+1)
 	}
 	if len(watching) == 0 {
-		return nil
+		return b.searchAuthbases(ctx, states, save)
 	}
 
 	active := make([]*State, 0, len(states))
@@ -509,6 +527,41 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 			state.Status = StatusVerified
 			save(state)
 		}
+	}
+	return b.searchAuthbases(ctx, states, save)
+}
+
+// searchAuthbases looks for the authbase of each token that the walk followed to
+// its head without a publication, in the week before its genesis, as some tokens
+// publish only there.  It's done once, unless it fails, as then the next cycle
+// tries again.
+func (b *SPVBackend) searchAuthbases(ctx context.Context, states []*State, save func(*State)) error {
+	for _, state := range states {
+		if state.Status != StatusVerified || state.AuthbaseSearched || len(state.AuthbaseScripts) == 0 ||
+			state.CurrentPublication() != nil {
+			continue
+		}
+		from := state.GenesisHeight - 1
+		to := max(state.GenesisHeight-authbaseReach, 1)
+		_, err := b.source.SearchOutputs(state.AuthbaseScripts, from, to, func(found OutputFound) bool {
+			if found.Tx.TxHash() != state.Category {
+				return true
+			}
+			if link := newLink(found.Tx, found.Height, found.BlockHash); link.Publication != nil {
+				state.OlderTxid, state.OlderHeight = &link.Txid, link.Height
+				state.Older = link.Publication
+			}
+			return false
+		}, ctx.Done())
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Debugf("Unable to look for the authbase of token %v: %v", state.Category, err)
+			continue
+		}
+		state.AuthbaseSearched = true
+		save(state)
 	}
 	return nil
 }
@@ -605,6 +658,7 @@ func (b *SPVBackend) rewind(state *State) error {
 	if head == nil {
 		state.ScannedTo, state.ScannedHash = 0, chainhash.Hash{}
 		state.OlderTxid, state.OlderHeight, state.Older = nil, 0, nil
+		state.AuthbaseScripts, state.GenesisHeight, state.AuthbaseSearched = nil, 0, false
 		return nil
 	}
 

@@ -32,6 +32,15 @@ func (s spvSource) GetBlock(hash *chainhash.Hash, quit <-chan struct{}) (*wire.M
 	return block.MsgBlock(), nil
 }
 
+// SearchOutputs asks neutrino.
+func (s spvSource) SearchOutputs(scripts [][]byte, from, to int32, found func(bcmr.OutputFound) bool,
+	quit <-chan struct{}) (int32, error) {
+
+	return s.CS.SearchOutputs(scripts, from, to, func(output neutrino.FoundOutput) bool {
+		return found(bcmr.OutputFound{Tx: output.Tx, Height: output.Height, BlockHash: output.BlockHash})
+	}, nil, quit)
+}
+
 // SearchSpends asks neutrino.
 func (s spvSource) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 	found func(bcmr.SpendFound) []wire.OutPoint, progress func(height int32),
