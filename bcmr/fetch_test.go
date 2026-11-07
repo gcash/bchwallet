@@ -527,8 +527,8 @@ func TestDownloadsPerHost(t *testing.T) {
 	}
 	finish()
 	done.Wait()
-	if len(f.registries.hosts) != 0 || len(f.icons.hosts) != 0 {
-		t.Fatalf("%d and %d hosts kept", len(f.registries.hosts), len(f.icons.hosts))
+	if len(f.registries.busy) != 0 || len(f.icons.busy) != 0 {
+		t.Fatalf("%d and %d hosts kept", len(f.registries.busy), len(f.icons.busy))
 	}
 }
 
@@ -557,7 +557,7 @@ func TestSlotsInOrder(t *testing.T) {
 		// Each joins the line before the next.
 		for {
 			s.mu.Lock()
-			n := len(s.hosts["h"].waiting)
+			n := len(s.waiting)
 			s.mu.Unlock()
 			if n == i+1 {
 				break
@@ -576,7 +576,7 @@ func TestSlotsInOrder(t *testing.T) {
 	if !reflect.DeepEqual(got, []int{0, 2}) {
 		t.Fatalf("%v", got)
 	}
-	if len(s.hosts) != 0 {
+	if len(s.busy) != 0 || len(s.waiting) != 0 {
 		t.Fatal("the host was kept")
 	}
 }
@@ -619,7 +619,7 @@ func TestSlotNotLostLeavingLine(t *testing.T) {
 		}()
 		for {
 			s.mu.Lock()
-			n := len(s.hosts["h"].waiting)
+			n := len(s.waiting)
 			s.mu.Unlock()
 			if n == 1 {
 				break
@@ -636,5 +636,75 @@ func TestSlotNotLostLeavingLine(t *testing.T) {
 			t.Fatalf("round %d: the slot was lost", i)
 		}
 		release()
+	}
+}
+
+// TestRoutingTakesFirstWithRoom ensures a file on IPFS comes from the first gateway in
+// the list with room, and from the first only while it has room.
+func TestRoutingTakesFirstWithRoom(t *testing.T) {
+	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("first"))
+	}))
+	t.Cleanup(first.Close)
+	second, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("second"))
+	})
+	f.Gateways = []string{first.URL, second.URL}
+	data, err := f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+	if err != nil || string(data) != "first" {
+		t.Fatalf("%q, %v", data, err)
+	}
+	for range maxPerHost {
+		if _, err := f.icons.take(context.Background(), hostOf(first.URL)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err = f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+	if err != nil || string(data) != "second" {
+		t.Fatalf("%q, %v", data, err)
+	}
+}
+
+// TestFreedSlotGoesToWhoCanUseIt ensures a slot that comes free goes to the first in
+// line that can use its host, and that one who can use any host takes whichever
+// comes free first.
+func TestFreedSlotGoesToWhoCanUseIt(t *testing.T) {
+	s := newHostSlots(1)
+	a, _ := s.take(context.Background(), "a")
+	b, _ := s.take(context.Background(), "b")
+	got := make(chan string, 2)
+	wait := func(hosts []string) {
+		go func() {
+			host, release, err := s.takeAny(context.Background(), hosts)
+			if err == nil {
+				got <- host
+				release()
+			}
+		}()
+	}
+	inLine := func(n int) {
+		for {
+			s.mu.Lock()
+			l := len(s.waiting)
+			s.mu.Unlock()
+			if l == n {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	wait([]string{"a"})
+	inLine(1)
+	wait([]string{"a", "b"})
+	inLine(2)
+
+	// b is free first: the first in line can't use it, so the second takes it.
+	b()
+	if host := <-got; host != "b" {
+		t.Fatalf("%s", host)
+	}
+	a()
+	if host := <-got; host != "a" {
+		t.Fatalf("%s", host)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -46,21 +47,25 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	var last error
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)
-		for _, location := range f.locations(candidate) {
-			data, _, err := f.download(ctx, f.icons, location, maxIconSize)
-			switch {
-			case err != nil:
-			case checked && sha256.Sum256(data) != digest:
-				err = fmt.Errorf("%s doesn't match the hash of the URI", location)
-			}
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
+		for _, group := range f.locationGroups(candidate) {
+			for left := group; len(left) > 0; {
+				data, _, location, err := f.downloadAny(ctx, f.icons, left, maxIconSize)
+				if location == "" {
+					return nil, err
 				}
-				last = err
-				continue
+				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
+				if err == nil && checked && sha256.Sum256(data) != digest {
+					err = fmt.Errorf("%s doesn't match the hash of the URI", location)
+				}
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					last = err
+					continue
+				}
+				return data, nil
 			}
-			return data, nil
 		}
 	}
 	if last != nil {

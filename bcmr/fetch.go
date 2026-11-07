@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -223,29 +224,37 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 	var last error
 	var changed []byte
 	tries := 0
+uris:
 	for _, uri := range uris {
-		for _, location := range f.locations(uri) {
-			if tries++; tries > maxLocations {
-				break
-			}
-			data, final, err := f.download(ctx, f.registries, location, maxRegistrySize)
-			if err == nil && sha256.Sum256(data) != hash {
-				err = fmt.Errorf("%s doesn't match the published hash", location)
-				if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
-					ipfsPath(final) == "" && json.Valid(data) {
+		for _, group := range f.locationGroups(uri) {
+			// Each gateway in turn, the first with room first, until one has it.
+			for left := group; len(left) > 0; {
+				if tries++; tries > maxLocations {
+					break uris
+				}
+				data, final, location, err := f.downloadAny(ctx, f.registries, left, maxRegistrySize)
+				if location == "" {
+					return nil, err
+				}
+				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
+				if err == nil && sha256.Sum256(data) != hash {
+					err = fmt.Errorf("%s doesn't match the published hash", location)
+					if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
+						ipfsPath(final) == "" && json.Valid(data) {
 
-					changed = data
+						changed = data
+					}
 				}
-			}
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					last = err
+					continue
 				}
-				last = err
-				continue
+				f.keep(hash, data)
+				return data, nil
 			}
-			f.keep(hash, data)
-			return data, nil
 		}
 	}
 	if changed != nil {
@@ -263,6 +272,17 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 // gateway of the publisher's choice, which can close, so the wallet's gateways
 // follow it.
 func (f *Fetcher) locations(uri string) []string {
+	var locations []string
+	for _, group := range f.locationGroups(uri) {
+		locations = append(locations, group...)
+	}
+	return locations
+}
+
+// locationGroups returns the locations of a URI as locations returns them, in
+// groups that hold the same file on different hosts: the gateways' for a file on
+// IPFS, and a publisher's own location alone.
+func (f *Fetcher) locationGroups(uri string) [][]string {
 	if len(uri) > maxURILen || !displayable(uri, maxURILen) {
 		return nil
 	}
@@ -270,7 +290,7 @@ func (f *Fetcher) locations(uri string) []string {
 		if rest == "" {
 			return nil
 		}
-		return f.gatewayLocations(rest)
+		return f.gatewayGroup(rest)
 	}
 	if strings.Contains(uri, "://") && !strings.HasPrefix(uri, "https://") {
 		return nil
@@ -286,11 +306,20 @@ func (f *Fetcher) locations(uri string) []string {
 	if parsed.Path == "" {
 		parsed.Path = wellKnownPath
 	}
-	locations := []string{parsed.String()}
+	groups := [][]string{{parsed.String()}}
 	if path := ipfsPath(parsed); path != "" {
-		locations = append(locations, f.gatewayLocations(path)...)
+		groups = append(groups, f.gatewayGroup(path)...)
 	}
-	return locations
+	return groups
+}
+
+// gatewayGroup returns the gateways' locations of an ipfs path as a group, or no
+// group if there are no gateways.
+func (f *Fetcher) gatewayGroup(path string) [][]string {
+	if locations := f.gatewayLocations(path); len(locations) > 0 {
+		return [][]string{locations}
+	}
+	return nil
 }
 
 // ipfsPath returns the ipfs path a URL on a gateway serves, as
@@ -321,12 +350,33 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 func (f *Fetcher) download(ctx context.Context, slots *hostSlots, location string,
 	limit int64) ([]byte, *url.URL, error) {
 
+	data, final, _, err := f.downloadAny(ctx, slots, []string{location}, limit)
+	return data, final, err
+}
+
+// downloadAny downloads the file at the first of the locations, which are the
+// same file on different hosts, whose host has room, and returns the location
+// it used, or "" if it gave up waiting.
+func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations []string,
+	limit int64) ([]byte, *url.URL, string, error) {
+
 	// The wait for a slot isn't part of the download, which starts after it.
-	release, err := slots.take(ctx, hostOf(location))
+	hosts := make([]string, len(locations))
+	for i, location := range locations {
+		hosts[i] = hostOf(location)
+	}
+	host, release, err := slots.takeAny(ctx, hosts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer release()
+	location := locations[slices.Index(hosts, host)]
+	data, final, err := f.get(ctx, location, limit)
+	return data, final, location, err
+}
+
+// get reads a URL, up to limit bytes.
+func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
@@ -364,82 +414,86 @@ func hostOf(location string) string {
 }
 
 // hostSlots lets so many downloads at once at each host, and has the others wait
-// in line, in the order they came.
+// in one line, in the order they came.  A download that can use any of several
+// hosts, as a file on IPFS can through any gateway, takes the first of them that
+// has room, and in line, the first of them that comes free.
 type hostSlots struct {
-	limit int
-	mu    sync.Mutex
-	hosts map[string]*hostSlot
+	limit   int
+	mu      sync.Mutex
+	busy    map[string]int
+	waiting []*slotWaiter
 }
 
-// hostSlot is a host's downloads and line, kept while either has anyone, as
-// registries name any host they like.
-type hostSlot struct {
-	busy    int
-	waiting []chan struct{}
+// slotWaiter is a download in line, and the hosts it can use.
+type slotWaiter struct {
+	hosts []string
+	turn  chan string
 }
 
 func newHostSlots(limit int) *hostSlots {
-	return &hostSlots{limit: limit, hosts: make(map[string]*hostSlot)}
+	return &hostSlots{limit: limit, busy: make(map[string]int)}
 }
 
 // take waits for a slot at the host, and returns what gives it back.
 func (s *hostSlots) take(ctx context.Context, host string) (func(), error) {
+	_, release, err := s.takeAny(ctx, []string{host})
+	return release, err
+}
+
+// takeAny waits for a slot at the first of the hosts that has one, in their order,
+// and returns the host and what gives the slot back.
+func (s *hostSlots) takeAny(ctx context.Context, hosts []string) (string, func(), error) {
 	s.mu.Lock()
-	slot, ok := s.hosts[host]
-	if !ok {
-		slot = &hostSlot{}
-		s.hosts[host] = slot
+	for _, host := range hosts {
+		if s.busy[host] < s.limit {
+			s.busy[host]++
+			s.mu.Unlock()
+			return host, s.giver(host), nil
+		}
 	}
-	if slot.busy < s.limit {
-		slot.busy++
-		s.mu.Unlock()
-		return func() { s.give(host, slot) }, nil
-	}
-	turn := make(chan struct{})
-	slot.waiting = append(slot.waiting, turn)
+	w := &slotWaiter{hosts: hosts, turn: make(chan string, 1)}
+	s.waiting = append(s.waiting, w)
 	s.mu.Unlock()
 
 	select {
-	case <-turn:
-		return func() { s.give(host, slot) }, nil
+	case host := <-w.turn:
+		return host, s.giver(host), nil
 	case <-ctx.Done():
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		for i, waiting := range slot.waiting {
-			if waiting == turn {
-				slot.waiting = append(slot.waiting[:i], slot.waiting[i+1:]...)
-				s.forget(host, slot)
-				return nil, ctx.Err()
+		for i, waiting := range s.waiting {
+			if waiting == w {
+				s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
+				return "", nil, ctx.Err()
 			}
 		}
-		// The slot came as the wait ended, so it goes to the next in line.
-		s.handOn(host, slot)
-		return nil, ctx.Err()
+		// A slot came as the wait ended, so it goes to the next in line.
+		s.handOn(<-w.turn)
+		return "", nil, ctx.Err()
 	}
 }
 
-// give returns a slot, to the next in line if anyone waits.
-func (s *hostSlots) give(host string, slot *hostSlot) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.handOn(host, slot)
-}
-
-// handOn passes a slot that's free to the next in line, or frees it.
-func (s *hostSlots) handOn(host string, slot *hostSlot) {
-	if len(slot.waiting) > 0 {
-		close(slot.waiting[0])
-		slot.waiting = slot.waiting[1:]
-		return
+// giver returns what gives a slot at the host back.
+func (s *hostSlots) giver(host string) func() {
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.handOn(host)
 	}
-	slot.busy--
-	s.forget(host, slot)
 }
 
-// forget drops a host that has nobody downloading or waiting.
-func (s *hostSlots) forget(host string, slot *hostSlot) {
-	if slot.busy == 0 && len(slot.waiting) == 0 {
-		delete(s.hosts, host)
+// handOn passes a slot at the host that's free to the first in line that can use
+// the host, or frees it.
+func (s *hostSlots) handOn(host string) {
+	for i, w := range s.waiting {
+		if slices.Contains(w.hosts, host) {
+			s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
+			w.turn <- host
+			return
+		}
+	}
+	if s.busy[host]--; s.busy[host] <= 0 {
+		delete(s.busy, host)
 	}
 }
 
