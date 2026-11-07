@@ -47,7 +47,7 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)
 		for _, location := range f.locations(candidate) {
-			data, _, err := f.download(ctx, location, maxIconSize)
+			data, _, err := f.download(ctx, f.icons, location, maxIconSize)
 			switch {
 			case err != nil:
 			case checked && sha256.Sum256(data) != digest:

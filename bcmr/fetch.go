@@ -35,6 +35,11 @@ const (
 	// rateWindow.
 	minDownloadRate = 1024
 
+	// maxPerHost is how many registries, and apart from them how many icons,
+	// download at once from one host, so that a gateway isn't flooded and
+	// neither kind waits behind the other.
+	maxPerHost = 4
+
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
 
@@ -72,6 +77,10 @@ type Fetcher struct {
 
 	client *http.Client
 
+	// registries and icons are the slots at each host for each kind.
+	registries *hostSlots
+	icons      *hostSlots
+
 	// keepMu lets one download at a time change the cache, as trimming it
 	// counts and removes the files there.
 	keepMu sync.Mutex
@@ -100,8 +109,10 @@ func NewFetcher(gateways []string, cacheDir string,
 
 func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper) *Fetcher {
 	return &Fetcher{
-		Gateways: gateways,
-		CacheDir: cacheDir,
+		Gateways:   gateways,
+		CacheDir:   cacheDir,
+		registries: newHostSlots(maxPerHost),
+		icons:      newHostSlots(maxPerHost),
 		client: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -217,7 +228,7 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 			if tries++; tries > maxLocations {
 				break
 			}
-			data, final, err := f.download(ctx, location, maxRegistrySize)
+			data, final, err := f.download(ctx, f.registries, location, maxRegistrySize)
 			if err == nil && sha256.Sum256(data) != hash {
 				err = fmt.Errorf("%s doesn't match the published hash", location)
 				if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
@@ -307,7 +318,15 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 // from after any redirects.  It has no limit on its whole time, as a slow mobile
 // link that keeps moving has to get there: it ends if it can't connect, by the
 // transport's limits, or if it stalls, by watchRate.
-func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
+func (f *Fetcher) download(ctx context.Context, slots *hostSlots, location string,
+	limit int64) ([]byte, *url.URL, error) {
+
+	// The wait for a slot isn't part of the download, which starts after it.
+	release, err := slots.take(ctx, hostOf(location))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
@@ -333,6 +352,95 @@ func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([
 		return nil, nil, fmt.Errorf("%s is over %d bytes", location, limit)
 	}
 	return data, resp.Request.URL, nil
+}
+
+// hostOf returns the host of a URL, or nothing for one that can't be read.
+func hostOf(location string) string {
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+// hostSlots lets so many downloads at once at each host, and has the others wait
+// in line, in the order they came.
+type hostSlots struct {
+	limit int
+	mu    sync.Mutex
+	hosts map[string]*hostSlot
+}
+
+// hostSlot is a host's downloads and line, kept while either has anyone, as
+// registries name any host they like.
+type hostSlot struct {
+	busy    int
+	waiting []chan struct{}
+}
+
+func newHostSlots(limit int) *hostSlots {
+	return &hostSlots{limit: limit, hosts: make(map[string]*hostSlot)}
+}
+
+// take waits for a slot at the host, and returns what gives it back.
+func (s *hostSlots) take(ctx context.Context, host string) (func(), error) {
+	s.mu.Lock()
+	slot, ok := s.hosts[host]
+	if !ok {
+		slot = &hostSlot{}
+		s.hosts[host] = slot
+	}
+	if slot.busy < s.limit {
+		slot.busy++
+		s.mu.Unlock()
+		return func() { s.give(host, slot) }, nil
+	}
+	turn := make(chan struct{})
+	slot.waiting = append(slot.waiting, turn)
+	s.mu.Unlock()
+
+	select {
+	case <-turn:
+		return func() { s.give(host, slot) }, nil
+	case <-ctx.Done():
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i, waiting := range slot.waiting {
+			if waiting == turn {
+				slot.waiting = append(slot.waiting[:i], slot.waiting[i+1:]...)
+				s.forget(host, slot)
+				return nil, ctx.Err()
+			}
+		}
+		// The slot came as the wait ended, so it goes to the next in line.
+		s.handOn(host, slot)
+		return nil, ctx.Err()
+	}
+}
+
+// give returns a slot, to the next in line if anyone waits.
+func (s *hostSlots) give(host string, slot *hostSlot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handOn(host, slot)
+}
+
+// handOn passes a slot that's free to the next in line, or frees it.
+func (s *hostSlots) handOn(host string, slot *hostSlot) {
+	if len(slot.waiting) > 0 {
+		close(slot.waiting[0])
+		slot.waiting = slot.waiting[1:]
+		return
+	}
+	slot.busy--
+	s.forget(host, slot)
+}
+
+// forget drops a host that has nobody downloading or waiting.
+func (s *hostSlots) forget(host string, slot *hostSlot) {
+	if slot.busy == 0 && len(slot.waiting) == 0 {
+		delete(s.hosts, host)
+	}
 }
 
 // countingReader counts what's read through it.

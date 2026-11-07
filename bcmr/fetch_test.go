@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -393,14 +394,14 @@ func TestDownloadTooSlow(t *testing.T) {
 			}
 		}
 	})
-	if _, _, err := f.download(context.Background(), server.URL+"/fast", 100); err != nil {
+	if _, _, err := f.download(context.Background(), f.registries, server.URL+"/fast", 100); err != nil {
 		t.Fatal(err)
 	}
 	old := rateWindow
 	rateWindow = time.Second
 	defer func() { rateWindow = old }()
 	start := time.Now()
-	if _, _, err := f.download(context.Background(), server.URL+"/drip", 1000); err == nil {
+	if _, _, err := f.download(context.Background(), f.registries, server.URL+"/drip", 1000); err == nil {
 		t.Fatal("no error")
 	}
 
@@ -411,7 +412,7 @@ func TestDownloadTooSlow(t *testing.T) {
 
 	// A host that keeps to the rate gets through windows, here three of them.
 	rateWindow = 2 * time.Second
-	data, _, err := f.download(context.Background(), server.URL+"/steady", 1<<20)
+	data, _, err := f.download(context.Background(), f.registries, server.URL+"/steady", 1<<20)
 	if err != nil || len(data) != 70*1024 {
 		t.Fatalf("%d bytes, %v", len(data), err)
 	}
@@ -476,5 +477,164 @@ func TestRateCheck(t *testing.T) {
 		if got := check.tooSlow(step.read); got != step.want {
 			t.Fatalf("window %d: %v", i, got)
 		}
+	}
+}
+
+// TestDownloadsPerHost ensures only so many downloads at once from a host, for each
+// kind apart, that the rest wait in line, and that a host's line goes once empty.
+func TestDownloadsPerHost(t *testing.T) {
+	arrived := make(chan struct{}, 32)
+	release := make(chan struct{})
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		arrived <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte("x"))
+	})
+	// Before the server closes, which waits for its handlers, if this fails.
+	var once sync.Once
+	finish := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(finish)
+
+	var done sync.WaitGroup
+	start := func(slots *hostSlots, n int) {
+		for range n {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				_, _, _ = f.download(context.Background(), slots, server.URL+"/x", 100)
+			}()
+		}
+	}
+	take := func(n int) {
+		t.Helper()
+		for range n {
+			select {
+			case <-arrived:
+			case <-time.After(30 * time.Second):
+				t.Fatal("a download didn't start")
+			}
+		}
+	}
+	start(f.registries, maxPerHost+3)
+	take(maxPerHost)
+	start(f.icons, maxPerHost)
+	take(maxPerHost)
+
+	// A wait that can only give downloads over the limit time to show.
+	time.Sleep(50 * time.Millisecond)
+	if len(arrived) != 0 {
+		t.Fatalf("%d downloads over the limit", len(arrived))
+	}
+	finish()
+	done.Wait()
+	if len(f.registries.hosts) != 0 || len(f.icons.hosts) != 0 {
+		t.Fatalf("%d and %d hosts kept", len(f.registries.hosts), len(f.icons.hosts))
+	}
+}
+
+// TestSlotsInOrder ensures the line is first come, first served, and that leaving
+// it gives up a place without losing a slot.
+func TestSlotsInOrder(t *testing.T) {
+	s := newHostSlots(1)
+	held, err := s.take(context.Background(), "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make(chan int, 3)
+	gone, leave := context.WithCancel(context.Background())
+	var waiting sync.WaitGroup
+	for i, ctx := range []context.Context{context.Background(), gone, context.Background()} {
+		waiting.Add(1)
+		go func() {
+			defer waiting.Done()
+			release, err := s.take(ctx, "h")
+			if err != nil {
+				return
+			}
+			order <- i
+			release()
+		}()
+		// Each joins the line before the next.
+		for {
+			s.mu.Lock()
+			n := len(s.hosts["h"].waiting)
+			s.mu.Unlock()
+			if n == i+1 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	leave()
+	held()
+	waiting.Wait()
+	close(order)
+	var got []int
+	for i := range order {
+		got = append(got, i)
+	}
+	if !reflect.DeepEqual(got, []int{0, 2}) {
+		t.Fatalf("%v", got)
+	}
+	if len(s.hosts) != 0 {
+		t.Fatal("the host was kept")
+	}
+}
+
+// TestIconsDontWaitForRegistries ensures an icon has its own place at a host whose
+// registry downloads are all running.
+func TestIconsDontWaitForRegistries(t *testing.T) {
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("icon"))
+	})
+	for range maxPerHost {
+		if _, err := f.registries.take(context.Background(), hostOf(server.URL)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := f.FetchIcon(ctx, server.URL+"/icon.png")
+	if err != nil || string(data) != "icon" {
+		t.Fatalf("%q, %v", data, err)
+	}
+}
+
+// TestSlotNotLostLeavingLine ensures a slot that reaches someone just as they leave
+// the line goes on to the next, many times over, as the two can come together.
+func TestSlotNotLostLeavingLine(t *testing.T) {
+	s := newHostSlots(1)
+	for i := range 200 {
+		held, err := s.take(context.Background(), "h")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, leave := context.WithCancel(context.Background())
+		left := make(chan struct{})
+		go func() {
+			if release, err := s.take(ctx, "h"); err == nil {
+				release()
+			}
+			close(left)
+		}()
+		for {
+			s.mu.Lock()
+			n := len(s.hosts["h"].waiting)
+			s.mu.Unlock()
+			if n == 1 {
+				break
+			}
+			time.Sleep(10 * time.Microsecond)
+		}
+		leave()
+		held()
+		<-left
+		got, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		release, err := s.take(got, "h")
+		cancel()
+		if err != nil {
+			t.Fatalf("round %d: the slot was lost", i)
+		}
+		release()
 	}
 }
