@@ -931,3 +931,102 @@ func TestRateLimitOnlyForGateways(t *testing.T) {
 		t.Fatal("a stranger's host was paused")
 	}
 }
+
+// TestFirstCopyWinsForAll ensures that of two requests for one item, the first to get
+// the file ends the other, which returns it too, while a request for another item
+// goes on.
+func TestFirstCopyWinsForAll(t *testing.T) {
+	var asked atomic.Int32
+	stuck := make(chan struct{})
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// The first request for an icon is slow: it waits until it's given up.
+		if r.URL.Path == "/icon.png" && asked.Add(1) == 1 {
+			close(stuck)
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte("icon " + r.URL.Path))
+	})
+	slow := make(chan []byte, 1)
+	go func() {
+		data, err := f.FetchIcon(context.Background(), server.URL+"/icon.png")
+		if err != nil {
+			t.Error(err)
+		}
+		slow <- data
+	}()
+	<-stuck
+	data, err := f.FetchIcon(context.Background(), server.URL+"/icon.png")
+	if err != nil || string(data) != "icon /icon.png" {
+		t.Fatalf("%q, %v", data, err)
+	}
+	select {
+	case got := <-slow:
+		if string(got) != "icon /icon.png" {
+			t.Fatalf("the slow copy got %q", got)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the slow copy wasn't ended")
+	}
+	if len(f.items) != 0 {
+		t.Fatal("an item was kept")
+	}
+}
+
+// TestItemsKeptApart ensures items are told apart by what they are: registries by
+// hash, icons by URI, and a failure for one leaves the others alone.
+func TestItemsKeptApart(t *testing.T) {
+	file := []byte(`{"r":1}`)
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing.png" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(file)
+	})
+	if _, err := f.FetchIcon(context.Background(), server.URL+"/missing.png"); err == nil {
+		t.Fatal("no error")
+	}
+	data, err := f.Fetch(context.Background(), sha256.Sum256(file), []string{server.URL + "/r"})
+	if err != nil || string(data) != string(file) {
+		t.Fatalf("%q, %v", data, err)
+	}
+	if len(f.items) != 0 {
+		t.Fatal("an item was kept")
+	}
+}
+
+// TestOtherItemsDontEndARequest ensures a request is only ended by its own item: an
+// icon that's slow keeps going while another icon comes, and gets its own file.
+func TestOtherItemsDontEndARequest(t *testing.T) {
+	stuck := make(chan struct{})
+	release := make(chan struct{})
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/a.png" {
+			close(stuck)
+			<-release
+		}
+		_, _ = w.Write([]byte(r.URL.Path))
+	})
+	var once sync.Once
+	finish := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(finish)
+	slow := make(chan []byte, 1)
+	go func() {
+		data, _ := f.FetchIcon(context.Background(), server.URL+"/a.png")
+		slow <- data
+	}()
+	<-stuck
+	if data, err := f.FetchIcon(context.Background(), server.URL+"/b.png"); err != nil || string(data) != "/b.png" {
+		t.Fatalf("%q, %v", data, err)
+	}
+	select {
+	case got := <-slow:
+		t.Fatalf("another icon ended the request, with %q", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	finish()
+	if got := <-slow; string(got) != "/a.png" {
+		t.Fatalf("%q", got)
+	}
+}

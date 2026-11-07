@@ -44,6 +44,13 @@ func ipfsRawDigest(uri string) ([32]byte, bool) {
 // URI names, if it names one.  Connections have the limits of a registry's, and
 // a smaller size.
 func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
+	return f.shared(ctx, "icon "+uri, func(ctx context.Context) ([]byte, error) {
+		return f.fetchIcon(ctx, uri)
+	})
+}
+
+// fetchIcon is FetchIcon for one copy of the request.
+func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	var last error
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)

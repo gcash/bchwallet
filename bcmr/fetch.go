@@ -97,6 +97,10 @@ type Fetcher struct {
 	registries *hostSlots
 	icons      *hostSlots
 
+	// itemsMu guards items, the requests being downloaded, by what they are.
+	itemsMu sync.Mutex
+	items   map[string]*sharedItem
+
 	// now is the time, apart for tests.
 	now func() time.Time
 
@@ -138,6 +142,7 @@ func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper)
 		registries: newHostSlots(maxPerHost),
 		icons:      newHostSlots(maxPerHost),
 		now:        time.Now,
+		items:      make(map[string]*sharedItem),
 		out:        make(map[string]gatewayOut),
 		client: &http.Client{
 			Transport: transport,
@@ -243,6 +248,13 @@ func publicAddress(ip net.IP) bool {
 // A gateway only ever has a file to lose, so another file from one doesn't count,
 // even after a redirect, and neither does what isn't JSON, such as a host's page.
 func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]byte, error) {
+	return f.shared(ctx, "registry "+hex.EncodeToString(hash[:]), func(ctx context.Context) ([]byte, error) {
+		return f.fetch(ctx, hash, uris)
+	})
+}
+
+// fetch is Fetch for one copy of the request.
+func (f *Fetcher) fetch(ctx context.Context, hash [32]byte, uris []string) ([]byte, error) {
 	if data := f.cached(hash); data != nil {
 		return data, nil
 	}
@@ -399,6 +411,53 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	location := locations[slices.Index(hosts, host)]
 	data, final, err := f.get(ctx, location, limit)
 	return data, final, location, err
+}
+
+// sharedItem is something being downloaded, by however many requests for it, and
+// the file once one of them has it.
+type sharedItem struct {
+	copies int
+	done   chan struct{}
+	data   []byte
+}
+
+// shared runs a request for an item, which other requests for the same item can be
+// running too, as a user can ask again when a gateway is slow.  The first to get
+// the file ends the others, which return it as well.
+func (f *Fetcher) shared(ctx context.Context, key string, run func(context.Context) ([]byte, error)) ([]byte, error) {
+	f.itemsMu.Lock()
+	item, ok := f.items[key]
+	if !ok {
+		item = &sharedItem{done: make(chan struct{})}
+		f.items[key] = item
+	}
+	item.copies++
+	f.itemsMu.Unlock()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-item.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	data, err := run(ctx)
+
+	f.itemsMu.Lock()
+	defer f.itemsMu.Unlock()
+	if err == nil && item.data == nil {
+		item.data = data
+		close(item.done)
+	}
+	if item.copies--; item.copies == 0 {
+		delete(f.items, key)
+	}
+	if item.data != nil {
+		return item.data, nil
+	}
+	return data, err
 }
 
 // gatewayOut is a gateway out of rotation: its failures in a row, and until when.
