@@ -403,11 +403,12 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	for i, location := range locations {
 		hosts[i] = hostOf(location)
 	}
-	host, release, err := slots.takeAny(ctx, f.inRotation(hosts))
+	host, release, err := slots.takeAny(ctx, f.avoidOthers(ctx, f.inRotation(hosts)))
 	if err != nil {
 		return nil, nil, "", err
 	}
 	defer release()
+	defer f.using(ctx, host)()
 	location := locations[slices.Index(hosts, host)]
 	data, final, err := f.get(ctx, location, limit)
 	return data, final, location, err
@@ -419,7 +420,13 @@ type sharedItem struct {
 	copies int
 	done   chan struct{}
 	data   []byte
+
+	// hosts are those its requests are downloading from, guarded by itemsMu.
+	hosts map[string]int
 }
+
+// sharedItemKey is the context key of the item a request is for.
+type sharedItemKey struct{}
 
 // shared runs a request for an item, which other requests for the same item can be
 // running too, as a user can ask again when a gateway is slow.  The first to get
@@ -428,7 +435,7 @@ func (f *Fetcher) shared(ctx context.Context, key string, run func(context.Conte
 	f.itemsMu.Lock()
 	item, ok := f.items[key]
 	if !ok {
-		item = &sharedItem{done: make(chan struct{})}
+		item = &sharedItem{done: make(chan struct{}), hosts: make(map[string]int)}
 		f.items[key] = item
 	}
 	item.copies++
@@ -443,7 +450,7 @@ func (f *Fetcher) shared(ctx context.Context, key string, run func(context.Conte
 		case <-ctx.Done():
 		}
 	}()
-	data, err := run(ctx)
+	data, err := run(context.WithValue(ctx, sharedItemKey{}, item))
 
 	f.itemsMu.Lock()
 	defer f.itemsMu.Unlock()
@@ -458,6 +465,47 @@ func (f *Fetcher) shared(ctx context.Context, key string, run func(context.Conte
 		return item.data, nil
 	}
 	return data, err
+}
+
+// avoidOthers returns the hosts but those that other requests for the same item
+// are downloading from, so that asking again tries somewhere else, or all of them
+// if that leaves none.
+func (f *Fetcher) avoidOthers(ctx context.Context, hosts []string) []string {
+	item, ok := ctx.Value(sharedItemKey{}).(*sharedItem)
+	if !ok {
+		return hosts
+	}
+	f.itemsMu.Lock()
+	defer f.itemsMu.Unlock()
+	var others []string
+	for _, host := range hosts {
+		if item.hosts[host] == 0 {
+			others = append(others, host)
+		}
+	}
+	if len(others) == 0 {
+		return hosts
+	}
+	return others
+}
+
+// using records that a request for an item downloads from a host, and returns
+// what records it's done.
+func (f *Fetcher) using(ctx context.Context, host string) func() {
+	item, ok := ctx.Value(sharedItemKey{}).(*sharedItem)
+	if !ok {
+		return func() {}
+	}
+	f.itemsMu.Lock()
+	item.hosts[host]++
+	f.itemsMu.Unlock()
+	return func() {
+		f.itemsMu.Lock()
+		defer f.itemsMu.Unlock()
+		if item.hosts[host]--; item.hosts[host] <= 0 {
+			delete(item.hosts, host)
+		}
+	}
 }
 
 // gatewayOut is a gateway out of rotation: its failures in a row, and until when.

@@ -1030,3 +1030,56 @@ func TestOtherItemsDontEndARequest(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// TestAskingAgainTriesAnotherGateway ensures a second request for an item that's slow
+// at one gateway goes to another, though the slow one has room, and that with no
+// other gateway it goes to the same one.
+func TestAskingAgainTriesAnotherGateway(t *testing.T) {
+	stuck := make(chan struct{})
+	ended := make(chan struct{})
+	slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case stuck <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+		case <-ended:
+		}
+	}))
+	t.Cleanup(slow.Close)
+	// Before the server closes, which waits for its handlers, if this fails.
+	t.Cleanup(func() { close(ended) })
+	fast, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("fast"))
+	})
+	f.Gateways = []string{slow.URL, fast.URL}
+	first := make(chan []byte, 1)
+	go func() {
+		data, _ := f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+		first <- data
+	}()
+	<-stuck
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := f.FetchIcon(ctx, "ipfs://bafy1/icon.png")
+	if err != nil || string(data) != "fast" {
+		t.Fatalf("asked again, it went to the slow gateway: %q, %v", data, err)
+	}
+	if got := <-first; string(got) != "fast" {
+		t.Fatalf("%q", got)
+	}
+
+	// Alone at the gateway, a second request still goes there.
+	if hosts := f.avoidOthers(context.Background(), []string{"a"}); len(hosts) != 1 {
+		t.Fatalf("%v", hosts)
+	}
+	item := &sharedItem{hosts: map[string]int{"a": 1}}
+	ctx = context.WithValue(context.Background(), sharedItemKey{}, item)
+	if hosts := f.avoidOthers(ctx, []string{"a", "b"}); len(hosts) != 1 || hosts[0] != "b" {
+		t.Fatalf("%v", hosts)
+	}
+	if hosts := f.avoidOthers(ctx, []string{"a"}); len(hosts) != 1 || hosts[0] != "a" {
+		t.Fatalf("%v", hosts)
+	}
+}
