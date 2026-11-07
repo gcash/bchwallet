@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -70,6 +71,9 @@ var (
 	// errGatewayFault is a failure that's the host's: one that doesn't connect,
 	// answers with a 5xx, or stalls.
 	errGatewayFault = errors.New("the host failed")
+
+	// errRateLimited is a host that answered 429, Too Many Requests.
+	errRateLimited = errors.New("the host is rate limiting")
 
 	// errPrivateAddress refuses a connection to this device or its network.
 	errPrivateAddress = errors.New("refusing a private address")
@@ -468,8 +472,59 @@ func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte
 	case ctx.Err() != nil:
 	case errors.Is(err, errGatewayFault):
 		f.failed(host)
+	case errors.Is(err, errRateLimited):
+		var limit *rateLimit
+		if errors.As(err, &limit) && limit.wait > 0 {
+			f.pause(host, limit.wait)
+		} else {
+			f.failed(host)
+		}
 	}
 	return data, final, err
+}
+
+// rateLimit is a 429 answer, and how long it asked us to wait, or 0 if it didn't.
+type rateLimit struct {
+	location string
+	wait     time.Duration
+}
+
+func (l *rateLimit) Error() string {
+	return fmt.Sprintf("%s: %v", l.location, errRateLimited)
+}
+
+func (l *rateLimit) Unwrap() error {
+	return errRateLimited
+}
+
+// retryAfter returns how long a Retry-After header asks to wait, in seconds or
+// until a date, or 0 for none or one that can't be read.
+func retryAfter(header string, now time.Time) time.Duration {
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(header), 10, 64); err == nil {
+		if seconds <= 0 || seconds > int64(math.MaxInt64/time.Second) {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(header); err == nil && when.After(now) {
+		return when.Sub(now)
+	}
+	return 0
+}
+
+// pause takes a gateway that asked us to wait out of rotation for exactly as long
+// as it asked, however long.
+func (f *Fetcher) pause(host string, wait time.Duration) {
+	if !f.isGateway(host) {
+		return
+	}
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	out := f.out[host]
+	if until := f.now().Add(wait); until.After(out.until) {
+		out.until = until
+	}
+	f.out[host] = out
 }
 
 // read reads a URL, up to limit bytes, and wraps errGatewayFault in what's the
@@ -488,6 +543,9 @@ func (f *Fetcher) read(ctx context.Context, location string, limit int64) ([]byt
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusInternalServerError {
 		return nil, nil, fmt.Errorf("%w: %s: %s", errGatewayFault, location, resp.Status)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, nil, &rateLimit{location, retryAfter(resp.Header.Get("Retry-After"), f.now())}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("%s: %s", location, resp.Status)

@@ -712,12 +712,15 @@ func TestFreedSlotGoesToWhoCanUseIt(t *testing.T) {
 // gatewayPair is a Fetcher with two gateways, the first answering with status
 // until it's changed, and a clock the test moves.
 type gatewayPair struct {
-	f       *Fetcher
-	status  atomic.Int32
-	hits    atomic.Int32
-	first   string
-	clock   time.Time
-	clockMu sync.Mutex
+	f      *Fetcher
+	status atomic.Int32
+	hits   atomic.Int32
+
+	// retryAfter is the first's Retry-After header, if it isn't nil.
+	retryAfter atomic.Pointer[string]
+	first      string
+	clock      time.Time
+	clockMu    sync.Mutex
 }
 
 func newGatewayPair(t *testing.T) *gatewayPair {
@@ -726,6 +729,9 @@ func newGatewayPair(t *testing.T) *gatewayPair {
 	p.status.Store(http.StatusOK)
 	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		p.hits.Add(1)
+		if after := p.retryAfter.Load(); after != nil {
+			w.Header().Set("Retry-After", *after)
+		}
 		if code := int(p.status.Load()); code != http.StatusOK {
 			w.WriteHeader(code)
 			return
@@ -876,5 +882,52 @@ func TestFetchSkipsGatewayOut(t *testing.T) {
 	p.status.Store(http.StatusOK)
 	if got := p.icon(t); got != "first" {
 		t.Fatalf("%s", got)
+	}
+}
+
+// TestRateLimitPauses ensures a gateway that answers 429 is paused for exactly as
+// long as it asks, in seconds or until a date, however long, and for the steps of
+// a failure if it doesn't say.
+func TestRateLimitPauses(t *testing.T) {
+	for _, test := range []struct {
+		header string
+		rest   time.Duration
+	}{
+		{"900", 900 * time.Second},
+		{"86400", 24 * time.Hour},
+		{"", gatewayRestFirst},
+		{"soon", gatewayRestFirst},
+		{"-5", gatewayRestFirst},
+		{"date", 2 * time.Hour},
+	} {
+		p := newGatewayPair(t)
+		header := test.header
+		if header == "date" {
+			header = p.f.now().Add(2 * time.Hour).UTC().Format(http.TimeFormat)
+		}
+		if header != "" {
+			p.retryAfter.Store(&header)
+		}
+		p.status.Store(http.StatusTooManyRequests)
+		if got := p.icon(t); got != "second" {
+			t.Fatalf("%q: %s", test.header, got)
+		}
+		p.pass(test.rest - time.Second)
+		if len(p.f.inRotation([]string{p.first, "x"})) != 1 {
+			t.Fatalf("%q: back before %v", test.header, test.rest)
+		}
+		p.pass(time.Second)
+		if len(p.f.inRotation([]string{p.first, "x"})) != 2 {
+			t.Fatalf("%q: not back after %v", test.header, test.rest)
+		}
+	}
+}
+
+// TestRateLimitOnlyForGateways ensures a stranger's 429 rests nothing.
+func TestRateLimitOnlyForGateways(t *testing.T) {
+	p := newGatewayPair(t)
+	p.f.pause("stranger.example", time.Hour)
+	if len(p.f.out) != 0 {
+		t.Fatal("a stranger's host was paused")
 	}
 }
