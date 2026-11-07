@@ -977,3 +977,85 @@ func TestSPVFailedSavesSearch(t *testing.T) {
 		t.Fatalf("saved at %d", saved)
 	}
 }
+
+// authbaseOf returns a transaction with a publication that a token can take its
+// category from.
+func authbaseOf(t *testing.T, id int64) (*wire.MsgTx, chainhash.Hash) {
+	t.Helper()
+	tx := withPublication(t, spendOf(id, chainhash.Hash{0xaa}), 0x77, "authbase.example")
+	return tx, tx.TxHash()
+}
+
+// TestSPVAuthbaseInGenesisBlock ensures a publication on the authbase counts when the
+// token has no other, and it's in the block of the genesis.
+func TestSPVAuthbaseInGenesisBlock(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, category := authbaseOf(t, 1)
+	c.put(80, authbase, genesisOf(2, category))
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	pub := state.CurrentPublication()
+	if pub == nil || pub.URIs[0] != "authbase.example" {
+		t.Fatalf("%+v", state)
+	}
+	if state.OlderHeight != 80 || *state.OlderTxid != category {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVLaterPublicationWinsOverAuthbase ensures one on the token's chain comes first.
+func TestSPVLaterPublicationWinsOverAuthbase(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, category := authbaseOf(t, 1)
+	genesis := withPublication(t, genesisOf(2, category), 0x78, "genesis.example")
+	c.put(80, authbase, genesis)
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "genesis.example" {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVAuthbaseInEarlierBlock ensures a token whose authbase isn't in the block of its
+// genesis still loads, with no publication, as nothing tells where that is.
+func TestSPVAuthbaseInEarlierBlock(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, category := authbaseOf(t, 1)
+	c.put(70, authbase)
+	genesis := genesisOf(2, category)
+	c.put(80, genesis)
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if state.Status != StatusVerified || state.Head().Txid != genesis.TxHash() {
+		t.Fatalf("%+v", state)
+	}
+	if state.CurrentPublication() != nil {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVAuthbaseBlockUnread ensures a block that can't be read leaves the token to be
+// found again, as this is the only look at its authbase.
+func TestSPVAuthbaseBlockUnread(t *testing.T) {
+	c := newFakeChain(100)
+	authbase, category := authbaseOf(t, 1)
+	c.put(80, authbase, genesisOf(2, category))
+	c.failBlock = true
+	state := &State{Category: category}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Links) != 0 || state.Status == StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+
+	c.failBlock = false
+	delete(b.waiting, category)
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {
+		t.Fatalf("%+v", state)
+	}
+}

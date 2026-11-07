@@ -191,7 +191,7 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 
 	// unknown holds the tokens whose genesis was found but couldn't be used.
 	unknown := make(map[chainhash.Hash]struct{})
-	outpoints, found := b.genesisFinder(states, unknown)
+	outpoints, found := b.genesisFinder(ctx, states, unknown)
 	if _, err = b.source.SearchSpends(outpoints, tip, bottom, found, nil, ctx.Done()); err != nil {
 		return err
 	}
@@ -215,8 +215,8 @@ func (b *SPVBackend) searchGeneses(ctx context.Context, states []*State) error {
 
 // genesisFinder returns the outpoints whose spends are the states' geneses, and
 // what takes one up.  A genesis that can't be used goes in unknown.
-func (b *SPVBackend) genesisFinder(states []*State, unknown map[chainhash.Hash]struct{}) (
-	[]wire.OutPoint, func(SpendFound) []wire.OutPoint) {
+func (b *SPVBackend) genesisFinder(ctx context.Context, states []*State,
+	unknown map[chainhash.Hash]struct{}) ([]wire.OutPoint, func(SpendFound) []wire.OutPoint) {
 
 	byOutPoint := make(map[wire.OutPoint]*State, len(states))
 	outpoints := make([]wire.OutPoint, 0, len(states))
@@ -238,11 +238,36 @@ func (b *SPVBackend) genesisFinder(states []*State, unknown map[chainhash.Hash]s
 			unknown[state.Category] = struct{}{}
 			return nil
 		}
+		// The block comes first, as a token with a link is never searched again,
+		// and this is the only look at its authbase.
+		block, err := b.source.GetBlock(&spend.BlockHash, ctx.Done())
+		if err != nil {
+			log.Debugf("Unable to read block %v: %v", spend.BlockHash, err)
+			unknown[state.Category] = struct{}{}
+			return nil
+		}
 		state.Links = []Link{*newLink(spend.Tx, spend.Height, spend.BlockHash)}
 		state.Burned = chainbcmr.IsBurn(spend.Tx)
 		state.ScannedTo, state.ScannedHash = spend.Height-1, *before
 		state.Status = StatusSearching
+		keepAuthbase(state, block, spend)
 		return nil
+	}
+}
+
+// keepAuthbase keeps a publication on the authbase, if it's in the block of the
+// genesis.  Some tokens publish only there.  One further down isn't found, as a
+// filter can't tell where a txid is.
+func keepAuthbase(state *State, block *wire.MsgBlock, spend SpendFound) {
+	for _, tx := range block.Transactions {
+		if tx.TxHash() != state.Category {
+			continue
+		}
+		if link := newLink(tx, spend.Height, spend.BlockHash); link.Publication != nil {
+			state.OlderTxid, state.OlderHeight = &link.Txid, link.Height
+			state.Older = link.Publication
+		}
+		return
 	}
 }
 
@@ -292,7 +317,7 @@ func (b *SPVBackend) checkFailed(ctx context.Context, all []*State, save func(*S
 		return nil
 	}
 	unknown := make(map[chainhash.Hash]struct{})
-	outpoints, found := b.genesisFinder(states, unknown)
+	outpoints, found := b.genesisFinder(ctx, states, unknown)
 	if _, err := b.source.SearchSpends(outpoints, from, tip, found, nil, ctx.Done()); err != nil {
 		return err
 	}
