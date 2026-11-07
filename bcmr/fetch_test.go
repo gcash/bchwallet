@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1213,5 +1214,38 @@ func TestLocationTriedOnce(t *testing.T) {
 	}
 	if asked.Load() != 1 || time.Since(start) > 10*time.Second {
 		t.Fatalf("asked %d times in %v", asked.Load(), time.Since(start))
+	}
+}
+
+// endsWhenCancelled is a transport whose file sends nothing, then ends cleanly
+// when the request is ended, as a host that stops sending can.
+type endsWhenCancelled struct{}
+
+func (endsWhenCancelled) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       cleanEnd{req.Context()},
+		Request:    req,
+	}, nil
+}
+
+type cleanEnd struct{ ctx context.Context }
+
+func (b cleanEnd) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, io.EOF
+}
+
+func (cleanEnd) Close() error { return nil }
+
+// TestStalledFileThatEndsIsAFailure ensures a download ended for being too slow
+// fails, though the file then ends cleanly, rather than pass as the whole of it.
+func TestStalledFileThatEndsIsAFailure(t *testing.T) {
+	old := rateWindow
+	rateWindow = time.Second
+	defer func() { rateWindow = old }()
+	f := newFetcher(nil, "", endsWhenCancelled{})
+	if data, _, err := f.download(context.Background(), f.registries, "https://stalls.example/r", 100); err == nil {
+		t.Fatalf("passed with %q", data)
 	}
 }

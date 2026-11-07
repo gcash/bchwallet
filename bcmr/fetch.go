@@ -704,6 +704,12 @@ func (f *Fetcher) read(ctx context.Context, location string, limit int64) ([]byt
 	stopWatching := watchRate(ctx, body, cancel, rateWindow)
 	defer stopWatching()
 	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	// A download ended for being too slow has failed, even if the file ended
+	// first, as a host that stops sending can close it cleanly: what came is
+	// only part of it.
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", errGatewayFault, err)
 	}
