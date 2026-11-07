@@ -72,6 +72,11 @@ var (
 	// answers with a 5xx, or stalls.
 	errGatewayFault = errors.New("the host failed")
 
+	// ErrNoGateway is the answer to an icon the user asked for while every
+	// gateway that has it is paused or out of rotation, rather than have the
+	// user wait with no end in sight.
+	ErrNoGateway = errors.New("every gateway is paused or out of rotation")
+
 	// errRateLimited is a host that answered 429, Too Many Requests.
 	errRateLimited = errors.New("the host is rate limiting")
 
@@ -261,11 +266,15 @@ func (f *Fetcher) fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 	var last error
 	var changed []byte
 	tries := 0
+	tried := make(map[string]bool)
 uris:
 	for _, uri := range uris {
 		for _, group := range f.locationGroups(uri) {
 			// Each gateway in turn, the first with room first, until one has it.
-			for left := group; len(left) > 0; {
+			// A location already tried, as a publisher's URL on a gateway is,
+			// isn't tried again, nor waited for.
+			left := untried(group, tried)
+			for len(left) > 0 {
 				if tries++; tries > maxLocations {
 					break uris
 				}
@@ -273,7 +282,8 @@ uris:
 				if location == "" {
 					return nil, err
 				}
-				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
+				tried[location] = true
+				left = untried(left, tried)
 				if err == nil && sha256.Sum256(data) != hash {
 					err = fmt.Errorf("%s doesn't match the published hash", location)
 					f.failed(hostOf(location))
@@ -351,6 +361,17 @@ func (f *Fetcher) locationGroups(uri string) [][]string {
 	return groups
 }
 
+// untried returns the locations not tried yet.
+func untried(locations []string, tried map[string]bool) []string {
+	var left []string
+	for _, location := range locations {
+		if !tried[location] {
+			left = append(left, location)
+		}
+	}
+	return left
+}
+
 // gatewayGroup returns the gateways' locations of an ipfs path as a group, or no
 // group if there are no gateways.
 func (f *Fetcher) gatewayGroup(path string) [][]string {
@@ -403,7 +424,26 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	for i, location := range locations {
 		hosts[i] = hostOf(location)
 	}
-	host, release, err := slots.takeAny(ctx, f.avoidOthers(ctx, f.inRotation(hosts)))
+	// With every gateway paused or out, what loads by itself, and any registry,
+	// waits for one to come back, while an icon the user asked for is told so.
+	var in []string
+	for {
+		var back time.Duration
+		if in, back = f.inRotation(hosts); len(in) > 0 {
+			break
+		}
+		if slots == f.icons && isUserAction(ctx) {
+			return nil, nil, "", ErrNoGateway
+		}
+		timer := time.NewTimer(back)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, "", ctx.Err()
+		}
+	}
+	host, release, err := slots.takeAny(ctx, f.avoidOthers(ctx, in))
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -515,21 +555,24 @@ type gatewayOut struct {
 }
 
 // inRotation returns the hosts but the gateways out of rotation, in their order,
-// or all of them if that leaves none.
-func (f *Fetcher) inRotation(hosts []string) []string {
+// and if that leaves none, how long until the first is back.
+func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 	f.healthMu.Lock()
 	defer f.healthMu.Unlock()
 	now := f.now()
 	var in []string
+	var back time.Duration
 	for _, host := range hosts {
-		if out, ok := f.out[host]; !ok || !now.Before(out.until) {
+		out, ok := f.out[host]
+		if !ok || !now.Before(out.until) {
 			in = append(in, host)
+			continue
+		}
+		if wait := out.until.Sub(now); back == 0 || wait < back {
+			back = wait
 		}
 	}
-	if len(in) == 0 {
-		return hosts
-	}
-	return in
+	return in, back
 }
 
 // failed takes a gateway that failed out of rotation, for longer the more times

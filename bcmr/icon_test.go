@@ -6,6 +6,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -43,19 +44,23 @@ func TestIPFSRawDigest(t *testing.T) {
 // next gateway tried, and that an https icon has nothing to match.
 func TestFetchIcon(t *testing.T) {
 	good := []byte("the real icon")
-	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/bad") {
-			_, _ = w.Write([]byte("something else"))
-			return
-		}
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(good)
 	})
-	f.Gateways = []string{server.URL + "/bad", server.URL + "/good"}
+	// A gateway of its own, as one that serves the wrong file rests.
+	bad := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("something else"))
+	}))
+	t.Cleanup(bad.Close)
+	f.Gateways = []string{bad.URL + "/bad", server.URL + "/good"}
 	data, err := f.FetchIcon(context.Background(), rawCID(good))
 	if err != nil || string(data) != string(good) {
 		t.Fatalf("got %q, %v", data, err)
 	}
-	f.Gateways = []string{server.URL + "/bad"}
+	f.Gateways = []string{bad.URL + "/bad"}
+	f.healthMu.Lock()
+	f.out = make(map[string]gatewayOut)
+	f.healthMu.Unlock()
 	if _, err := f.FetchIcon(context.Background(), rawCID(good)); !errors.Is(err, ErrIconUnavailable) {
 		t.Fatalf("got %v", err)
 	}

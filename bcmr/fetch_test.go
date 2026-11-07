@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +113,11 @@ func TestFetchChangedOnIPFS(t *testing.T) {
 	f.Gateways = []string{server.URL}
 	hash := sha256.Sum256([]byte("good"))
 	for _, uri := range []string{"ipfs://bafkrei1", server.URL + "/ipfs/bafkrei1", server.URL + "/moved"} {
+		// Each from a fresh start, as the gateway that serves the wrong file
+		// rests after each.
+		f.healthMu.Lock()
+		f.out = make(map[string]gatewayOut)
+		f.healthMu.Unlock()
 		data, err := f.Fetch(context.Background(), hash, []string{uri})
 		if !errors.Is(err, ErrRegistryUnavailable) || data != nil {
 			t.Fatalf("%s: got %q, %v", uri, data, err)
@@ -123,15 +129,16 @@ func TestFetchChangedOnIPFS(t *testing.T) {
 // the wallet's gateways, as nftstorage.link made necessary.
 func TestFetchGatewayAfterClosedHost(t *testing.T) {
 	good := []byte("registry")
-	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/gw/") {
-			_, _ = w.Write(good)
-			return
-		}
-		http.Error(w, "closed", http.StatusTooManyRequests)
+	gateway, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(good)
 	})
-	f.Gateways = []string{server.URL + "/gw"}
-	data, err := f.Fetch(context.Background(), sha256.Sum256(good), []string{server.URL + "/ipfs/bafkrei1"})
+	// The publisher is a host of its own, as its 429 rests only it.
+	closed := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "closed", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(closed.Close)
+	f.Gateways = []string{gateway.URL + "/gw"}
+	data, err := f.Fetch(context.Background(), sha256.Sum256(good), []string{closed.URL + "/ipfs/bafkrei1"})
 	if err != nil || string(data) != "registry" {
 		t.Fatalf("got %q, %v", data, err)
 	}
@@ -141,21 +148,28 @@ func TestFetchGatewayAfterClosedHost(t *testing.T) {
 // that a failed gateway gives way to the next.
 func TestFetchGateways(t *testing.T) {
 	good := []byte("registry")
+	var mu sync.Mutex
 	var paths []string
-	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		if strings.HasPrefix(r.URL.Path, "/down") {
-			http.Error(w, "down", http.StatusBadGateway)
-			return
-		}
+	asked := func(r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		paths = append(paths, r.Host+r.URL.Path)
+	}
+	up, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		asked(r)
 		_, _ = w.Write(good)
 	})
-	f.Gateways = []string{server.URL + "/down", server.URL + "/up"}
+	down := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked(r)
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	t.Cleanup(down.Close)
+	f.Gateways = []string{down.URL + "/down", up.URL + "/up"}
 	data, err := f.Fetch(context.Background(), sha256.Sum256(good), []string{"ipfs://bafkrei1"})
 	if err != nil || string(data) != "registry" {
 		t.Fatalf("got %q, %v", data, err)
 	}
-	want := []string{"/down/ipfs/bafkrei1", "/up/ipfs/bafkrei1"}
+	want := []string{hostOf(down.URL) + "/down/ipfs/bafkrei1", hostOf(up.URL) + "/up/ipfs/bafkrei1"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("asked for %v", paths)
 	}
@@ -340,7 +354,7 @@ func TestFetchTriesAFewLocations(t *testing.T) {
 	})
 	uris := make([]string, 100)
 	for i := range uris {
-		uris[i] = server.URL + "/r"
+		uris[i] = fmt.Sprintf("%s/r%d", server.URL, i)
 	}
 	if _, err := f.Fetch(context.Background(), [32]byte{1}, uris); !errors.Is(err, ErrRegistryUnavailable) {
 		t.Fatalf("got %v", err)
@@ -782,11 +796,11 @@ func TestFailingGatewayRests(t *testing.T) {
 		}
 		// Out until the rest is over, so the first asked is the second.
 		p.pass(rest - time.Second)
-		if p.f.inRotation([]string{p.first})[0] != p.first || len(p.f.inRotation([]string{p.first, "x"})) != 1 {
+		if inRotationLen(p.f, p.first, "x") != 1 {
 			t.Fatalf("back before %v", rest)
 		}
 		p.pass(time.Second)
-		if in := p.f.inRotation([]string{p.first, "x"}); len(in) != 2 {
+		if inRotationLen(p.f, p.first, "x") != 2 {
 			t.Fatalf("not back after %v", rest)
 		}
 	}
@@ -826,15 +840,67 @@ func TestWhatIsAFailure(t *testing.T) {
 	}
 }
 
-// TestAllGatewaysOutStillTried ensures gateways that are all out are tried anyway,
-// as there's nothing else.
-func TestAllGatewaysOutStillTried(t *testing.T) {
-	p := newGatewayPair(t)
-	for _, gateway := range p.f.Gateways {
-		p.f.failed(hostOf(gateway))
+// inRotationLen returns how many of the hosts are in rotation.
+func inRotationLen(f *Fetcher, hosts ...string) int {
+	in, _ := f.inRotation(hosts)
+	return len(in)
+}
+
+// TestAllGatewaysOut ensures that with every gateway out, an icon the user asked for
+// is told so at once, while what loads by itself, and a registry the user asked
+// for, waits for one to come back, and that a wait can be given up.
+func TestAllGatewaysOut(t *testing.T) {
+	file := []byte(`{"r":1}`)
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ipfs/bafy1/icon.png" {
+			_, _ = w.Write([]byte("icon"))
+			return
+		}
+		_, _ = w.Write(file)
+	})
+	f.Gateways = []string{server.URL}
+	host := hostOf(server.URL)
+	rest := func(d time.Duration) {
+		f.healthMu.Lock()
+		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(d)}
+		f.healthMu.Unlock()
 	}
-	if got := p.icon(t); got != "first" {
-		t.Fatalf("%s", got)
+
+	rest(time.Hour)
+	limit, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stop()
+	if _, err := f.FetchIcon(UserAction(limit), "ipfs://bafy1/icon.png"); !errors.Is(err, ErrNoGateway) {
+		t.Fatalf("the user wasn't told: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := f.FetchIcon(ctx, "ipfs://bafy1/icon.png"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a wait given up: %v", err)
+	}
+
+	// Waits can only be longer than this, never shorter, on a slow machine.
+	const back = 200 * time.Millisecond
+	for _, test := range []struct {
+		name  string
+		fetch func() ([]byte, error)
+		want  []byte
+	}{
+		{"an icon that loads by itself", func() ([]byte, error) {
+			return f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+		}, []byte("icon")},
+		{"a registry the user asked for", func() ([]byte, error) {
+			return f.Fetch(UserAction(context.Background()), sha256.Sum256(file), []string{"ipfs://bafy1/r.json"})
+		}, file},
+	} {
+		rest(back)
+		start := time.Now()
+		data, err := test.fetch()
+		if err != nil || string(data) != string(test.want) {
+			t.Fatalf("%s: %q, %v", test.name, data, err)
+		}
+		if waited := time.Since(start); waited < back-20*time.Millisecond {
+			t.Fatalf("%s didn't wait: %v", test.name, waited)
+		}
 	}
 }
 
@@ -913,11 +979,11 @@ func TestRateLimitPauses(t *testing.T) {
 			t.Fatalf("%q: %s", test.header, got)
 		}
 		p.pass(test.rest - time.Second)
-		if len(p.f.inRotation([]string{p.first, "x"})) != 1 {
+		if inRotationLen(p.f, p.first, "x") != 1 {
 			t.Fatalf("%q: back before %v", test.header, test.rest)
 		}
 		p.pass(time.Second)
-		if len(p.f.inRotation([]string{p.first, "x"})) != 2 {
+		if inRotationLen(p.f, p.first, "x") != 2 {
 			t.Fatalf("%q: not back after %v", test.header, test.rest)
 		}
 	}
@@ -1128,5 +1194,24 @@ func TestUserActionsGoFirst(t *testing.T) {
 	want := []string{"user 1", "user 2", "background 1", "background 2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%v", got)
+	}
+}
+
+// TestLocationTriedOnce ensures a publisher's URL that is also a gateway's location
+// is tried once, rather than again after waiting for the gateway it failed at.
+func TestLocationTriedOnce(t *testing.T) {
+	var asked atomic.Int32
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		http.Error(w, "down", http.StatusBadGateway)
+	})
+	f.Gateways = []string{server.URL}
+	start := time.Now()
+	_, err := f.Fetch(context.Background(), sha256.Sum256([]byte("x")), []string{server.URL + "/ipfs/bafkrei1"})
+	if !errors.Is(err, ErrRegistryUnavailable) {
+		t.Fatalf("%v", err)
+	}
+	if asked.Load() != 1 || time.Since(start) > 10*time.Second {
+		t.Fatalf("asked %d times in %v", asked.Load(), time.Since(start))
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -52,15 +51,18 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 // fetchIcon is FetchIcon for one copy of the request.
 func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
 	var last error
+	tried := make(map[string]bool)
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)
 		for _, group := range f.locationGroups(candidate) {
-			for left := group; len(left) > 0; {
+			left := untried(group, tried)
+			for len(left) > 0 {
 				data, _, location, err := f.downloadAny(ctx, f.icons, left, maxIconSize)
 				if location == "" {
 					return nil, err
 				}
-				left = slices.DeleteFunc(slices.Clone(left), func(l string) bool { return l == location })
+				tried[location] = true
+				left = untried(left, tried)
 				if err == nil && checked && sha256.Sum256(data) != digest {
 					err = fmt.Errorf("%s doesn't match the hash of the URI", location)
 					f.failed(hostOf(location))

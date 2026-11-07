@@ -587,6 +587,9 @@ func (s *walletServer) TokenIcon(ctx context.Context, req *pb.TokenIconRequest) 
 		ctx = bcmr.UserAction(ctx)
 	}
 	data, err := manager.Icon(ctx, req.Uri)
+	if errors.Is(err, bcmr.ErrNoGateway) {
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "%v", err)
 	}
