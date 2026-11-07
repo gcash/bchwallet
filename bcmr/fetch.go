@@ -27,11 +27,6 @@ const (
 	// collection of 10,000 NFTs, is about 10 MB.
 	maxRegistrySize = 16 << 20
 
-	// fetchTimeout bounds one download, which has to leave a slow connection
-	// time for the largest registry, while it can be sharing that connection
-	// with maxRegistryReads of them.
-	fetchTimeout = 10 * time.Minute
-
 	// maxLocations is how many locations a Fetch tries, as the URIs come from
 	// strangers and a publication can hold many, and other tokens wait for it.
 	maxLocations = 12
@@ -62,10 +57,6 @@ var (
 	// errPrivateAddress refuses a connection to this device or its network.
 	errPrivateAddress = errors.New("refusing a private address")
 )
-
-// fetchDeadline bounds all the downloads of one Fetch, which leaves a host that
-// takes a download's whole time short of taking all of it.
-var fetchDeadline = 2 * fetchTimeout
 
 // Fetcher downloads registries, checks them against their published hashes,
 // and keeps them by hash.  A hash that matches means the source didn't matter,
@@ -218,9 +209,6 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 	if data := f.cached(hash); data != nil {
 		return data, nil
 	}
-	parent := ctx
-	ctx, cancel := context.WithTimeout(ctx, fetchDeadline)
-	defer cancel()
 	var last error
 	var changed []byte
 	tries := 0
@@ -240,10 +228,6 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 			}
 			if err != nil {
 				if ctx.Err() != nil {
-					// What was found counts, if only our time ran out.
-					if changed != nil && parent.Err() == nil {
-						return changed, ErrRegistryChanged
-					}
 					return nil, ctx.Err()
 				}
 				last = err
@@ -320,9 +304,11 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 }
 
 // download reads a URL, up to limit bytes, and returns the file and where it came
-// from after any redirects.
+// from after any redirects.  It has no limit on its whole time, as a slow mobile
+// link that keeps moving has to get there: it ends if it can't connect, by the
+// transport's limits, or if it stalls, by watchRate.
 func (f *Fetcher) download(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
-	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
 	if err != nil {

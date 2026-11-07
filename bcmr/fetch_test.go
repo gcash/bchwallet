@@ -417,23 +417,45 @@ func TestDownloadTooSlow(t *testing.T) {
 	}
 }
 
-// TestFetchKeepsFileWhenTimeRunsOut ensures a file that was found counts when a
-// later location uses up the Fetch's time, as a host can.
-func TestFetchKeepsFileWhenTimeRunsOut(t *testing.T) {
-	old := fetchDeadline
-	fetchDeadline = 2 * time.Second
-	defer func() { fetchDeadline = old }()
-	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/partial" {
-			_, _ = w.Write([]byte(`{"part":1}`))
-			return
-		}
-		<-r.Context().Done()
+// deadlineSpy is a transport that tells whether a request had a deadline.
+type deadlineSpy struct {
+	next      http.RoundTripper
+	deadlines atomic.Int32
+}
+
+func (s *deadlineSpy) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, ok := req.Context().Deadline(); ok {
+		s.deadlines.Add(1)
+	}
+	return s.next.RoundTrip(req)
+}
+
+// TestDownloadsHaveNoDeadline ensures neither a registry nor an icon download has a
+// limit on its whole time, as a slow link has to get there, and that the caller's
+// own deadline still holds.
+func TestDownloadsHaveNoDeadline(t *testing.T) {
+	file := []byte(`{"registry":true}`)
+	server, _ := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(file)
 	})
-	data, err := f.Fetch(context.Background(), sha256.Sum256([]byte("the whole set")),
-		[]string{server.URL + "/partial", server.URL + "/hangs"})
-	if !errors.Is(err, ErrRegistryChanged) || string(data) != `{"part":1}` {
-		t.Fatalf("%q, %v", data, err)
+	spy := &deadlineSpy{next: server.Client().Transport}
+	f := newFetcher(nil, "", spy)
+	if _, err := f.Fetch(context.Background(), sha256.Sum256(file), []string{server.URL + "/r"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.FetchIcon(context.Background(), server.URL+"/icon.png"); err != nil {
+		t.Fatal(err)
+	}
+	if n := spy.deadlines.Load(); n != 0 {
+		t.Fatalf("%d downloads had a deadline", n)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	if _, err := f.FetchIcon(ctx, server.URL+"/icon.png"); err != nil {
+		t.Fatal(err)
+	}
+	if spy.deadlines.Load() != 1 {
+		t.Fatal("the caller's deadline was lost")
 	}
 }
 
