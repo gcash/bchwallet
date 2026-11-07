@@ -694,6 +694,22 @@ type hostSlots struct {
 type slotWaiter struct {
 	hosts []string
 	turn  chan string
+	user  bool
+}
+
+// userActionKey is the context key that marks what the user asked for.
+type userActionKey struct{}
+
+// UserAction marks a request as asked for by the user, which goes ahead of all
+// that loads by itself in the lines for hosts.
+func UserAction(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userActionKey{}, true)
+}
+
+// isUserAction returns whether a request was asked for by the user.
+func isUserAction(ctx context.Context) bool {
+	user, _ := ctx.Value(userActionKey{}).(bool)
+	return user
 }
 
 func newHostSlots(limit int) *hostSlots {
@@ -717,8 +733,17 @@ func (s *hostSlots) takeAny(ctx context.Context, hosts []string) (string, func()
 			return host, s.giver(host), nil
 		}
 	}
-	w := &slotWaiter{hosts: hosts, turn: make(chan string, 1)}
-	s.waiting = append(s.waiting, w)
+	w := &slotWaiter{hosts: hosts, turn: make(chan string, 1), user: isUserAction(ctx)}
+	if w.user {
+		// After the users ahead, before everything else.
+		at := 0
+		for at < len(s.waiting) && s.waiting[at].user {
+			at++
+		}
+		s.waiting = slices.Insert(s.waiting, at, w)
+	} else {
+		s.waiting = append(s.waiting, w)
+	}
 	s.mu.Unlock()
 
 	select {

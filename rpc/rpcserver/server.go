@@ -583,6 +583,9 @@ func (s *walletServer) TokenIcon(ctx context.Context, req *pb.TokenIconRequest) 
 	if manager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "the wallet has no chain client")
 	}
+	if req.UserAction {
+		ctx = bcmr.UserAction(ctx)
+	}
 	data, err := manager.Icon(ctx, req.Uri)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "%v", err)

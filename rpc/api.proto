@@ -260,6 +260,7 @@ message RefreshTokenMetadataResponse {
 
 message TokenIconRequest {
 	string uri = 1; // An icon_uri of TokenMetadata.
+	bool user_action = 2; // Asked for by the user, which goes before what loads by itself.
 }
 message TokenIconResponse {
 	bytes data = 1; // The image, whose format the host decides.

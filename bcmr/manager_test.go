@@ -1088,3 +1088,39 @@ func TestManagerChangedFileClaimsSnapshot(t *testing.T) {
 		t.Fatal("not read the next day")
 	}
 }
+
+// userActionSpy is a transport that counts the requests asked for by the user.
+type userActionSpy struct {
+	next  http.RoundTripper
+	users atomic.Int32
+}
+
+func (s *userActionSpy) RoundTrip(req *http.Request) (*http.Response, error) {
+	if isUserAction(req.Context()) {
+		s.users.Add(1)
+	}
+	return s.next.RoundTrip(req)
+}
+
+// TestManagerRefreshIsUserAction ensures the read of a token the user refreshed is
+// the user's, and one that loads by itself isn't.
+func TestManagerRefreshIsUserAction(t *testing.T) {
+	category := chainhash.Hash{0x51}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	spy := &userActionSpy{next: f.m.cfg.Fetcher.client.Transport}
+	f.m.cfg.Fetcher.client.Transport = spy
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if spy.users.Load() != 0 {
+		t.Fatal("a token that loads by itself was the user's")
+	}
+	f.m.Refresh(category)
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if spy.users.Load() != 1 {
+		t.Fatalf("%d of the user's", spy.users.Load())
+	}
+}

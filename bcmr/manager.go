@@ -113,6 +113,9 @@ type registryRead struct {
 	// same is whether the state already has this publication.
 	same bool
 
+	// user is whether the user asked for the token to be read again.
+	user bool
+
 	data []byte
 	err  error
 }
@@ -402,8 +405,13 @@ func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
 			use()
 		}
 		reading[read.pub.Hash] = nil
+		// A token the user refreshed goes ahead of those that load by themselves.
+		fetchCtx := ctx
+		if read.user {
+			fetchCtx = UserAction(ctx)
+		}
 		go func() {
-			read.data, read.err = m.cfg.Fetcher.Fetch(ctx, read.pub.Hash, read.pub.URIs)
+			read.data, read.err = m.cfg.Fetcher.Fetch(fetchCtx, read.pub.Hash, read.pub.URIs)
 			results <- read
 		}()
 	}
@@ -454,7 +462,7 @@ func (m *Manager) registryDue(state *State) *registryRead {
 	if failed, ok := m.tried[key]; ok && time.Since(failed.last) < retryWait(failed.tries) {
 		return nil
 	}
-	return &registryRead{state: state, pub: pub, same: same}
+	return &registryRead{state: state, pub: pub, same: same, user: reread}
 }
 
 // useRegistry keeps what a read found.

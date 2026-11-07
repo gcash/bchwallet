@@ -1083,3 +1083,50 @@ func TestAskingAgainTriesAnotherGateway(t *testing.T) {
 		t.Fatalf("%v", hosts)
 	}
 }
+
+// TestUserActionsGoFirst ensures what the user asked for goes ahead of all that loads
+// by itself in a host's line, and that users are served in the order they came.
+func TestUserActionsGoFirst(t *testing.T) {
+	s := newHostSlots(1)
+	held, _ := s.take(context.Background(), "h")
+	order := make(chan string, 4)
+	inLine := func(n int) {
+		for {
+			s.mu.Lock()
+			l := len(s.waiting)
+			s.mu.Unlock()
+			if l == n {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	var all sync.WaitGroup
+	for i, name := range []string{"background 1", "user 1", "background 2", "user 2"} {
+		ctx := context.Background()
+		if strings.HasPrefix(name, "user") {
+			ctx = UserAction(ctx)
+		}
+		all.Add(1)
+		go func() {
+			defer all.Done()
+			release, err := s.take(ctx, "h")
+			if err == nil {
+				order <- name
+				release()
+			}
+		}()
+		inLine(i + 1)
+	}
+	held()
+	all.Wait()
+	close(order)
+	var got []string
+	for name := range order {
+		got = append(got, name)
+	}
+	want := []string{"user 1", "user 2", "background 1", "background 2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+}
