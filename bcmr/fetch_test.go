@@ -339,9 +339,19 @@ func TestNewFetcherRefusesLocal(t *testing.T) {
 		t.Error("the local server was reached")
 	}))
 	defer server.Close()
-	_, err := NewFetcher(nil, "", nil).Fetch(context.Background(), [32]byte{}, []string{server.URL + "/r"})
+	f := NewFetcher(nil, "", nil)
+	if f.roundPause != 30*time.Second {
+		t.Fatalf("rounds %v apart", f.roundPause)
+	}
+	// An address that's always refused gets no more rounds, which would take
+	// a pause each.
+	start := time.Now()
+	_, err := f.Fetch(context.Background(), [32]byte{}, []string{server.URL + "/r"})
 	if !errors.Is(err, ErrRegistryUnavailable) || !strings.Contains(err.Error(), "private") {
 		t.Fatalf("got %v", err)
+	}
+	if took := time.Since(start); took >= f.roundPause {
+		t.Fatalf("took %v", took)
 	}
 }
 
@@ -360,7 +370,7 @@ func TestFetchTriesAFewLocations(t *testing.T) {
 	if _, err := f.Fetch(context.Background(), [32]byte{1}, uris); !errors.Is(err, ErrRegistryUnavailable) {
 		t.Fatalf("got %v", err)
 	}
-	if hits.Load() != maxLocations {
+	if hits.Load() != maxLocations*3 {
 		t.Fatalf("%d tries", hits.Load())
 	}
 }
@@ -868,6 +878,8 @@ func TestAllGatewaysOut(t *testing.T) {
 	}
 
 	rest(time.Hour)
+	// Told at once, with no round after a pause.
+	f.roundPause = time.Hour
 	limit, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
 	if _, err := f.FetchIcon(UserAction(limit), "ipfs://bafy1/icon.png"); !errors.Is(err, ErrNoGateway) {
@@ -1198,8 +1210,22 @@ func TestUserActionsGoFirst(t *testing.T) {
 	}
 }
 
+// skipRests has a gateway's rests pass at once, as the clock moves on 10
+// minutes each time it's read, for tests whose rounds would wait them out.
+func skipRests(f *Fetcher) {
+	var mu sync.Mutex
+	clock := time.Now()
+	f.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		clock = clock.Add(10 * time.Minute)
+		return clock
+	}
+}
+
 // TestLocationTriedOnce ensures a publisher's URL that is also a gateway's location
-// is tried once, rather than again after waiting for the gateway it failed at.
+// is tried once a round, rather than again after waiting for the gateway it failed
+// at.
 func TestLocationTriedOnce(t *testing.T) {
 	var asked atomic.Int32
 	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -1207,12 +1233,13 @@ func TestLocationTriedOnce(t *testing.T) {
 		http.Error(w, "down", http.StatusBadGateway)
 	})
 	f.Gateways = []string{server.URL}
+	skipRests(f)
 	start := time.Now()
 	_, err := f.Fetch(context.Background(), sha256.Sum256([]byte("x")), []string{server.URL + "/ipfs/bafkrei1"})
 	if !errors.Is(err, ErrRegistryUnavailable) {
 		t.Fatalf("%v", err)
 	}
-	if asked.Load() != 1 || time.Since(start) > 10*time.Second {
+	if asked.Load() != 3 || time.Since(start) > 10*time.Second {
 		t.Fatalf("asked %d times in %v", asked.Load(), time.Since(start))
 	}
 }
@@ -1247,5 +1274,107 @@ func TestStalledFileThatEndsIsAFailure(t *testing.T) {
 	f := newFetcher(nil, "", endsWhenCancelled{})
 	if data, _, err := f.download(context.Background(), f.registries, "https://stalls.example/r", 100); err == nil {
 		t.Fatalf("passed with %q", data)
+	}
+}
+
+// notFoundFirst returns a handler that answers 404 to the first misses requests,
+// as a gateway still looking for a file does, then serves data, and counts them.
+func notFoundFirst(misses int32, data []byte, hits *atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) <= misses {
+			http.NotFound(w, nil)
+			return
+		}
+		_, _ = w.Write(data)
+	}
+}
+
+// TestFetchRounds ensures a registry that no location gave is asked for again,
+// up to three rounds in all.
+func TestFetchRounds(t *testing.T) {
+	good := []byte(`{"good":true}`)
+	var hits atomic.Int32
+	server, f := testServer(t, notFoundFirst(2, good, &hits))
+	data, err := f.Fetch(context.Background(), sha256.Sum256(good), []string{server.URL + "/r"})
+	if err != nil || string(data) != string(good) || hits.Load() != 3 {
+		t.Fatalf("got %q, %v after %d", data, err, hits.Load())
+	}
+
+	hits.Store(0)
+	server, f = testServer(t, notFoundFirst(100, good, &hits))
+	_, err = f.Fetch(context.Background(), sha256.Sum256(good), []string{server.URL + "/r"})
+	if !errors.Is(err, ErrRegistryUnavailable) || hits.Load() != 3 {
+		t.Fatalf("got %v after %d", err, hits.Load())
+	}
+}
+
+// TestFetchIconRounds ensures an icon that no location gave is asked for again.
+func TestFetchIconRounds(t *testing.T) {
+	var hits atomic.Int32
+	server, f := testServer(t, notFoundFirst(1, []byte("icon"), &hits))
+	data, err := f.FetchIcon(context.Background(), server.URL+"/icon.png")
+	if err != nil || string(data) != "icon" || hits.Load() != 2 {
+		t.Fatalf("got %q, %v after %d", data, err, hits.Load())
+	}
+
+	hits.Store(0)
+	server, f = testServer(t, notFoundFirst(100, nil, &hits))
+	_, err = f.FetchIcon(context.Background(), server.URL+"/icon.png")
+	if !errors.Is(err, ErrIconUnavailable) || hits.Load() != 3 {
+		t.Fatalf("got %v after %d", err, hits.Load())
+	}
+}
+
+// TestFetchRoundsWait ensures rounds are a pause apart, and that a request ended
+// during one ends at once.
+func TestFetchRoundsWait(t *testing.T) {
+	var hits atomic.Int32
+	server, f := testServer(t, notFoundFirst(100, nil, &hits))
+	f.roundPause = 200 * time.Millisecond
+	start := time.Now()
+	_, _ = f.FetchIcon(context.Background(), server.URL+"/icon.png")
+	if took := time.Since(start); took < 2*f.roundPause {
+		t.Fatalf("three rounds in %v", took)
+	}
+
+	f.roundPause = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for hits.Load() < 4 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	_, err := f.FetchIcon(ctx, server.URL+"/icon.png")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestFetchNoRoundsForWrongFiles ensures a file that isn't the one asked for gets
+// no more rounds, as its location would only give it again, nor does a registry
+// whose host serves another file, with the other locations failing.
+func TestFetchNoRoundsForWrongFiles(t *testing.T) {
+	var hits atomic.Int32
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"tampered":true}`))
+	})
+	hash := sha256.Sum256([]byte("good"))
+	data, err := f.Fetch(context.Background(), hash, []string{server.URL + "/bad", server.URL + "/missing"})
+	if !errors.Is(err, ErrRegistryChanged) || data == nil || hits.Load() != 2 {
+		t.Fatalf("got %q, %v after %d", data, err, hits.Load())
+	}
+
+	hits.Store(0)
+	f.Gateways = []string{server.URL}
+	if _, err := f.FetchIcon(context.Background(), rawCID([]byte("icon"))); !errors.Is(err, ErrIconUnavailable) ||
+		hits.Load() != 1 {
+
+		t.Fatalf("got %v after %d", err, hits.Load())
 	}
 }

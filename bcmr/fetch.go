@@ -33,6 +33,12 @@ const (
 	// strangers and a publication can hold many, and other tokens wait for it.
 	maxLocations = 12
 
+	// maxRounds is how many times a fetch goes round an item's locations,
+	// roundPause apart, before it fails, as a gateway that's slow to find a
+	// file keeps looking after the wallet hangs up, and often has it later.
+	maxRounds  = 3
+	roundPause = 30 * time.Second
+
 	// minDownloadRate is the slowest a download can be, in bytes a second over
 	// rateWindow.
 	minDownloadRate = 1024
@@ -109,6 +115,9 @@ type Fetcher struct {
 	// now is the time, apart for tests.
 	now func() time.Time
 
+	// roundPause is the wait between rounds, which tests leave out.
+	roundPause time.Duration
+
 	// healthMu guards out, the gateways out of rotation, by host.  Only memory
 	// keeps them, so they start afresh with the wallet.
 	healthMu sync.Mutex
@@ -132,12 +141,14 @@ func NewFetcher(gateways []string, cacheDir string,
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: 10 * time.Second, Control: refusePrivate}).DialContext
 	}
-	return newFetcher(gateways, cacheDir, &http.Transport{
+	f := newFetcher(gateways, cacheDir, &http.Transport{
 		DialContext:           dial,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 15 * time.Second,
 		DisableKeepAlives:     true,
 	})
+	f.roundPause = roundPause
+	return f
 }
 
 func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper) *Fetcher {
@@ -260,10 +271,43 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 
 // fetch is Fetch for one copy of the request.
 func (f *Fetcher) fetch(ctx context.Context, hash [32]byte, uris []string) ([]byte, error) {
+	return f.inRounds(ctx, func() ([]byte, bool, error) {
+		return f.fetchRound(ctx, hash, uris)
+	})
+}
+
+// inRounds runs round up to maxRounds times, roundPause apart, while it fails
+// and says another round may do better, as mayPass has it of some location's
+// failure.  A round that was given up on, or that had an answer, ends it.
+func (f *Fetcher) inRounds(ctx context.Context, round func() ([]byte, bool, error)) ([]byte, error) {
+	for n := 1; ; n++ {
+		data, again, err := round()
+		if err == nil || !again || n == maxRounds {
+			return data, err
+		}
+		timer := time.NewTimer(f.roundPause)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// mayPass returns whether a location that failed may give the file later: not if
+// it gave another file, or is an address that's always refused.
+func mayPass(err error, wrongFile bool) bool {
+	return !wrongFile && !errors.Is(err, errPrivateAddress)
+}
+
+// fetchRound is one round of fetch, and returns whether another may do better.
+func (f *Fetcher) fetchRound(ctx context.Context, hash [32]byte, uris []string) ([]byte, bool, error) {
 	if data := f.cached(hash); data != nil {
-		return data, nil
+		return data, false, nil
 	}
 	var last error
+	var again bool
 	var changed []byte
 	tries := 0
 	tried := make(map[string]bool)
@@ -280,11 +324,12 @@ uris:
 				}
 				data, final, location, err := f.downloadAny(ctx, f.registries, left, maxRegistrySize)
 				if location == "" {
-					return nil, err
+					return nil, false, err
 				}
 				tried[location] = true
 				left = untried(left, tried)
-				if err == nil && sha256.Sum256(data) != hash {
+				wrongFile := err == nil && sha256.Sum256(data) != hash
+				if wrongFile {
 					err = fmt.Errorf("%s doesn't match the published hash", location)
 					f.failed(hostOf(location))
 					if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
@@ -295,23 +340,24 @@ uris:
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, ctx.Err()
+						return nil, false, ctx.Err()
 					}
 					last = err
+					again = again || mayPass(err, wrongFile)
 					continue
 				}
 				f.keep(hash, data)
-				return data, nil
+				return data, false, nil
 			}
 		}
 	}
 	if changed != nil {
-		return changed, ErrRegistryChanged
+		return changed, false, ErrRegistryChanged
 	}
 	if last != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
+		return nil, again, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
 	}
-	return nil, ErrRegistryUnavailable
+	return nil, false, ErrRegistryUnavailable
 }
 
 // locations returns the URLs to try for a URI, by the CHIP: no scheme means
@@ -688,7 +734,7 @@ func (f *Fetcher) read(ctx context.Context, location string, limit int64) ([]byt
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", errGatewayFault, err)
+		return nil, nil, fmt.Errorf("%w: %w", errGatewayFault, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusInternalServerError {

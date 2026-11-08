@@ -107,6 +107,7 @@ func TestFetchIconCIDAlone(t *testing.T) {
 		http.NotFound(w, r)
 	})
 	f.Gateways = []string{server.URL}
+	skipRests(f)
 	data, err := f.FetchIcon(context.Background(), "ipfs://"+cid+"/logo.png")
 	if err != nil || string(data) != "icon" {
 		t.Fatalf("got %q, %v", data, err)

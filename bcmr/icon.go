@@ -50,7 +50,16 @@ func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
 
 // fetchIcon is FetchIcon for one copy of the request.
 func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
+	return f.inRounds(ctx, func() ([]byte, bool, error) {
+		return f.fetchIconRound(ctx, uri)
+	})
+}
+
+// fetchIconRound is one round of fetchIcon, and returns whether another may do
+// better.
+func (f *Fetcher) fetchIconRound(ctx context.Context, uri string) ([]byte, bool, error) {
 	var last error
+	var again bool
 	tried := make(map[string]bool)
 	for _, candidate := range iconURIs(uri) {
 		digest, checked := ipfsRawDigest(candidate)
@@ -59,29 +68,31 @@ func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
 			for len(left) > 0 {
 				data, _, location, err := f.downloadAny(ctx, f.icons, left, maxIconSize)
 				if location == "" {
-					return nil, err
+					return nil, false, err
 				}
 				tried[location] = true
 				left = untried(left, tried)
-				if err == nil && checked && sha256.Sum256(data) != digest {
+				wrongFile := err == nil && checked && sha256.Sum256(data) != digest
+				if wrongFile {
 					err = fmt.Errorf("%s doesn't match the hash of the URI", location)
 					f.failed(hostOf(location))
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, ctx.Err()
+						return nil, false, ctx.Err()
 					}
 					last = err
+					again = again || mayPass(err, wrongFile)
 					continue
 				}
-				return data, nil
+				return data, false, nil
 			}
 		}
 	}
 	if last != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
+		return nil, again, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
 	}
-	return nil, ErrIconUnavailable
+	return nil, false, ErrIconUnavailable
 }
 
 // iconURIs returns the URIs to try for an icon.  An ipfs URI with a file name on
