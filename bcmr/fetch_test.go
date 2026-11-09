@@ -1694,3 +1694,29 @@ func TestFetchWrongFilesAddUp(t *testing.T) {
 		t.Fatal("a right registry didn't put the gateway back")
 	}
 }
+
+// TestFetchWaitsOnlyWhenAllOut ensures a round that tried a location, which
+// failed, while the others were out of rotation, fails, rather than wait for them.
+func TestFetchWaitsOnlyWhenAllOut(t *testing.T) {
+	gateway, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("never asked"))
+	})
+	own := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(own.Close)
+	f.Gateways = []string{gateway.URL}
+	f.pause(hostOf(gateway.URL), time.Hour)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Fetch(context.Background(), sha256.Sum256([]byte("r")),
+			[]string{"ipfs://bafy1", own.URL + "/registry.json"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrRegistryUnavailable) {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a round with a location tried waited for those out of rotation")
+	}
+}

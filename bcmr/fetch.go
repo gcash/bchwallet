@@ -325,69 +325,114 @@ func (f *Fetcher) fetchRoundOnce(ctx context.Context, hash [32]byte, uris []stri
 	if data := f.cached(hash); data != nil {
 		return data, false, nil, nil
 	}
-	var out []string
-	var last error
-	var again bool
 	var changed []byte
+	result, err := f.round(ctx, roundOf{
+		slots:    f.registries,
+		limit:    maxRegistrySize,
+		maxTries: maxLocations,
+		check: func(uri, location string, final *url.URL, data []byte) (error, bool) {
+			if sha256.Sum256(data) == hash {
+				return nil, false
+			}
+			if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
+				ipfsPath(final) == "" && json.Valid(data) {
+
+				changed = data
+			}
+			return fmt.Errorf("%s doesn't match the published hash", location), failsItsCID(location, data)
+		},
+	}, uris)
+	switch {
+	case err != nil:
+		return nil, false, nil, err
+	case result.data != nil:
+		f.keep(hash, result.data)
+		return result.data, false, nil, nil
+	case result.out != nil:
+		return nil, false, result.out, ErrRegistryUnavailable
+	case changed != nil:
+		return changed, false, nil, ErrRegistryChanged
+	case result.last != nil:
+		return nil, result.again, nil, fmt.Errorf("%w: %v", ErrRegistryUnavailable, result.last)
+	}
+	return nil, false, nil, ErrRegistryUnavailable
+}
+
+// roundOf is a kind of item that a round reads: where its downloads wait, the
+// size it can have, the most locations a round tries, if there's a limit, and
+// what's wrong with a file a location gave for one of its URIs, if anything,
+// and whether the location is to blame.
+type roundOf struct {
+	slots    *hostSlots
+	limit    int64
+	maxTries int
+	check    func(uri, location string, final *url.URL, data []byte) (error, bool)
+}
+
+// roundResult is what a round got: the file, or else whether another round may
+// do better and the error of the last location that failed, or the locations
+// out of rotation, if they were all there was.
+type roundResult struct {
+	data  []byte
+	again bool
+	last  error
+	out   []string
+}
+
+// round reads the locations of the URIs, each gateway in turn, the first with
+// room first, until one gives the file, passing over those whose hosts are all
+// out of rotation.  A location already tried, as a publisher's URL on a gateway
+// is, isn't tried again, nor waited for.  It returns an error only when it gave
+// up, as when the caller did.
+func (f *Fetcher) round(ctx context.Context, item roundOf, uris []string) (roundResult, error) {
+	var result roundResult
 	tries := 0
 	tried := make(map[string]bool)
 uris:
 	for _, uri := range uris {
 		for _, group := range f.locationGroups(uri) {
-			// Each gateway in turn, the first with room first, until one has it.
-			// A location already tried, as a publisher's URL on a gateway is,
-			// isn't tried again, nor waited for.
 			left := untried(group, tried)
 			if skipped := f.outOfRotation(left); skipped != nil {
-				out = append(out, skipped...)
+				result.out = append(result.out, skipped...)
 				continue
 			}
 			for len(left) > 0 {
-				if tries++; tries > maxLocations {
+				if tries++; item.maxTries > 0 && tries > item.maxTries {
 					break uris
 				}
-				data, final, location, err := f.downloadAny(ctx, f.registries, left, maxRegistrySize)
+				data, final, location, err := f.downloadAny(ctx, item.slots, left, item.limit)
 				if location == "" {
-					return nil, false, nil, err
+					return roundResult{}, err
 				}
 				tried[location] = true
 				left = untried(left, tried)
-				wrongFile := err == nil && sha256.Sum256(data) != hash
-				if wrongFile {
-					err = fmt.Errorf("%s doesn't match the published hash", location)
-					if failsItsCID(location, data) {
-						f.failed(hostOf(location))
-					}
-					if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
-						ipfsPath(final) == "" && json.Valid(data) {
-
-						changed = data
+				wrongFile := false
+				if err == nil {
+					var blame bool
+					if err, blame = item.check(uri, location, final, data); err != nil {
+						wrongFile = true
+						if blame {
+							f.failed(hostOf(location))
+						}
 					}
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, false, nil, ctx.Err()
+						return roundResult{}, ctx.Err()
 					}
-					last = err
-					again = again || mayPass(err, wrongFile)
+					result.last = err
+					result.again = result.again || mayPass(err, wrongFile)
 					continue
 				}
 				f.worked(hostOf(location))
-				f.keep(hash, data)
-				return data, false, nil, nil
+				return roundResult{data: data}, nil
 			}
 		}
 	}
-	if len(tried) == 0 && out != nil {
-		return nil, false, out, ErrRegistryUnavailable
+	if len(tried) != 0 {
+		result.out = nil
 	}
-	if changed != nil {
-		return changed, false, nil, ErrRegistryChanged
-	}
-	if last != nil {
-		return nil, again, nil, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
-	}
-	return nil, false, nil, ErrRegistryUnavailable
+	return result, nil
 }
 
 // locations returns the URLs to try for a URI, by the CHIP: no scheme means

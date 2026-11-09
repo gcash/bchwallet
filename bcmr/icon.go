@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -71,50 +72,29 @@ func (f *Fetcher) fetchIconRound(ctx context.Context, uri string) ([]byte, bool,
 }
 
 // fetchIconRoundOnce is a pass of fetchIconRound over the locations in rotation,
-// and returns the locations out of it if they were all there was.
+// and returns the locations out of it if they were all there was.  A file at a
+// raw CID that isn't what it names is the location's fault.
 func (f *Fetcher) fetchIconRoundOnce(ctx context.Context, uri string) ([]byte, bool, []string, error) {
-	var out []string
-	var last error
-	var again bool
-	tried := make(map[string]bool)
-	for _, candidate := range iconURIs(uri) {
-		digest, checked := ipfsRawDigest(candidate)
-		for _, group := range f.locationGroups(candidate) {
-			left := untried(group, tried)
-			if skipped := f.outOfRotation(left); skipped != nil {
-				out = append(out, skipped...)
-				continue
+	result, err := f.round(ctx, roundOf{
+		slots: f.icons,
+		limit: maxIconSize,
+		check: func(candidate, location string, _ *url.URL, data []byte) (error, bool) {
+			digest, checked := ipfsRawDigest(candidate)
+			if checked && sha256.Sum256(data) != digest {
+				return fmt.Errorf("%s doesn't match the hash of the URI", location), true
 			}
-			for len(left) > 0 {
-				data, _, location, err := f.downloadAny(ctx, f.icons, left, maxIconSize)
-				if location == "" {
-					return nil, false, nil, err
-				}
-				tried[location] = true
-				left = untried(left, tried)
-				wrongFile := err == nil && checked && sha256.Sum256(data) != digest
-				if wrongFile {
-					err = fmt.Errorf("%s doesn't match the hash of the URI", location)
-					f.failed(hostOf(location))
-				}
-				if err != nil {
-					if ctx.Err() != nil {
-						return nil, false, nil, ctx.Err()
-					}
-					last = err
-					again = again || mayPass(err, wrongFile)
-					continue
-				}
-				f.worked(hostOf(location))
-				return data, false, nil, nil
-			}
-		}
-	}
-	if len(tried) == 0 && out != nil {
-		return nil, false, out, ErrIconUnavailable
-	}
-	if last != nil {
-		return nil, again, nil, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
+			return nil, false
+		},
+	}, iconURIs(uri))
+	switch {
+	case err != nil:
+		return nil, false, nil, err
+	case result.data != nil:
+		return result.data, false, nil, nil
+	case result.out != nil:
+		return nil, false, result.out, ErrIconUnavailable
+	case result.last != nil:
+		return nil, result.again, nil, fmt.Errorf("%w: %v", ErrIconUnavailable, result.last)
 	}
 	return nil, false, nil, ErrIconUnavailable
 }
