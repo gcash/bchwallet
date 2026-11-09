@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1774,4 +1775,28 @@ func TestFetchSuccessLeavesPause(t *testing.T) {
 	if !f.available("gw.example") {
 		t.Fatal("a success didn't end a rest")
 	}
+}
+
+// locations returns the locations of a URI, as locationGroups has them, in one
+// list.
+func (f *Fetcher) locations(uri string) []string {
+	var locations []string
+	for _, group := range f.locationGroups(uri) {
+		locations = append(locations, group...)
+	}
+	return locations
+}
+
+// download reads a URL as downloadAny does, alone.
+func (f *Fetcher) download(ctx context.Context, slots *hostSlots, location string,
+	limit int64) ([]byte, *url.URL, error) {
+
+	data, final, _, err := f.downloadAny(ctx, slots, []string{location}, limit)
+	return data, final, err
+}
+
+// take waits for a slot at the host, and returns what gives it back.
+func (s *hostSlots) take(ctx context.Context, host string) (func(), error) {
+	_, release, err := s.takeAny(ctx, []string{host})
+	return release, err
 }

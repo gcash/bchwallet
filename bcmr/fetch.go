@@ -437,22 +437,12 @@ uris:
 	return result, nil
 }
 
-// locations returns the URLs to try for a URI, by the CHIP: no scheme means
+// locationGroups returns the URLs to try for a URI, by the CHIP: no scheme means
 // https, a domain alone means its well-known path, and ipfs goes through the
 // gateways.  Any other scheme gives none.  A URL with an ipfs path is on a
 // gateway of the publisher's choice, which can close, so the wallet's gateways
-// follow it.
-func (f *Fetcher) locations(uri string) []string {
-	var locations []string
-	for _, group := range f.locationGroups(uri) {
-		locations = append(locations, group...)
-	}
-	return locations
-}
-
-// locationGroups returns the locations of a URI as locations returns them, in
-// groups that hold the same file on different hosts: the gateways' for a file on
-// IPFS, and a publisher's own location alone.
+// follow it.  They come in groups that hold the same file on different hosts:
+// the gateways' for a file on IPFS, and a publisher's own location alone.
 func (f *Fetcher) locationGroups(uri string) [][]string {
 	if len(uri) > maxURILen || !displayable(uri, maxURILen) {
 		return nil
@@ -525,20 +515,12 @@ func (f *Fetcher) gatewayLocations(path string) []string {
 	return locations
 }
 
-// download reads a URL, up to limit bytes, and returns the file and where it came
-// from after any redirects.  It has no limit on its whole time, as a slow mobile
+// downloadAny downloads the file at the first of the locations, which are the
+// same file on different hosts, whose host has room, up to limit bytes, and
+// returns where it came from after any redirects, and the location it used, or
+// "" if it gave up waiting.  It has no limit on its whole time, as a slow mobile
 // link that keeps moving has to get there: it ends if it can't connect, by the
 // transport's limits, or if it stalls, by watchRate.
-func (f *Fetcher) download(ctx context.Context, slots *hostSlots, location string,
-	limit int64) ([]byte, *url.URL, error) {
-
-	data, final, _, err := f.downloadAny(ctx, slots, []string{location}, limit)
-	return data, final, err
-}
-
-// downloadAny downloads the file at the first of the locations, which are the
-// same file on different hosts, whose host has room, and returns the location
-// it used, or "" if it gave up waiting.
 func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations []string,
 	limit int64) ([]byte, *url.URL, string, error) {
 
@@ -1004,12 +986,6 @@ func isUserAction(ctx context.Context) bool {
 
 func newHostSlots(limit int) *hostSlots {
 	return &hostSlots{limit: limit, busy: make(map[string]int)}
-}
-
-// take waits for a slot at the host, and returns what gives it back.
-func (s *hostSlots) take(ctx context.Context, host string) (func(), error) {
-	_, release, err := s.takeAny(ctx, []string{host})
-	return release, err
 }
 
 // takeAny waits for a slot at the first of the hosts that has one, in their order,
