@@ -99,15 +99,11 @@ type Config struct {
 	StopRollbacks   func()
 }
 
-// retryKey is a token's registry, as tokens can publish the same one and fail on
-// it apart.
-type retryKey struct {
-	category chainhash.Hash
-	hash     [32]byte
-}
-
-// retry is a registry that couldn't be read.
+// retry is a token's registry that couldn't be read, by its hash, as tokens can
+// publish the same one and fail on it apart.  A token keeps one, as its state
+// does, and a failure on another registry starts it afresh.
 type retry struct {
+	hash  [32]byte
 	last  time.Time
 	tries uint
 }
@@ -165,7 +161,7 @@ type Manager struct {
 
 	// The rest belongs to the run goroutine.
 	states   map[chainhash.Hash]*State
-	tried    map[retryKey]retry
+	tried    map[chainhash.Hash]retry
 	lastTip  chainhash.Hash
 	lastFull time.Time
 
@@ -206,7 +202,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		states:  states,
 		asked:   make(map[chainhash.Hash]struct{}),
 		pubURIs: make(map[chainhash.Hash][]string),
-		tried:   make(map[retryKey]retry),
+		tried:   make(map[chainhash.Hash]retry),
 		reread:  make(map[chainhash.Hash]struct{}),
 		wake:    make(chan struct{}, 1),
 		flights: make(map[flightKey][]*registryRead),
@@ -229,7 +225,7 @@ func NewManager(cfg Config) (*Manager, error) {
 			m.pubURIs[state.Category] = pub.URIs
 		}
 		if state.RetryTries > 0 {
-			m.tried[retryKey{state.Category, state.RetryHash}] = retry{state.RetryLast, state.RetryTries}
+			m.tried[state.Category] = retry{state.RetryHash, state.RetryLast, state.RetryTries}
 		}
 	}
 	return m, nil
@@ -360,11 +356,7 @@ func (m *Manager) takeForgotten() {
 		// A read under way is no longer the token's, so one asked about
 		// again doesn't wait for it, and joins its download.
 		delete(m.reading, category)
-		for key := range m.tried {
-			if key.category == category {
-				delete(m.tried, key)
-			}
-		}
+		delete(m.tried, category)
 		m.forgetWaiting(category)
 		if err := m.cfg.Store.Delete(category); err != nil {
 			log.Warnf("Unable to forget token %v: %v", category, err)
@@ -514,9 +506,7 @@ func (m *Manager) takeWanted() bool {
 			if state.Status == StatusFailed || state.Status == StatusUnavailable {
 				state.Status = StatusSearching
 			}
-			if pub := state.CurrentPublication(); pub != nil {
-				delete(m.tried, retryKey{category, pub.Hash})
-			}
+			delete(m.tried, category)
 			state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
 		}
 	}
@@ -703,8 +693,8 @@ func (m *Manager) registryDue(state *State) *registryRead {
 		m.save(state)
 	}
 	// A Refresh reads at once, though a read that was under way failed since.
-	key := retryKey{state.Category, pub.Hash}
-	if failed, ok := m.tried[key]; ok && !reread && time.Since(failed.last) < retryWait(failed.tries) {
+	if failed, ok := m.tried[state.Category]; ok && failed.hash == pub.Hash && !reread &&
+		time.Since(failed.last) < retryWait(failed.tries) {
 		return nil
 	}
 	return &registryRead{state: state, pub: pub, same: same, user: reread}
@@ -716,7 +706,6 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 		return
 	}
 	state, pub, same, err := read.state, read.pub, read.same, read.err
-	key := retryKey{state.Category, pub.Hash}
 	changed := errors.Is(err, ErrRegistryChanged)
 	var metadata *Metadata
 	if err == nil || changed {
@@ -768,9 +757,12 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 		delete(m.reread, state.Category)
 	}
 	if err != nil {
-		failed := m.tried[key]
-		failed = retry{time.Now(), failed.tries + 1}
-		m.tried[key] = failed
+		failed := m.tried[state.Category]
+		if failed.hash != pub.Hash {
+			failed = retry{}
+		}
+		failed = retry{pub.Hash, time.Now(), failed.tries + 1}
+		m.tried[state.Category] = failed
 		log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
 		state.RetryHash, state.RetryTries, state.RetryLast = pub.Hash, failed.tries, failed.last
 		// A file that the same parser can't use any more, as when the
@@ -784,7 +776,9 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 		m.save(state)
 		return
 	}
-	delete(m.tried, key)
+	if m.tried[state.Category].hash == pub.Hash {
+		delete(m.tried, state.Category)
+	}
 	state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
 	state.RegistryHash, state.Metadata = pub.Hash, metadata
 	state.RegistryChanged, state.RegistryFailed = changed, metadata == nil

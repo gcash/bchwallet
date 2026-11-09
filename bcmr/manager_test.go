@@ -1461,6 +1461,32 @@ func TestManagerOneReadPerToken(t *testing.T) {
 	}
 }
 
+// TestManagerNewPublicationRetriesAfresh ensures a token keeps one failed read,
+// of its registry now: a new publication is read at once, whatever the wait of
+// the one before, and its failure counts from one.
+func TestManagerNewPublicationRetriesAfresh(t *testing.T) {
+	category := chainhash.Hash{2}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.backend.pubs[category].Hash = [32]byte{1} // Nothing will match it.
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	f.backend.pubs[category].Hash = [32]byte{2}
+	f.m.lastFull = time.Time{}
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 2 {
+		t.Fatalf("%d downloads: the new publication waited", f.hits.Load())
+	}
+	if failed := f.m.tried[category]; len(f.m.tried) != 1 ||
+		failed.hash != [32]byte{2} || failed.tries != 1 {
+
+		t.Fatalf("failed reads kept: %+v", f.m.tried)
+	}
+}
+
 // TestManagerRetryOutlastsRestart ensures a registry that couldn't be read waits
 // out its retry after a restart too, and that a Refresh still reads it at once.
 func TestManagerRetryOutlastsRestart(t *testing.T) {
@@ -1486,7 +1512,7 @@ func TestManagerRetryOutlastsRestart(t *testing.T) {
 	if f.hits.Load() != 1 {
 		t.Fatalf("%d downloads after a restart", f.hits.Load())
 	}
-	if failed := m.tried[retryKey{category, [32]byte{1}}]; failed.tries != 1 {
+	if failed := m.tried[category]; failed.hash != [32]byte{1} || failed.tries != 1 {
 		t.Fatalf("%+v", failed)
 	}
 
@@ -1499,7 +1525,7 @@ func TestManagerRetryOutlastsRestart(t *testing.T) {
 	if f.hits.Load() != 2 {
 		t.Fatalf("%d downloads after a refresh", f.hits.Load())
 	}
-	if m.tried[retryKey{category, [32]byte{1}}].tries != 1 {
+	if m.tried[category].tries != 1 {
 		t.Fatalf("a refresh didn't start the count again: %+v", m.tried)
 	}
 }
@@ -1722,7 +1748,7 @@ func TestManagerForget(t *testing.T) {
 	if first.Metadata == nil || len(f.m.NFTTypes(category)) != 1 {
 		t.Fatalf("%+v", first)
 	}
-	f.m.tried[retryKey{category, [32]byte{9}}] = retry{time.Now(), 1}
+	f.m.tried[category] = retry{[32]byte{9}, time.Now(), 1}
 	f.m.reread[category] = struct{}{}
 	unseen := f.m.viewOf(&State{Category: category})
 

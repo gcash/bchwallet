@@ -688,7 +688,7 @@ func (b *SPVBackend) searchAuthbaseWeeks(ctx context.Context, group []*State, fr
 		// looked at all of it.
 		if _, weekTo := authbaseWeek(state); !state.AuthbaseSearched && err != nil && reached > weekTo {
 			tried := b.searchTried[state.Category]
-			b.searchTried[state.Category] = retry{time.Now(), tried.tries + 1}
+			b.searchTried[state.Category] = retry{last: time.Now(), tries: tried.tries + 1}
 			continue
 		}
 		delete(b.searchTried, state.Category)

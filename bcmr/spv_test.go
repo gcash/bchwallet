@@ -1409,7 +1409,7 @@ func TestSPVAuthbaseSearchFails(t *testing.T) {
 	}
 
 	// A new genesis has a search of its own, at once.
-	b.searchTried[category] = retry{time.Now(), 3}
+	b.searchTried[category] = retry{last: time.Now(), tries: 3}
 	c.replaceFrom(60, 1000)
 	if err := b.rewind(state); err != nil {
 		t.Fatal(err)
