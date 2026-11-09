@@ -185,8 +185,6 @@ func (b *SPVBackend) startFromHint(ctx context.Context, state *State, hint *chai
 	state.ScannedTo, state.ScannedHash = b.hints.Height, *scanned
 	state.Status = StatusSearching
 	if older != nil {
-		txid := older.Txid
-		state.OlderTxid, state.OlderHeight = &txid, older.Height
 		state.Older = older.Publication
 	}
 	return nil
@@ -309,7 +307,6 @@ func keepAuthbase(state *State, block *wire.MsgBlock, spend SpendFound) bool {
 			continue
 		}
 		if link := newLink(tx, spend.Height, spend.BlockHash); link.Publication != nil {
-			state.OlderTxid, state.OlderHeight = &link.Txid, link.Height
 			state.Older = link.Publication
 		}
 		return true
@@ -582,7 +579,6 @@ func (b *SPVBackend) searchAuthbases(ctx context.Context, states []*State, save 
 				return true
 			}
 			if link := newLink(found.Tx, found.Height, found.BlockHash); link.Publication != nil {
-				state.OlderTxid, state.OlderHeight = &link.Txid, link.Height
 				state.Older = link.Publication
 			}
 			return false
@@ -696,7 +692,7 @@ func (b *SPVBackend) rewind(state *State) error {
 	head = state.Head()
 	if head == nil {
 		state.ScannedTo, state.ScannedHash = 0, chainhash.Hash{}
-		state.OlderTxid, state.OlderHeight, state.Older = nil, 0, nil
+		state.Older = nil
 		state.AuthbaseScripts, state.GenesisHeight, state.AuthbaseSearched = nil, 0, false
 		delete(b.searchTried, state.Category)
 		return nil

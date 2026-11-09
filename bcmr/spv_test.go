@@ -1056,9 +1056,6 @@ func TestSPVAuthbaseInGenesisBlock(t *testing.T) {
 	if pub == nil || pub.URIs[0] != "authbase.example" {
 		t.Fatalf("%+v", state)
 	}
-	if state.OlderHeight != 80 || *state.OlderTxid != category {
-		t.Fatalf("%+v", state)
-	}
 }
 
 // TestSPVLaterPublicationWinsOverAuthbase ensures one on the token's chain comes first.

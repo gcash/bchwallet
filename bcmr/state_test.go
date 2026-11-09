@@ -36,13 +36,10 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	older := chainhash.Hash{5}
 	want := &State{
 		Category: chainhash.Hash{1},
 		Links: []Link{{Txid: chainhash.Hash{2}, Height: 10, BlockHash: chainhash.Hash{3},
 			Publication: &Publication{Hash: [32]byte{4}, URIs: []string{"example.com"}}}},
-		OlderTxid:    &older,
-		OlderHeight:  9,
 		Burned:       true,
 		ScannedTo:    11,
 		ScannedHash:  chainhash.Hash{6},

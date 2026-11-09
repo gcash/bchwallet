@@ -65,10 +65,8 @@ type State struct {
 	Links []Link
 
 	// Older is the newest publication from before the first link, from the
-	// hints, as its txid and height, until it's read.
-	OlderTxid   *chainhash.Hash
-	OlderHeight int32
-	Older       *Publication
+	// hints, the authbase or the links let go.
+	Older *Publication
 
 	// Burned reports that the head ended the authchain.
 	Burned bool
@@ -155,8 +153,7 @@ func (s *State) trimLinks() {
 	}
 	for i := excess - 1; i >= 0; i-- {
 		if pub := s.Links[i].Publication; pub != nil {
-			txid := s.Links[i].Txid
-			s.Older, s.OlderTxid, s.OlderHeight = pub, &txid, s.Links[i].Height
+			s.Older = pub
 			break
 		}
 	}

@@ -95,7 +95,7 @@ func applyIdentity(state *State, result *btcjson.GetBcmrIdentityResult) error {
 	}
 
 	state.Links = []Link{link}
-	state.OlderTxid, state.OlderHeight, state.Older = nil, 0, nil
+	state.Older = nil
 	state.Burned = result.Status == "burned"
 	if result.Publication == nil {
 		return nil
