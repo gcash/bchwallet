@@ -499,12 +499,11 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 
 			// The types stay in their file until they're asked for.  A state
 			// from before they were kept apart has them with it, and they
-			// go to their file now.  Types whose file is gone, as evicted,
-			// are read from the registry again when they're asked for.
-			if state.Metadata == nil {
-				return nil
-			}
-			if types := state.Metadata.NFTTypes; types != nil {
+			// go to their file now, the state at its first save.  Types
+			// whose file is gone, as evicted, are read from the registry
+			// again when they're asked for.
+			if state.Metadata != nil && state.Metadata.NFTTypes != nil {
+				types := state.Metadata.NFTTypes
 				state.Metadata.NFTTypes, state.Metadata.NFTTypeCount = nil, len(types)
 				var encoded bytes.Buffer
 				if gob.NewEncoder(&encoded).Encode(types) != nil ||
@@ -514,6 +513,8 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 				}
 				return nil
 			}
+			// Any other is as was last written, so a save that changes
+			// nothing writes nothing.
 			s.last[state.Category] = sha256.Sum256(value)
 			s.lastTypes[state.Category] = typesVersion(&state)
 			return nil

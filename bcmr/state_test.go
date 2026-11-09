@@ -575,3 +575,61 @@ func TestStoreEvictsTypes(t *testing.T) {
 		t.Fatalf("over the limit by itself: %v", got)
 	}
 }
+
+// TestStoreRemembersEveryState ensures a state that comes back unchanged isn't
+// written again, whether it has metadata or not.
+func TestStoreRemembersEveryState(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare := &State{Category: chainhash.Hash{9, 1}, Status: StatusSearching, ScannedTo: 5}
+	named := &State{Category: chainhash.Hash{9, 2}, Metadata: &Metadata{Name: "T"}}
+	for _, state := range []*State{bare, named} {
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err = NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Writing other bytes under the keys shows whether a save writes them.
+	mark := []byte("unchanged")
+	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		for category := range all {
+			if err := tx.ReadWriteBucket(bcmrBucket).Put(category[:], mark); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range all {
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = walletdb.View(db, func(tx walletdb.ReadTx) error {
+		for category := range all {
+			if value := tx.ReadBucket(bcmrBucket).Get(category[:]); !bytes.Equal(value, mark) {
+				t.Errorf("token %v was written again", category)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("%d states", len(all))
+	}
+}
