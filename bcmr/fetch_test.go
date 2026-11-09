@@ -882,13 +882,15 @@ func TestWhatIsAFailure(t *testing.T) {
 
 // inRotationLen returns how many of the hosts are in rotation.
 func inRotationLen(f *Fetcher, hosts ...string) int {
-	in, _ := f.inRotation(hosts)
+	in, _ := f.inRotation(hosts, false)
 	return len(in)
 }
 
-// TestAllGatewaysOut ensures that with every gateway out, an icon the user asked for
-// is told so at once, while what loads by itself, and a registry the user asked
-// for, waits for one to come back, and that a wait can be given up.
+// TestAllGatewaysOut ensures that with every gateway paused, an icon the user asked
+// for is told so at once, while what loads by itself, and a registry the user asked
+// for, waits for one to come back, that with every gateway only resting, what the
+// user asked for goes ahead while what loads by itself waits, and that a wait can
+// be given up.
 func TestAllGatewaysOut(t *testing.T) {
 	file := []byte(`{"r":1}`)
 	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -905,8 +907,13 @@ func TestAllGatewaysOut(t *testing.T) {
 		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(d), rest: d}
 		f.healthMu.Unlock()
 	}
+	pause := func(d time.Duration) {
+		f.healthMu.Lock()
+		f.out[host] = gatewayOut{paused: time.Now().Add(d), pause: d}
+		f.healthMu.Unlock()
+	}
 
-	rest(time.Hour)
+	pause(time.Hour)
 	// Told at once, with no round after a pause.
 	f.roundPause = time.Hour
 	limit, stop := context.WithTimeout(context.Background(), 30*time.Second)
@@ -920,21 +927,36 @@ func TestAllGatewaysOut(t *testing.T) {
 		t.Fatalf("a wait given up: %v", err)
 	}
 
+	// A rest is the wallet's own guess, so what the user asked for goes ahead.
+	rest(time.Hour)
+	if data, err := f.FetchIcon(UserAction(limit), "ipfs://bafy1/icon.png"); err != nil || string(data) != "icon" {
+		t.Fatalf("the user's icon at a resting gateway: %q, %v", data, err)
+	}
+	if !f.available(host, false) {
+		t.Fatal("the user's success didn't put the gateway back")
+	}
+	rest(time.Hour)
+	data, err := f.Fetch(UserAction(limit), sha256.Sum256(file), []string{"ipfs://bafy1/r.json"})
+	if err != nil || string(data) != string(file) {
+		t.Fatalf("the user's registry at a resting gateway: %q, %v", data, err)
+	}
+
 	// Waits can only be longer than this, never shorter, on a slow machine.
 	const back = 200 * time.Millisecond
 	for _, test := range []struct {
 		name  string
+		out   func(time.Duration)
 		fetch func() ([]byte, error)
 		want  []byte
 	}{
-		{"an icon that loads by itself", func() ([]byte, error) {
+		{"an icon that loads by itself", rest, func() ([]byte, error) {
 			return f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
 		}, []byte("icon")},
-		{"a registry the user asked for", func() ([]byte, error) {
+		{"a registry the user asked for", pause, func() ([]byte, error) {
 			return f.Fetch(UserAction(context.Background()), sha256.Sum256(file), []string{"ipfs://bafy1/r.json"})
 		}, file},
 	} {
-		rest(back)
+		test.out(back)
 		start := time.Now()
 		data, err := test.fetch()
 		if err != nil || string(data) != string(test.want) {
@@ -1030,7 +1052,7 @@ func TestFaultOnFileAnotherGivesRests(t *testing.T) {
 // TestGatewayLeavingRotationLogsWhy ensures the log says why a gateway left
 // rotation and for how long: a fault that counted as another gateway gave the
 // item, a 429's pause, and the state of every gateway when the user is told that
-// all are out.
+// all are paused.
 func TestGatewayLeavingRotationLogsWhy(t *testing.T) {
 	first, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)
@@ -1067,18 +1089,19 @@ func TestGatewayLeavingRotationLogsWhy(t *testing.T) {
 		t.Fatalf("the gateway that gave the item left rotation:\n%s", got)
 	}
 
-	// With the last one out too, an icon the user asks for says how each is.
-	f.failed(thirdHost, "test")
+	// With every one paused, an icon the user asks for says how each is.
+	f.pause(firstHost, time.Hour, "test")
+	f.pause(thirdHost, 30*time.Minute, "test")
 	logged.take()
 	if _, err := f.FetchIcon(UserAction(context.Background()), "ipfs://bafy2/icon.png"); !errors.Is(err, ErrNoGateway) {
 		t.Fatal(err)
 	}
 	got = logged.take()
 	for _, want := range []string{
-		"Every gateway of an icon the user asked for is paused or out: ",
-		firstHost + " out 30s more after 1 failures",
+		"Every gateway of an icon the user asked for is paused: ",
+		firstHost + " paused 1h0m0s more",
 		secondHost + " paused 15m0s more",
-		thirdHost + " out 30s more after 1 failures",
+		thirdHost + " paused 30m0s more",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the log has no %q:\n%s", want, got)
@@ -1531,12 +1554,21 @@ func TestFetcherUnavailable(t *testing.T) {
 	f := newFetcher([]string{"https://gw1.example", "https://gw2.example"}, "", nil)
 	out := func(host string) {
 		f.healthMu.Lock()
-		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
+		f.out[host] = gatewayOut{paused: time.Now().Add(time.Hour), pause: time.Hour}
 		f.healthMu.Unlock()
 	}
 	uris := []string{"https://host.example/ipfs/bafkrei1", "ipfs://bafkrei1"}
 	if f.Unavailable(uris) {
 		t.Fatal("unavailable with every host in rotation")
+	}
+	// Gateways that only rest don't make the user wait.
+	f.healthMu.Lock()
+	for _, host := range []string{"gw1.example", "gw2.example", "host.example"} {
+		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
+	}
+	f.healthMu.Unlock()
+	if f.Unavailable(uris) {
+		t.Fatal("unavailable with every host only resting")
 	}
 	out("gw1.example")
 	out("gw2.example")
@@ -1558,7 +1590,7 @@ func slotsWithRotation() (*hostSlots, func(host string)) {
 	s := newHostSlots(1)
 	var mu sync.Mutex
 	out := make(map[string]bool)
-	s.usable = func(host string) bool {
+	s.usable = func(host string, _ bool) bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return !out[host]
@@ -1663,6 +1695,51 @@ func TestSlotsSkipHostOutOfRotation(t *testing.T) {
 	}
 }
 
+// TestSlotsUserAtRestingHost ensures that at a host that only rests, which what
+// the user asked for may still use, a freed slot goes to the user's wait and not
+// to one for what loads by itself, and that a recheck sends back only the latter.
+func TestSlotsUserAtRestingHost(t *testing.T) {
+	s := newHostSlots(1)
+	s.usable = func(_ string, user bool) bool { return user }
+	_, release, _ := s.takeAny(context.Background(), []string{"a"})
+	background := make(chan error, 1)
+	go func() {
+		_, _, err := s.takeAny(context.Background(), []string{"a"})
+		background <- err
+	}()
+	waitInLine(t, s, 1)
+	user := make(chan string, 1)
+	go func() {
+		host, release, err := s.takeAny(UserAction(context.Background()), []string{"a"})
+		if err == nil {
+			release()
+		}
+		user <- host
+	}()
+	waitInLine(t, s, 2)
+
+	s.recheck()
+	select {
+	case err := <-background:
+		if !errors.Is(err, errLeftRotation) {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a wait for what loads by itself at a resting host went on")
+	}
+	waitInLine(t, s, 1)
+
+	release()
+	select {
+	case host := <-user:
+		if host != "a" {
+			t.Fatalf("took %q", host)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("the user's wait at a resting host didn't get the slot")
+	}
+}
+
 // TestSlotsRecheck ensures a wait whose hosts all left rotation ends, so that it
 // goes back to waiting for one to come back, and that a wait with a host left in
 // rotation goes on.
@@ -1703,9 +1780,9 @@ func TestSlotsRecheck(t *testing.T) {
 }
 
 // TestFetchWaiterSeesGatewayLeave ensures an icon the user asked for, waiting for
-// a slot at a gateway that then leaves rotation, as one that fails or is rate
-// limited does, is told at once that every gateway is out, rather than wait for
-// a slot there.
+// a slot at a gateway that's then rate limited, is told at once that every
+// gateway is paused, rather than wait for a slot there, while one at a gateway
+// that then fails, which only rests it, keeps its place and gets the slot.
 func TestFetchWaiterSeesGatewayLeave(t *testing.T) {
 	leave := map[string]func(f *Fetcher, host string){
 		"failed": func(f *Fetcher, host string) { f.failed(host, "test") },
@@ -1733,6 +1810,23 @@ func TestFetchWaiterSeesGatewayLeave(t *testing.T) {
 		}()
 		waitInLine(t, f.icons, 1)
 		leave(f, hostOf(server.URL))
+		if name == "failed" {
+			select {
+			case err := <-got:
+				t.Fatalf("the user's wait at a resting gateway ended: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			select {
+			case err := <-got:
+				if err != nil {
+					t.Fatalf("the user's wait at a resting gateway: %v", err)
+				}
+			case <-time.After(time.Minute):
+				t.Fatal("the user's wait at a resting gateway didn't get the slot")
+			}
+			continue
+		}
 		select {
 		case err := <-got:
 			if !errors.Is(err, ErrNoGateway) {
@@ -1796,7 +1890,7 @@ func TestFetchWrongPublicationSparesGateways(t *testing.T) {
 	if _, err := f.Fetch(context.Background(), wrong, []string{"ipfs://" + cid}); err == nil {
 		t.Fatal("no error")
 	}
-	if !f.available(host) {
+	if !f.available(host, false) {
 		t.Fatal("a gateway that served the CID's file was rested")
 	}
 
@@ -1804,7 +1898,7 @@ func TestFetchWrongPublicationSparesGateways(t *testing.T) {
 	if _, err := f.Fetch(context.Background(), sha256.Sum256(file), []string{"ipfs://" + cid}); err == nil {
 		t.Fatal("no error")
 	}
-	if f.available(host) {
+	if f.available(host, false) {
 		t.Fatal("a gateway that served another file than its CID's stayed in rotation")
 	}
 }
@@ -1993,7 +2087,7 @@ func TestFetchSuccessLeavesPause(t *testing.T) {
 	f.failed("gw.example", "test")
 	f.pause("gw.example", time.Hour, "test")
 	f.worked("gw.example")
-	if f.available("gw.example") {
+	if f.available("gw.example", false) {
 		t.Fatal("a success ended a pause")
 	}
 	f.healthMu.Lock()
@@ -2006,7 +2100,7 @@ func TestFetchSuccessLeavesPause(t *testing.T) {
 	f.out = make(map[string]gatewayOut)
 	f.failed("gw.example", "test")
 	f.worked("gw.example")
-	if !f.available("gw.example") {
+	if !f.available("gw.example", false) {
 		t.Fatal("a success didn't end a rest")
 	}
 }

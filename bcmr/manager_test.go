@@ -1574,8 +1574,8 @@ func TestManagerStrangerSharesNoWait(t *testing.T) {
 }
 
 // TestManagerRefreshWhileOut ensures a Refresh says at once that every gateway
-// of the token's registry is out, and that the token is still read later, and
-// that it says nothing while one is in rotation.
+// of the token's registry is paused, and that the token is still read later, and
+// that it says nothing while one is in rotation, or while they only rest.
 func TestManagerRefreshWhileOut(t *testing.T) {
 	category := chainhash.Hash{1}
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
@@ -1597,8 +1597,17 @@ func TestManagerRefreshWhileOut(t *testing.T) {
 	fetcher.healthMu.Lock()
 	fetcher.out["gw2.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
 	fetcher.healthMu.Unlock()
+	// A rest is the wallet's own guess, so the user's refresh still goes.
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatalf("a refresh with every gateway only resting: %v", err)
+	}
+	fetcher.healthMu.Lock()
+	for _, host := range []string{"gw1.example", "gw2.example"} {
+		fetcher.out[host] = gatewayOut{paused: time.Now().Add(time.Hour), pause: time.Hour}
+	}
+	fetcher.healthMu.Unlock()
 	if err := f.m.Refresh(category); !errors.Is(err, ErrNoGateway) {
-		t.Fatalf("a refresh with every gateway out: %v", err)
+		t.Fatalf("a refresh with every gateway paused: %v", err)
 	}
 	f.m.mu.Lock()
 	refresh, wanted := f.m.wanted[category]

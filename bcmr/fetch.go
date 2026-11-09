@@ -409,7 +409,7 @@ uris:
 	for _, uri := range uris {
 		for _, group := range f.locationGroups(uri) {
 			left := untried(group, tried)
-			if skipped := f.outOfRotation(left); skipped != nil {
+			if skipped := f.outOfRotation(left, isUserAction(ctx)); skipped != nil {
 				result.out = append(result.out, skipped...)
 				continue
 			}
@@ -547,14 +547,17 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	}
 	// With every gateway paused or out, what loads by itself, and any registry,
 	// waits for one to come back, while an icon the user asked for is told so.
-	// A wait for a slot whose hosts all left rotation meanwhile starts over.
+	// What the user asked for counts only pauses, as a rest is the wallet's own
+	// guess.  A wait for a slot whose hosts all left rotation meanwhile starts
+	// over.
+	user := isUserAction(ctx)
 	var host string
 	var release func()
 	for {
 		if err := f.waitBack(ctx, slots, hosts); err != nil {
 			return nil, nil, "", err
 		}
-		in, _ := f.inRotation(hosts)
+		in, _ := f.inRotation(hosts, user)
 		if len(in) == 0 {
 			continue
 		}
@@ -564,7 +567,7 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 		// then, as its timer stops while the device sleeps.
 		take := ctx
 		stop := func() {}
-		if back := f.soonestBack(hosts); back > 0 {
+		if back := f.soonestBack(hosts, user); back > 0 {
 			take, stop = context.WithTimeout(ctx, min(back, f.recheckEvery))
 		}
 		var err error
@@ -606,16 +609,19 @@ func failsItsCID(location string, data []byte) bool {
 
 // waitBack waits for one of the hosts to be in rotation, as what loads by itself
 // and any registry do, while an icon the user asked for is told that every one is
-// out instead.  It looks at the clock again now and then, as its timer stops
-// while the device sleeps.
+// paused instead.  What the user asked for counts only pauses, as a gateway asked
+// for them, while a rest is the wallet's own guess that a gateway is unwell.  It
+// looks at the clock again now and then, as its timer stops while the device
+// sleeps.
 func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string) error {
+	user := isUserAction(ctx)
 	for {
-		in, back := f.inRotation(hosts)
+		in, back := f.inRotation(hosts, user)
 		if len(in) > 0 {
 			return nil
 		}
-		if slots == f.icons && isUserAction(ctx) {
-			log.Infof("Every gateway of an icon the user asked for is paused or out: %s",
+		if slots == f.icons && user {
+			log.Infof("Every gateway of an icon the user asked for is paused: %s",
 				f.rotationState(hosts))
 			return ErrNoGateway
 		}
@@ -630,9 +636,10 @@ func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string
 }
 
 // outOfRotation returns the locations whose hosts are all out of rotation, if
-// they all are, or nil.
-func (f *Fetcher) outOfRotation(locations []string) []string {
-	if in, _ := f.inRotation(hostsOf(locations)); len(in) > 0 {
+// they all are, or nil, for what the user asked for, by their pauses alone, if
+// user.
+func (f *Fetcher) outOfRotation(locations []string, user bool) []string {
+	if in, _ := f.inRotation(hostsOf(locations), user); len(in) > 0 {
 		return nil
 	}
 	return locations
@@ -765,6 +772,15 @@ func (out gatewayOut) left(now time.Time) time.Duration {
 	return max(within(out.until.Sub(now), out.rest), within(out.paused.Sub(now), out.pause))
 }
 
+// leftFor returns left, or for what the user asked for, if user, how long its
+// pause has left, as only a pause is the gateway's asking to wait.
+func (out gatewayOut) leftFor(now time.Time, user bool) time.Duration {
+	if user {
+		return within(out.paused.Sub(now), out.pause)
+	}
+	return out.left(now)
+}
+
 // within returns what's left of a wait, or 0 if it's over, or if more is left
 // than the whole wait, as when the clock was set back, which would otherwise
 // make it last as long again.
@@ -776,8 +792,9 @@ func within(left, wait time.Duration) time.Duration {
 }
 
 // inRotation returns the hosts but the gateways out of rotation, in their order,
-// and if that leaves none, how long until the first is back.
-func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
+// and if that leaves none, how long until the first is back.  For what the user
+// asked for, if user, only a pause takes a gateway out.
+func (f *Fetcher) inRotation(hosts []string, user bool) ([]string, time.Duration) {
 	f.healthMu.Lock()
 	defer f.healthMu.Unlock()
 	now := f.now()
@@ -785,7 +802,7 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 	var back time.Duration
 	for _, host := range hosts {
 		out, ok := f.out[host]
-		wait := out.left(now)
+		wait := out.leftFor(now, user)
 		if !ok || wait == 0 {
 			in = append(in, host)
 			continue
@@ -798,15 +815,16 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 }
 
 // soonestBack returns how long until the first of the hosts that are out of
-// rotation is back, or 0 if none is out.
-func (f *Fetcher) soonestBack(hosts []string) time.Duration {
+// rotation is back, or 0 if none is out, for what the user asked for, by their
+// pauses alone, if user.
+func (f *Fetcher) soonestBack(hosts []string, user bool) time.Duration {
 	f.healthMu.Lock()
 	defer f.healthMu.Unlock()
 	now := f.now()
 	var soonest time.Duration
 	for _, host := range hosts {
 		out, ok := f.out[host]
-		wait := out.left(now)
+		wait := out.leftFor(now, user)
 		if !ok || wait == 0 {
 			continue
 		}
@@ -818,8 +836,9 @@ func (f *Fetcher) soonestBack(hosts []string) time.Duration {
 }
 
 // Unavailable returns whether every location of the URIs is at a host that's
-// paused or out of rotation, so that reading them now would only wait.  URIs
-// with no location give no reason to wait.
+// paused, so that reading them now for the user would only wait, as what the
+// user asked for still tries a gateway that only rests.  URIs with no location
+// give no reason to wait.
 func (f *Fetcher) Unavailable(uris []string) bool {
 	var hosts []string
 	for _, uri := range uris {
@@ -832,10 +851,10 @@ func (f *Fetcher) Unavailable(uris []string) bool {
 	if len(hosts) == 0 {
 		return false
 	}
-	if in, _ := f.inRotation(hosts); len(in) > 0 {
+	if in, _ := f.inRotation(hosts, true); len(in) > 0 {
 		return false
 	}
-	log.Infof("Every gateway of a registry is paused or out: %s", f.rotationState(hosts))
+	log.Infof("Every gateway of a registry the user asked for is paused: %s", f.rotationState(hosts))
 	return true
 }
 
@@ -867,9 +886,10 @@ func (f *Fetcher) rotationState(hosts []string) string {
 	return strings.Join(state, ", ")
 }
 
-// available returns whether a host is in rotation.
-func (f *Fetcher) available(host string) bool {
-	in, _ := f.inRotation([]string{host})
+// available returns whether a host is in rotation, for what the user asked for,
+// by its pause alone, if user.
+func (f *Fetcher) available(host string, user bool) bool {
+	in, _ := f.inRotation([]string{host}, user)
 	return len(in) == 1
 }
 
@@ -1120,11 +1140,12 @@ func hostOf(location string) string {
 // in one line, in the order they came.  A download that can use any of several
 // hosts, as a file on IPFS can through any gateway, takes the first of them that
 // has room, and in line, the first of them that comes free.  A slot that comes
-// free at a host out of rotation, which usable tells, isn't handed on, and a
-// wait for hosts that all left rotation ends with errLeftRotation.
+// free at a host out of rotation, which usable tells for each in line, as what
+// the user asked for counts only pauses, isn't handed to them, and a wait for
+// hosts that all left rotation ends with errLeftRotation.
 type hostSlots struct {
 	limit   int
-	usable  func(host string) bool
+	usable  func(host string, user bool) bool
 	mu      sync.Mutex
 	busy    map[string]int
 	waiting []*slotWaiter
@@ -1216,7 +1237,7 @@ func (s *hostSlots) recheck() {
 	defer s.mu.Unlock()
 	kept := s.waiting[:0]
 	for _, w := range s.waiting {
-		if slices.ContainsFunc(w.hosts, s.usable) {
+		if slices.ContainsFunc(w.hosts, func(host string) bool { return s.usable(host, w.user) }) {
 			kept = append(kept, w)
 			continue
 		}
@@ -1236,15 +1257,13 @@ func (s *hostSlots) giver(host string) func() {
 }
 
 // handOn passes a slot at the host that's free to the first in line that can use
-// the host, if it's in rotation, or frees it.
+// the host, if it's in rotation for them, or frees it.
 func (s *hostSlots) handOn(host string) {
-	if s.usable == nil || s.usable(host) {
-		for i, w := range s.waiting {
-			if slices.Contains(w.hosts, host) {
-				s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
-				w.turn <- host
-				return
-			}
+	for i, w := range s.waiting {
+		if slices.Contains(w.hosts, host) && (s.usable == nil || s.usable(host, w.user)) {
+			s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
+			w.turn <- host
+			return
 		}
 	}
 	if s.busy[host]--; s.busy[host] <= 0 {
