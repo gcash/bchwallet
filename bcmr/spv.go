@@ -62,14 +62,17 @@ type SPVBackend struct {
 	source spvSource
 	hints  *chainbcmr.Hints
 
-	// waiting holds when a token's start failed, for the run goroutine.
-	waiting map[chainhash.Hash]time.Time
+	// waiting holds when a token's start failed, and searchTried each failed
+	// authbase search's tries, for the run goroutine.
+	waiting     map[chainhash.Hash]time.Time
+	searchTried map[chainhash.Hash]retry
 }
 
 // NewSPVBackend returns a backend.  Hints can be nil on a network without a
 // table, where a search goes down to the first block.
 func NewSPVBackend(source spvSource, hints *chainbcmr.Hints) *SPVBackend {
-	return &SPVBackend{source: source, hints: hints, waiting: make(map[chainhash.Hash]time.Time)}
+	return &SPVBackend{source: source, hints: hints, waiting: make(map[chainhash.Hash]time.Time),
+		searchTried: make(map[chainhash.Hash]retry)}
 }
 
 // floor returns the height no scan goes below or to.
@@ -420,9 +423,10 @@ func createsCategory(tx *wire.MsgTx, category chainhash.Hash) bool {
 }
 
 // Forget has a token that waits try again at the next cycle, as asking for it
-// does.
+// does, its authbase search too.
 func (b *SPVBackend) Forget(category chainhash.Hash) {
 	delete(b.waiting, category)
+	delete(b.searchTried, category)
 }
 
 // Advance checks each state against the chain, then follows every head that can
@@ -566,6 +570,11 @@ func (b *SPVBackend) searchAuthbases(ctx context.Context, states []*State, save 
 			state.CurrentPublication() != nil {
 			continue
 		}
+		// A search that failed waits as a registry read does, as each
+		// downloads up to a week of blocks.
+		if tried, ok := b.searchTried[state.Category]; ok && time.Since(tried.last) < retryWait(tried.tries) {
+			continue
+		}
 		from := state.GenesisHeight - 1
 		to := max(state.GenesisHeight-authbaseReach, 1)
 		_, err := b.source.SearchOutputs(state.AuthbaseScripts, from, to, func(found OutputFound) bool {
@@ -582,9 +591,12 @@ func (b *SPVBackend) searchAuthbases(ctx context.Context, states []*State, save 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			tried := b.searchTried[state.Category]
+			b.searchTried[state.Category] = retry{time.Now(), tried.tries + 1}
 			log.Debugf("Unable to look for the authbase of token %v: %v", state.Category, err)
 			continue
 		}
+		delete(b.searchTried, state.Category)
 		state.AuthbaseSearched = true
 		save(state)
 	}
@@ -686,6 +698,7 @@ func (b *SPVBackend) rewind(state *State) error {
 		state.ScannedTo, state.ScannedHash = 0, chainhash.Hash{}
 		state.OlderTxid, state.OlderHeight, state.Older = nil, 0, nil
 		state.AuthbaseScripts, state.GenesisHeight, state.AuthbaseSearched = nil, 0, false
+		delete(b.searchTried, state.Category)
 		return nil
 	}
 

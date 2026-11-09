@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	chainbcmr "github.com/gcash/bchd/bcmr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -1247,8 +1248,9 @@ func TestSPVAuthbaseSearchNotNeeded(t *testing.T) {
 	}
 }
 
-// TestSPVAuthbaseSearchFails ensures a search that fails is tried again later, and
-// that a reorg that takes the genesis away forgets the authbase.
+// TestSPVAuthbaseSearchFails ensures a search that fails is tried again after a
+// wait that doubles with each failure, or at once when the token is asked for
+// again, and that a reorg that takes the genesis away forgets the authbase.
 func TestSPVAuthbaseSearchFails(t *testing.T) {
 	c := newFakeChain(100)
 	authbase, genesis, category := p2pkhAuthbase(t, 1, true)
@@ -1261,18 +1263,45 @@ func TestSPVAuthbaseSearchFails(t *testing.T) {
 	if state.AuthbaseSearched || state.CurrentPublication() != nil {
 		t.Fatalf("%+v", state)
 	}
+	searches := func() int {
+		t.Helper()
+		before := len(c.outputSearches)
+		resolve(t, b, state)
+		return len(c.outputSearches) - before
+	}
+	back := func(by time.Duration) {
+		tried := b.searchTried[category]
+		tried.last = tried.last.Add(-by)
+		b.searchTried[category] = tried
+	}
+	if n := searches(); n != 0 {
+		t.Fatalf("%d searches right after a failure", n)
+	}
+	back(retryInterval)
+	if n := searches(); n != 1 || state.AuthbaseSearched {
+		t.Fatalf("%d searches after the wait, %+v", n, state)
+	}
+	back(retryInterval)
+	if n := searches(); n != 0 {
+		t.Fatalf("%d searches before the second wait", n)
+	}
+	b.Forget(category)
 	c.failAt = 0
-	resolve(t, b, state)
-	if !state.AuthbaseSearched || state.CurrentPublication() == nil {
-		t.Fatalf("%+v", state)
+	if n := searches(); n != 1 || !state.AuthbaseSearched || state.CurrentPublication() == nil {
+		t.Fatalf("%d searches when asked for again, %+v", n, state)
 	}
 
+	// A new genesis has a search of its own, at once.
+	b.searchTried[category] = retry{time.Now(), 3}
 	c.replaceFrom(60, 1000)
 	if err := b.rewind(state); err != nil {
 		t.Fatal(err)
 	}
 	if state.AuthbaseSearched || state.AuthbaseScripts != nil || state.GenesisHeight != 0 || state.Older != nil {
 		t.Fatalf("%+v", state)
+	}
+	if _, ok := b.searchTried[category]; ok {
+		t.Fatal("the failed search still waits")
 	}
 }
 
@@ -1334,6 +1363,7 @@ func TestSPVAuthbaseSearchBurned(t *testing.T) {
 		t.Fatalf("%+v", state)
 	}
 	c.failAt = 0
+	b.Forget(category) // As asking for it again does, rather than waiting.
 	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
 		t.Fatal(err)
 	}
