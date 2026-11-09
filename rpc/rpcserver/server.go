@@ -666,6 +666,7 @@ func marshalTokenInfos(infos []bcmr.TokenInfo,
 			token.Name, token.Description, token.Symbol = m.Name, m.Description, m.Symbol
 			token.Decimals = uint32(m.Decimals)
 			token.IconUri, token.WebUri = m.IconURI, m.WebURI
+			token.NftTypeCount = uint32(m.NFTTypeCount)
 			if nftTypes == nil || m.NFTTypeCount == 0 {
 				tokens[i] = token
 				continue

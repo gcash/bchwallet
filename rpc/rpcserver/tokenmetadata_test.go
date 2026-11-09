@@ -45,7 +45,7 @@ func TestMarshalTokenInfos(t *testing.T) {
 
 		t.Fatalf("got %+v", token)
 	}
-	if len(token.NftTypes) != 2 || token.NftTypes[0].Commitment != "01" ||
+	if token.NftTypeCount != 2 || len(token.NftTypes) != 2 || token.NftTypes[0].Commitment != "01" ||
 		token.NftTypes[0].Description != "First" || token.NftTypes[0].IconUri != "ipfs://one" ||
 		token.NftTypes[1].Name != "Two" {
 
@@ -74,13 +74,24 @@ func TestStatusNumbers(t *testing.T) {
 }
 
 // TestMarshalLeavesOutNFTTypes ensures the types only come when asked for, as a
-// list of them can be large.
+// list of them can be large, but their number always does, so that a client
+// can tell types that are missing for a moment from none.
 func TestMarshalLeavesOutNFTTypes(t *testing.T) {
 	tokens := marshalTokenInfos([]bcmr.TokenInfo{{
 		Stale:    true,
 		Metadata: &bcmr.Metadata{Name: "N", NFTTypeCount: 1},
 	}}, nil)
-	if len(tokens[0].NftTypes) != 0 || tokens[0].Name != "N" || !tokens[0].PublicationStale {
+	if len(tokens[0].NftTypes) != 0 || tokens[0].Name != "N" || !tokens[0].PublicationStale ||
+		tokens[0].NftTypeCount != 1 {
+
+		t.Fatalf("got %+v", tokens[0])
+	}
+
+	// Asked for, but gone from the store, as an evicted file is.
+	tokens = marshalTokenInfos([]bcmr.TokenInfo{{
+		Metadata: &bcmr.Metadata{Name: "N", NFTTypeCount: 3},
+	}}, func(chainhash.Hash) map[string]bcmr.NFTType { return nil })
+	if len(tokens[0].NftTypes) != 0 || tokens[0].NftTypeCount != 3 {
 		t.Fatalf("got %+v", tokens[0])
 	}
 }

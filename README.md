@@ -1,7 +1,6 @@
 bchwallet
 =========
 [![Build Status](https://github.com/gcash/bchwallet/actions/workflows/main.yml/badge.svg?branch=master)](https://github.com/gcash/bchwallet/actions/workflows/main.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gcash/bchwallet)](https://goreportcard.com/report/github.com/gcash/bchwallet)
 [![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
 [![Go Reference](https://pkg.go.dev/badge/github.com/gcash/bchwallet.svg)](https://pkg.go.dev/github.com/gcash/bchwallet)
 

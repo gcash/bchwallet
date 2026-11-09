@@ -262,6 +262,10 @@ message TokenMetadataResponse {
 		bool reserved_symbol = 18; // Its symbol copies a reserved one, so its amounts show none.
 		bool reserved_name = 19; // A look_alike that is one for its name, which is the coin's own.
 		bool known_symbol = 20; // Its symbol copies a Known token's, so its amounts show none.
+		// How many NFT types its registry has, whether or not nft_types holds
+		// them, as with include_nft_types they can be missing for a moment,
+		// when the wallet reads them again after their file was evicted.
+		uint32 nft_type_count = 21;
 	}
 	repeated Token tokens = 1; // In the order of the request.
 }
