@@ -382,6 +382,7 @@ func TestRefuseLocal(t *testing.T) {
 		"10.0.0.1:443": true, "[::1]:443": true, "localhost.:443": true, "a.localhost:443": true,
 		"127.1:443": true, "2130706433:443": true, "0x7f.1:443": true,
 		"10.0.0.1.:443": true, "127.0.0.1.:443": true,
+		"[::127.0.0.1]:443": true, "[::ffff:0:10.0.0.1]:443": true,
 		"example.com:443": false, "8.8.8.8:443": false, "8.8.8.8.:443": false} {
 		if (RefuseLocal(address) != nil) != want {
 			t.Errorf("%s", address)

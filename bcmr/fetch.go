@@ -232,7 +232,7 @@ func numericHost(host string) bool {
 // IPv6 prefixes that wrap an IPv4 address, which could be a private one.
 var nonPublicRanges = mustParseCIDRs("0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24",
 	"198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "64:ff9b:1::/48", "2001::/32",
-	"2002::/16", "fec0::/10")
+	"2002::/16", "fec0::/10", "::/96", "::ffff:0:0:0/96")
 
 func mustParseCIDRs(cidrs ...string) []*net.IPNet {
 	nets := make([]*net.IPNet, len(cidrs))
