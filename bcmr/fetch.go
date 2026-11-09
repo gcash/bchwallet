@@ -547,9 +547,20 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 		if len(in) == 0 {
 			continue
 		}
+		// A wait in line lasts only until a gateway of the item that rests
+		// is back, which may have a slot free, as the line only has those in
+		// rotation when it joined.
+		take := ctx
+		stop := func() {}
+		if back := f.soonestBack(hosts); back > 0 {
+			take, stop = context.WithTimeout(ctx, back)
+		}
 		var err error
-		host, release, err = slots.takeAny(ctx, f.avoidOthers(ctx, in))
-		if errors.Is(err, errLeftRotation) {
+		host, release, err = slots.takeAny(take, f.avoidOthers(ctx, in))
+		stop()
+		if errors.Is(err, errLeftRotation) ||
+			errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+
 			continue
 		}
 		if err != nil {
@@ -751,6 +762,25 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 		}
 	}
 	return in, back
+}
+
+// soonestBack returns how long until the first of the hosts that are out of
+// rotation is back, or 0 if none is out.
+func (f *Fetcher) soonestBack(hosts []string) time.Duration {
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	now := f.now()
+	var soonest time.Duration
+	for _, host := range hosts {
+		out, ok := f.out[host]
+		if !ok || !now.Before(out.back()) {
+			continue
+		}
+		if wait := out.back().Sub(now); soonest == 0 || wait < soonest {
+			soonest = wait
+		}
+	}
+	return soonest
 }
 
 // Unavailable returns whether every location of the URIs is at a host that's

@@ -1529,6 +1529,47 @@ func waitInLine(t *testing.T, s *hostSlots, n int) {
 	}
 }
 
+// TestWaitMovesToGatewayBack ensures a download waiting in line for a slot at
+// a busy gateway takes one at a gateway of the item that rested when it joined,
+// once that's back, rather than waiting on the busy one for good.
+func TestWaitMovesToGatewayBack(t *testing.T) {
+	busy, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("busy"))
+	})
+	back := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("back"))
+	}))
+	t.Cleanup(back.Close)
+	f.Gateways = []string{busy.URL, back.URL}
+
+	// Every slot at the first is taken, and the second rests a while.
+	var releases []func()
+	for range maxPerHost {
+		_, release, err := f.icons.takeAny(context.Background(), []string{hostOf(busy.URL)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		releases = append(releases, release)
+	}
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	const rest = 200 * time.Millisecond
+	f.healthMu.Lock()
+	f.out[hostOf(back.URL)] = gatewayOut{failures: 1, until: time.Now().Add(rest)}
+	f.healthMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, _, location, err := f.downloadAny(ctx, f.icons,
+		[]string{busy.URL + "/ipfs/bafy1", back.URL + "/ipfs/bafy1"}, maxIconSize)
+	if err != nil || string(data) != "back" || !strings.HasPrefix(location, back.URL) {
+		t.Fatalf("got %q from %s: %v", data, location, err)
+	}
+}
+
 // TestSlotsSkipHostOutOfRotation ensures a slot freed at a host out of rotation
 // isn't handed on, while one at a host in rotation is.
 func TestSlotsSkipHostOutOfRotation(t *testing.T) {
