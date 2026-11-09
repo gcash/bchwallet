@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -591,6 +593,98 @@ func TestStoreEvictsTypes(t *testing.T) {
 	if got := there(f, g, h); !reflect.DeepEqual(got, []bool{false, false, true}) {
 		t.Fatalf("over the limit by itself: %v", got)
 	}
+}
+
+// TestStoreKeepsTypesSize ensures the store keeps the size of the types files
+// as it writes and removes them, and lists them only once that's over the
+// limit, which a write that replaces a file changes by the difference.
+func TestStoreKeepsTypesSize(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	put := func(store *Store, b byte, types int) chainhash.Hash {
+		t.Helper()
+		state := typesState()
+		for i := 50; i < types; i++ {
+			state.Metadata.NFTTypes[fmt.Sprint(i)] = NFTType{Name: "N"}
+		}
+		state.Metadata.NFTTypeCount = len(state.Metadata.NFTTypes)
+		state.Category = chainhash.Hash{0x61, b}
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+		return state.Category
+	}
+	onDisk := func() int64 {
+		t.Helper()
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var total int64
+		for _, entry := range entries {
+			if info, err := entry.Info(); err == nil && strings.HasSuffix(entry.Name(), ".gob") {
+				total += info.Size()
+			}
+		}
+		return total
+	}
+
+	sizing, err := NewStore(db, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := int64(len(storedTypes(t, sizing.typesDir, put(sizing, 0, 50))))
+
+	store, err := NewStore(db, dir, 3*size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := put(store, 1, 50)
+	if !store.typesSized || store.typesSize != size {
+		t.Fatalf("after the first write: %v, %d, want %d", store.typesSized, store.typesSize, size)
+	}
+
+	// A file the store didn't write, old, which a listing would evict first.
+	other := chainhash.Hash{0x61, 0xff}
+	otherFile := filepath.Join(dir, other.String()+".gob")
+	if err := os.WriteFile(otherFile, make([]byte, 2*size), 0600); err != nil {
+		t.Fatal(err)
+	}
+	then := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(otherFile, then, then); err != nil {
+		t.Fatal(err)
+	}
+	b := put(store, 2, 50)
+	if _, err := os.Stat(otherFile); err != nil {
+		t.Fatal("a write that the size kept left under the limit listed the files")
+	}
+	if store.typesSize != 2*size {
+		t.Fatalf("after b: %d, want %d", store.typesSize, 2*size)
+	}
+
+	// Replacing b's types with more counts the difference, which leaves the
+	// size kept under the limit, so nothing is listed.
+	put(store, 2, 80)
+	bigger := int64(len(storedTypes(t, dir, b)))
+	if bigger <= size || size+bigger > 3*size {
+		t.Fatalf("b's types are %d, not between %d and %d", bigger, size, 2*size)
+	}
+	if store.typesSize != size+bigger {
+		t.Fatalf("after b grew: %d, want %d", store.typesSize, size+bigger)
+	}
+	if _, err := os.Stat(otherFile); err != nil {
+		t.Fatal("a write that replaced a file counted all of it and listed the files")
+	}
+
+	// Over the limit, the listing counts what's there, the file it missed
+	// too, evicts the oldest, and keeps the size it's left with.
+	put(store, 3, 50)
+	if _, err := os.Stat(otherFile); err == nil {
+		t.Fatal("the oldest file stayed over the limit")
+	}
+	if got := onDisk(); store.typesSize != got || got > 3*size {
+		t.Fatalf("after the listing: kept %d, on disk %d, limit %d", store.typesSize, got, 3*size)
+	}
+	_ = a
 }
 
 // TestStoreRemembersEveryState ensures a state that comes back unchanged isn't

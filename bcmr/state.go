@@ -192,6 +192,12 @@ type Store struct {
 	typesMu sync.Mutex
 	recent  []recentTypes
 
+	// typesSize is the size of the types files, once evictTypes counted
+	// them, kept as they're written and removed, so that a write that leaves
+	// them under the limit lists none.  typesMu guards it.
+	typesSize  int64
+	typesSized bool
+
 	// last and lastTypes hold what was last written of each state and of its
 	// NFT types, so that what didn't change costs no write.  They belong to
 	// the Manager's goroutine.
@@ -267,7 +273,7 @@ func (s *Store) NFTTypes(category chainhash.Hash) map[string]NFTType {
 	}
 	types, ok := s.readTypes(category)
 	if !ok {
-		_ = os.Remove(s.typesFile(category))
+		_ = s.removeTypes(category)
 		return nil
 	}
 	s.recent = slices.Insert(s.recent, 0, recentTypes{category, types})
@@ -288,15 +294,39 @@ func (s *Store) changeTypes(category chainhash.Hash, encoded []byte) error {
 		return recent.category == category
 	})
 	if len(encoded) != 0 {
+		before := s.typesFileSize(category)
 		if err := s.writeTypes(category, encoded); err != nil {
 			return err
+		}
+		if s.typesSized {
+			s.typesSize += int64(len(encoded)) - before
 		}
 		s.evictTypes(category)
 		return nil
 	}
-	err := os.Remove(s.typesFile(category))
+	err := s.removeTypes(category)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
+	}
+	return err
+}
+
+// typesFileSize returns the size of a token's types file, or 0 if there's none.
+func (s *Store) typesFileSize(category chainhash.Hash) int64 {
+	info, err := os.Stat(s.typesFile(category))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// removeTypes removes a token's types file, and takes it from the size kept.
+// typesMu must be held.
+func (s *Store) removeTypes(category chainhash.Hash) error {
+	size := s.typesFileSize(category)
+	err := os.Remove(s.typesFile(category))
+	if err == nil && s.typesSized {
+		s.typesSize -= size
 	}
 	return err
 }
@@ -304,9 +334,12 @@ func (s *Store) changeTypes(category chainhash.Hash, encoded []byte) error {
 // evictTypes removes the types files asked for longest ago until they take no
 // more room than the limit, but for the one just stored and those of the types
 // read last, which show.  An evicted token's types are read from its registry
-// again when they're asked for.  typesMu must be held.
+// again when they're asked for.  The files are listed only when the size kept
+// of them is over the limit, or not kept yet, and the listing sets it, so that
+// what it missed, as files that went otherwise, comes right.  typesMu must be
+// held.
 func (s *Store) evictTypes(stored chainhash.Hash) {
-	if s.typesLimit <= 0 {
+	if s.typesLimit <= 0 || s.typesSized && s.typesSize <= s.typesLimit {
 		return
 	}
 	entries, err := os.ReadDir(s.typesDir)
@@ -335,6 +368,7 @@ func (s *Store) evictTypes(stored chainhash.Hash) {
 		files = append(files, typesFile{*category, info.Size(), info.ModTime()})
 	}
 	slices.SortFunc(files, func(a, b typesFile) int { return a.asked.Compare(b.asked) })
+	defer func() { s.typesSize, s.typesSized = total, true }()
 	for _, file := range files {
 		if total <= s.typesLimit {
 			return
