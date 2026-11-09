@@ -372,6 +372,7 @@ uris:
 					again = again || mayPass(err, wrongFile)
 					continue
 				}
+				f.worked(hostOf(location))
 				f.keep(hash, data)
 				return data, false, nil, nil
 			}
@@ -782,9 +783,10 @@ func (f *Fetcher) isGateway(host string) bool {
 func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte, *url.URL, error) {
 	host := hostOf(location)
 	data, final, err := f.read(ctx, location, limit)
+	// A file that comes counts for the host once the caller takes it, as one
+	// that isn't the file asked for is the host's failure.
 	switch {
 	case err == nil:
-		f.worked(host)
 	case ctx.Err() != nil:
 	case errors.Is(err, errGatewayFault):
 		f.failed(host)

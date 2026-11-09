@@ -1644,3 +1644,53 @@ func TestFailsItsCID(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchWrongFilesAddUp ensures a gateway that keeps serving other files than
+// the CIDs name fails each time in a row, rather than start again at each file
+// it sends, and that one it serves right puts it back.
+func TestFetchWrongFilesAddUp(t *testing.T) {
+	icon := []byte("icon")
+	serve := []byte("tampered")
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(serve)
+	})
+	f.Gateways = []string{server.URL}
+	skipRests(f)
+	host := hostOf(server.URL)
+	for range 2 {
+		if _, err := f.FetchIcon(context.Background(), rawCID(icon)); err == nil {
+			t.Fatal("no error")
+		}
+	}
+	f.healthMu.Lock()
+	failures := f.out[host].failures
+	f.healthMu.Unlock()
+	if failures != 2 {
+		t.Fatalf("%d failures in a row", failures)
+	}
+
+	serve = icon
+	if _, err := f.FetchIcon(context.Background(), rawCID(icon)); err != nil {
+		t.Fatal(err)
+	}
+	f.healthMu.Lock()
+	_, out := f.out[host]
+	f.healthMu.Unlock()
+	if out {
+		t.Fatal("a right file didn't put the gateway back")
+	}
+
+	// A registry it serves right does too.
+	f.failed(host)
+	registry := []byte(`{"r":1}`)
+	serve = registry
+	if _, err := f.Fetch(context.Background(), sha256.Sum256(registry), []string{rawCID(registry)}); err != nil {
+		t.Fatal(err)
+	}
+	f.healthMu.Lock()
+	_, out = f.out[host]
+	f.healthMu.Unlock()
+	if out {
+		t.Fatal("a right registry didn't put the gateway back")
+	}
+}

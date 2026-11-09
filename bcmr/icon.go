@@ -105,6 +105,7 @@ func (f *Fetcher) fetchIconRoundOnce(ctx context.Context, uri string) ([]byte, b
 					again = again || mayPass(err, wrongFile)
 					continue
 				}
+				f.worked(hostOf(location))
 				return data, false, nil, nil
 			}
 		}
