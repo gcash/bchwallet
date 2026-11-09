@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	chainbcmr "github.com/gcash/bchd/bcmr"
@@ -172,6 +173,51 @@ func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager
 		return nil, err
 	}
 	manager.Start()
-	w.SetTokenMetadata(manager)
 	return manager, nil
+}
+
+// tokenMetadataHolder is what holds the token metadata a client started.
+type tokenMetadataHolder interface {
+	SetTokenMetadata(*bcmr.Manager)
+}
+
+// tokenMetadataLink ties the token metadata started with a chain client to the
+// wallet, until the client stops.
+type tokenMetadataLink struct {
+	mu      sync.Mutex
+	holder  tokenMetadataHolder
+	manager *bcmr.Manager
+	stopped bool
+}
+
+// attach gives the wallet the token metadata started with the client, unless
+// the client stopped meanwhile, which stops it instead, so that the wallet never
+// holds one that's stopped.
+func (l *tokenMetadataLink) attach(holder tokenMetadataHolder, manager *bcmr.Manager) {
+	if manager == nil {
+		return
+	}
+	l.mu.Lock()
+	stopped := l.stopped
+	if !stopped {
+		l.holder, l.manager = holder, manager
+		holder.SetTokenMetadata(manager)
+	}
+	l.mu.Unlock()
+	if stopped {
+		manager.Stop()
+	}
+}
+
+// detach takes the token metadata from the wallet and stops it, as the client
+// stopped, and has any started later stopped too.
+func (l *tokenMetadataLink) detach() {
+	l.mu.Lock()
+	holder, manager := l.holder, l.manager
+	l.holder, l.manager, l.stopped = nil, nil, true
+	l.mu.Unlock()
+	if manager != nil {
+		holder.SetTokenMetadata(nil)
+		manager.Stop()
+	}
 }

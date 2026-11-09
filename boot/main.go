@@ -14,7 +14,6 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/gcash/bchd/chaincfg"
-	"github.com/gcash/bchwallet/bcmr"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
 	"github.com/gcash/bchwallet/rpc/rpcserver"
@@ -394,8 +393,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		// prevents the callback from associating a wallet loaded at a
 		// later time with a client that has already disconnected.  A
 		// mutex is used to make this concurrent safe.
-		var tokenMetadata *bcmr.Manager
-		clientStopped := false
+		tokenMetadata := new(tokenMetadataLink)
 		mu := new(sync.Mutex)
 		associateRPCClient := func(w *wallet.Wallet) {
 			w.SynchronizeRPC(chainClient)
@@ -403,15 +401,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 			if err != nil {
 				log.Warnf("Token metadata is off: %v", err)
 			}
-			mu.Lock()
-			stopped := clientStopped
-			if !stopped {
-				tokenMetadata = manager
-			}
-			mu.Unlock()
-			if stopped && manager != nil {
-				manager.Stop()
-			}
+			tokenMetadata.attach(w, manager)
 			if legacyRPCServer != nil {
 				legacyRPCServer.SetChainServer(chainClient)
 			}
@@ -438,17 +428,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 
 		chainClient.WaitForShutdown()
 		close(clientDone)
-		mu.Lock()
-		stopTokenMetadata := tokenMetadata
-		tokenMetadata = nil
-		clientStopped = true
-		mu.Unlock()
-		if stopTokenMetadata != nil {
-			if w, ok := loader.LoadedWallet(); ok {
-				w.SetTokenMetadata(nil)
-			}
-			stopTokenMetadata.Stop()
-		}
+		tokenMetadata.detach()
 		if stopBackend != nil {
 			stopBackend()
 		}

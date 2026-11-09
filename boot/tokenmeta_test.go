@@ -3,11 +3,15 @@ package boot
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
 	chainbcmr "github.com/gcash/bchd/bcmr"
 	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchwallet/bcmr"
+	"github.com/gcash/bchwallet/walletdb"
+	_ "github.com/gcash/bchwallet/walletdb/bdb"
 )
 
 // TestAutoLoad ensures only a token in the table loads by itself, and that with
@@ -69,5 +73,58 @@ func TestProxiedDialTimesOut(t *testing.T) {
 		}
 	case <-time.After(time.Minute):
 		t.Fatal("a proxy that never answered held the connection")
+	}
+}
+
+// fakeHolder records the token metadata it's given.
+type fakeHolder struct {
+	given []*bcmr.Manager
+}
+
+func (h *fakeHolder) SetTokenMetadata(manager *bcmr.Manager) {
+	h.given = append(h.given, manager)
+}
+
+// TestTokenMetadataLink ensures the wallet holds the token metadata only while
+// its client runs, and that one started as the client stopped is stopped, and
+// never held.
+func TestTokenMetadataLink(t *testing.T) {
+	db, err := walletdb.Create("bdb", filepath.Join(t.TempDir(), "wallet.db"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := bcmr.NewStore(db, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stops := 0
+	manager, err := bcmr.NewManager(bcmr.Config{Store: store, StopRollbacks: func() { stops++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Started while the client runs.
+	link, holder := new(tokenMetadataLink), new(fakeHolder)
+	link.attach(holder, manager)
+	link.detach()
+	if len(holder.given) != 2 || holder.given[0] != manager || holder.given[1] != nil || stops != 1 {
+		t.Fatalf("given %v, %d stops", holder.given, stops)
+	}
+
+	// Started as the client stopped.
+	link, holder = new(tokenMetadataLink), new(fakeHolder)
+	link.detach()
+	link.attach(holder, manager)
+	if len(holder.given) != 0 || stops != 2 {
+		t.Fatalf("given %v, %d stops", holder.given, stops)
+	}
+
+	// None started.
+	link, holder = new(tokenMetadataLink), new(fakeHolder)
+	link.attach(holder, nil)
+	link.detach()
+	if len(holder.given) != 0 {
+		t.Fatalf("given %v", holder.given)
 	}
 }
