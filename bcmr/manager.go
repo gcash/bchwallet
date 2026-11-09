@@ -615,13 +615,16 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 		err = ErrNoMetadata
 	}
 
-	// Only a collection adds to its registry as it goes, so a file that
-	// isn't the published one counts for nothing else.  Its decimals
-	// don't count either, as they would change how amounts read.
+	// A file that isn't the published one is used, in full, only for a
+	// Known token, which the Known list vouches for: a collection still
+	// being minted publishes the hash of the whole set, and serves the part
+	// minted so far.  For any other token nothing vouches for it, so it
+	// counts as no metadata.
 	if changed {
+		_, known := m.cfg.Known[state.Category]
 		switch {
-		case metadata == nil || len(metadata.NFTTypes) == 0:
-			err, metadata = fmt.Errorf("%w, for a token that isn't a collection", err), nil
+		case !known || metadata == nil:
+			err, metadata = fmt.Errorf("%w, for a token that isn't Known", err), nil
 
 		// What was read of the published file stays, when reading it
 		// again gets another.
@@ -630,7 +633,6 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 
 		default:
 			err = nil
-			metadata.Decimals = 0
 		}
 	}
 	// A Refresh's read is over, so later ones are the token's own.
@@ -707,7 +709,7 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 	}
 	if known, ok := m.cfg.Known[state.Category]; ok {
 		info.Known = true
-		if info.Metadata == nil || info.RegistryChanged {
+		if info.Metadata == nil {
 			info.Metadata = known
 		}
 		info.RegistryChanged, info.RegistryFailed = false, false

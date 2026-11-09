@@ -514,7 +514,8 @@ func collectionFor(category chainhash.Hash, name string) []byte {
 // changedFixture is a fixture whose host serves file under a hash of another.
 func changedFixture(t *testing.T, category chainhash.Hash, file []byte) *managerFixture {
 	t.Helper()
-	f := newManagerFixture(t, category, file, nil, always)
+	known := map[chainhash.Hash]*Metadata{category: {Name: "Listed", Symbol: "L"}}
+	f := newManagerFixture(t, category, file, known, always)
 	f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
 	f.m.Tokens([]chainhash.Hash{category})
 	if err := cycleAndRead(f.m); err != nil {
@@ -523,17 +524,19 @@ func changedFixture(t *testing.T, category chainhash.Hash, file []byte) *manager
 	return f
 }
 
-// TestManagerChangedCollection ensures a collection's registry that isn't the
-// published one shows, marked, with no decimals, and is read again only later
-// or when asked.
+// TestManagerChangedCollection ensures a Known collection's registry that isn't
+// the published one shows in full, as Known, and is read again only later or
+// when asked.
 func TestManagerChangedCollection(t *testing.T) {
 	category := chainhash.Hash{0x31}
 	f := changedFixture(t, category, collectionFor(category, "Minting"))
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
-	if info.Metadata == nil || !info.RegistryChanged || info.RegistryFailed {
+	if info.Metadata == nil || !info.Known || info.RegistryChanged || info.RegistryFailed ||
+		!f.m.states[category].RegistryChanged {
+
 		t.Fatalf("%+v", info)
 	}
-	if info.Metadata.Decimals != 0 || info.Metadata.NFTTypes["01"].Name != "One" {
+	if info.Metadata.Name != "Minting" || info.Metadata.Decimals != 8 || info.Metadata.NFTTypes["01"].Name != "One" {
 		t.Fatalf("%+v", info.Metadata)
 	}
 
@@ -562,14 +565,24 @@ func TestManagerChangedCollection(t *testing.T) {
 	}
 }
 
-// TestManagerChangedFungible ensures a registry that isn't the published one
-// counts for nothing if the token isn't a collection.
-func TestManagerChangedFungible(t *testing.T) {
-	category := chainhash.Hash{0x32}
-	f := changedFixture(t, category, registryFor(category, "Coin", "COIN"))
-	info := f.m.Tokens([]chainhash.Hash{category})[0]
-	if info.Metadata != nil || info.RegistryChanged || !info.RegistryFailed {
-		t.Fatalf("%+v", info)
+// TestManagerChangedNotKnown ensures a registry that isn't the published one
+// counts for nothing for a token that isn't Known, a collection or not.
+func TestManagerChangedNotKnown(t *testing.T) {
+	for _, file := range [][]byte{
+		collectionFor(chainhash.Hash{0x32}, "Minting"),
+		registryFor(chainhash.Hash{0x32}, "Coin", "COIN"),
+	} {
+		category := chainhash.Hash{0x32}
+		f := newManagerFixture(t, category, file, nil, always)
+		f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
+		f.m.Tokens([]chainhash.Hash{category})
+		if err := cycleAndRead(f.m); err != nil {
+			t.Fatal(err)
+		}
+		info := f.m.Tokens([]chainhash.Hash{category})[0]
+		if info.Metadata != nil || info.RegistryChanged || !info.RegistryFailed {
+			t.Fatalf("%+v", info)
+		}
 	}
 }
 
@@ -602,8 +615,8 @@ func TestManagerRegistryFailed(t *testing.T) {
 	}
 }
 
-// TestManagerKnownOverChanged ensures the Known list wins over a file that isn't
-// the published one.
+// TestManagerKnownOverChanged ensures a Known token shows a file that isn't the
+// published one in full, rather than only what the Known list holds.
 func TestManagerKnownOverChanged(t *testing.T) {
 	category := chainhash.Hash{0x34}
 	known := map[chainhash.Hash]*Metadata{category: {Name: "Listed", Symbol: "L"}}
@@ -614,7 +627,7 @@ func TestManagerKnownOverChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
-	if info.Metadata == nil || info.Metadata.Name != "Listed" || info.RegistryChanged {
+	if info.Metadata == nil || info.Metadata.Name != "Host" || info.RegistryChanged || !info.Known {
 		t.Fatalf("%+v", info)
 	}
 }
@@ -773,7 +786,8 @@ func TestManagerNextSnapshot(t *testing.T) {
 // over.
 func TestManagerZeroHash(t *testing.T) {
 	category := chainhash.Hash{0x3b}
-	f := newManagerFixture(t, category, collectionFor(category, "Host"), nil, always)
+	known := map[chainhash.Hash]*Metadata{category: {Name: "Listed", Symbol: "L"}}
+	f := newManagerFixture(t, category, collectionFor(category, "Host"), known, always)
 	f.backend.pubs[category].Hash = [32]byte{}
 	f.m.Tokens([]chainhash.Hash{category})
 	if err := cycleAndRead(f.m); err != nil {
@@ -841,7 +855,8 @@ func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {
 // failure.
 func TestManagerRetriesApart(t *testing.T) {
 	coin, collection := chainhash.Hash{0x3e}, chainhash.Hash{0x3f}
-	f := newManagerFixture(t, collection, collectionFor(collection, "Host"), nil, always)
+	known := map[chainhash.Hash]*Metadata{collection: {Name: "Listed", Symbol: "L"}}
+	f := newManagerFixture(t, collection, collectionFor(collection, "Host"), known, always)
 	pub := &Publication{Hash: sha256.Sum256([]byte("the whole set")), URIs: f.backend.pubs[collection].URIs}
 	coinState := &State{Category: coin, Links: []Link{{Height: 1, Publication: pub}}}
 	state := &State{Category: collection, Links: []Link{{Height: 1, Publication: pub}}}
@@ -1076,6 +1091,7 @@ func TestManagerChangedFileNotShared(t *testing.T) {
 			"nfts":{"parse":{"bytecode":"","types":{"01":{"name":"A"}}}}}}}}}`, first, second))
 	m, hits := readsFixture(t, map[chainhash.Hash][]byte{first: collection, second: collection},
 		func(chainhash.Hash) {})
+	m.cfg.Known = map[chainhash.Hash]*Metadata{first: {Name: "One", Symbol: "ONE"}, second: {Name: "Two", Symbol: "TWO"}}
 	pubs := m.cfg.Backend.(*fakeBackend).pubs
 	wrong := sha256.Sum256([]byte("the whole set"))
 	pubs[first].Hash, pubs[second].Hash = wrong, wrong
