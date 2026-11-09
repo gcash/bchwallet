@@ -574,8 +574,8 @@ func TestDownloadsPerHost(t *testing.T) {
 	start(f.icons, maxPerHost)
 	take(maxPerHost)
 
-	// A wait that can only give downloads over the limit time to show.
-	time.Sleep(50 * time.Millisecond)
+	// The downloads over the limit are in line, not under way.
+	waitInLine(t, f.registries, 3)
 	if len(arrived) != 0 {
 		t.Fatalf("%d downloads over the limit", len(arrived))
 	}
