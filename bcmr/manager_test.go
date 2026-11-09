@@ -80,7 +80,7 @@ func newManagerFixture(t *testing.T, category chainhash.Hash, registry []byte,
 		_, _ = w.Write(registry)
 	}))
 	t.Cleanup(server.Close)
-	store, err := NewStore(testDB(t))
+	store, err := NewStore(testDB(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -884,7 +884,7 @@ func readsFixture(t *testing.T, registries map[chainhash.Hash][]byte,
 		_, _ = w.Write(registries[*category])
 	}))
 	t.Cleanup(server.Close)
-	store, err := NewStore(testDB(t))
+	store, err := NewStore(testDB(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

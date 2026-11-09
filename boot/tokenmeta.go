@@ -108,7 +108,8 @@ func autoLoad(hints *chainbcmr.Hints) func(chainhash.Hash) bool {
 // startTokenMetadata starts following the wallet's tokens with the chain
 // client.  The wallet works without it, so a failure only turns it off.
 func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager, error) {
-	store, err := bcmr.NewStore(w.Database())
+	store, err := bcmr.NewStore(w.Database(),
+		filepath.Join(networkDir(cfg.AppDataDir.Value, activeNet.Params), "bcmr-nfts"))
 	if err != nil {
 		return nil, err
 	}

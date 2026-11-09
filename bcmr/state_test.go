@@ -3,6 +3,9 @@ package bcmr
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -27,8 +30,8 @@ func testDB(t *testing.T) walletdb.DB {
 // TestStoreRoundTrip ensures a state comes back as it was stored, and that
 // opening the store again keeps it.
 func TestStoreRoundTrip(t *testing.T) {
-	db := testDB(t)
-	store, err := NewStore(db)
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +52,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := store.Put(want); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db)
+	store, err = NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,15 +84,11 @@ func TestStateHeadAndPublication(t *testing.T) {
 	}
 }
 
-// storedTypes returns what the types bucket holds for a state.
-func storedTypes(t *testing.T, db walletdb.DB, category chainhash.Hash) []byte {
+// storedTypes returns what the types file holds for a state.
+func storedTypes(t *testing.T, dir string, category chainhash.Hash) []byte {
 	t.Helper()
-	var stored []byte
-	err := walletdb.View(db, func(tx walletdb.ReadTx) error {
-		stored = append(stored, tx.ReadBucket(bcmrNFTsBucket).Get(category[:])...)
-		return nil
-	})
-	if err != nil {
+	stored, err := os.ReadFile(filepath.Join(dir, category.String()+".gob"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal(err)
 	}
 	return stored
@@ -98,8 +97,8 @@ func storedTypes(t *testing.T, db walletdb.DB, category chainhash.Hash) []byte {
 // TestStoreKeepsTypesApart ensures a state's NFT types come back, and that a save
 // for a new block doesn't write them.
 func TestStoreKeepsTypesApart(t *testing.T) {
-	db := testDB(t)
-	store, err := NewStore(db)
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,34 +107,28 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
-	first := storedTypes(t, db, state.Category)
+	first := storedTypes(t, dir, state.Category)
 	if len(first) == 0 {
 		t.Fatal("no types stored")
 	}
 
 	// Writing other bytes under the key shows whether the next save writes them.
 	mark := []byte("unchanged")
-	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
-		return tx.ReadWriteBucket(bcmrNFTsBucket).Put(state.Category[:], mark)
-	})
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), mark, 0600); err != nil {
 		t.Fatal(err)
 	}
 	state.ScannedTo = 100
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(storedTypes(t, db, state.Category), mark) {
+	if !bytes.Equal(storedTypes(t, dir, state.Category), mark) {
 		t.Fatal("a new block wrote the types")
 	}
 
-	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
-		return tx.ReadWriteBucket(bcmrNFTsBucket).Put(state.Category[:], first)
-	})
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), first, 0600); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db)
+	store, err = NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,8 +145,8 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 // TestStoreReadsTypesKeptWithTheState ensures a state saved before the types were
 // kept apart keeps them, and moves them at its next save.
 func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
-	db := testDB(t)
-	store, err := NewStore(db)
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +173,7 @@ func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
 	if err := store.Put(got); err != nil {
 		t.Fatal(err)
 	}
-	if len(storedTypes(t, db, state.Category)) == 0 {
+	if len(storedTypes(t, dir, state.Category)) == 0 {
 		t.Fatal("the types weren't moved")
 	}
 }
@@ -196,8 +189,8 @@ func typesState() *State {
 // TestStoreSnapshotTakesOver ensures the types of a snapshot that took over are
 // written, though the registry and the number of types are the same.
 func TestStoreSnapshotTakesOver(t *testing.T) {
-	db := testDB(t)
-	store, err := NewStore(db)
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +210,7 @@ func TestStoreSnapshotTakesOver(t *testing.T) {
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db)
+	store, err = NewStore(db, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,5 +220,118 @@ func TestStoreSnapshotTakesOver(t *testing.T) {
 	}
 	if got := all[state.Category].Metadata.NFTTypes["a"]; got.Name != "Revealed" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// TestStoreMovesTypesOutOfTheDatabase ensures the NFT types kept in the wallet's
+// database are moved to their files when the store opens, and the bucket goes.
+func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	state := typesState()
+	state.Category = chainhash.Hash{4}
+	light := *state
+	metadata := *state.Metadata
+	metadata.NFTTypes = nil
+	light.Metadata = &metadata
+	var value, types bytes.Buffer
+	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
+		t.Fatal(err)
+	}
+	if err := gob.NewEncoder(&types).Encode(state.Metadata.NFTTypes); err != nil {
+		t.Fatal(err)
+	}
+	err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		for name, value := range map[string][]byte{string(bcmrBucket): value.Bytes(),
+			string(bcmrNFTsBucket): types.Bytes()} {
+
+			bucket, err := tx.CreateTopLevelBucket([]byte(name))
+			if err != nil {
+				return err
+			}
+			if err := bucket.Put(state.Category[:], value); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = walletdb.View(db, func(tx walletdb.ReadTx) error {
+		if tx.ReadBucket(bcmrNFTsBucket) != nil {
+			return errors.New("the bucket of types is still there")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category]; got == nil || len(got.Metadata.NFTTypes) != 50 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// TestStoreUnreadableTypes ensures a types file that can't be read has the
+// registry read again.
+func TestStoreUnreadableTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{5}
+	state.RegistryParser = registryParser
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), []byte("torn"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category]; got.RegistryParser != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// TestStoreRemovesTypes ensures a state whose metadata has no NFT types any more
+// leaves no types file, and comes back without them.
+func TestStoreRemovesTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{6}
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	state.Metadata = &Metadata{Name: "T"}
+	state.RegistryHash = [32]byte{1}
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if len(storedTypes(t, dir, state.Category)) != 0 {
+		t.Fatal("the types file is still there")
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category]; len(got.Metadata.NFTTypes) != 0 {
+		t.Fatalf("%+v", got.Metadata)
 	}
 }
