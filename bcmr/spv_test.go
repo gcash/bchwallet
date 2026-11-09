@@ -1392,6 +1392,73 @@ func TestSPVAuthbaseSearchFails(t *testing.T) {
 	}
 }
 
+// TestSPVAuthbaseSearchShared ensures tokens whose weeks overlap share one search,
+// that one far from them has its own, and that an authbase outside its token's
+// week doesn't count.
+func TestSPVAuthbaseSearchShared(t *testing.T) {
+	c := newFakeChain(3000)
+	authbaseA, genesisA, a := p2pkhAuthbase(t, 1, true)
+	authbaseB, genesisB, b := p2pkhAuthbase(t, 3, true)
+	authbaseC, genesisC, cat := p2pkhAuthbase(t, 5, true)
+	authbaseD, genesisD, d := p2pkhAuthbase(t, 7, true)
+	c.put(1700, authbaseA)
+	c.put(1800, genesisA)
+	c.put(1500, authbaseB)
+	c.put(1600, genesisB)
+	c.put(2850, authbaseC)
+	c.put(2900, genesisC)
+	c.put(700, authbaseD) // Below D's week, in B's.
+	c.put(1750, genesisD)
+	states := []*State{{Category: a}, {Category: b}, {Category: cat}, {Category: d}}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), states...)
+	if want := [][2]int32{{2899, 2900 - authbaseReach}, {1799, 1600 - authbaseReach}}; !reflect.DeepEqual(c.outputSearches, want) {
+		t.Fatalf("searched %v, not %v", c.outputSearches, want)
+	}
+	for _, state := range states[:3] {
+		if !state.AuthbaseSearched || state.CurrentPublication() == nil {
+			t.Fatalf("%+v", state)
+		}
+	}
+	if !states[3].AuthbaseSearched || states[3].CurrentPublication() != nil {
+		t.Fatalf("found outside its week: %+v", states[3])
+	}
+}
+
+// TestSPVAuthbaseSearchWeeksMeet ensures tokens whose weeks meet, with no block
+// between them, share a search.
+func TestSPVAuthbaseSearchWeeksMeet(t *testing.T) {
+	c := newFakeChain(3000)
+	_, genesisP, p := p2pkhAuthbase(t, 1, true)
+	_, genesisQ, q := p2pkhAuthbase(t, 3, true)
+	c.put(2500, genesisP)
+	c.put(2500-authbaseReach, genesisQ)
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), &State{Category: p}, &State{Category: q})
+	if want := [][2]int32{{2499, 2500 - 2*authbaseReach}}; !reflect.DeepEqual(c.outputSearches, want) {
+		t.Fatalf("searched %v, not %v", c.outputSearches, want)
+	}
+}
+
+// TestSPVAuthbaseSearchSharedFails ensures a shared search that fails counts for
+// the tokens whose weeks it went through, and has the others wait.
+func TestSPVAuthbaseSearchSharedFails(t *testing.T) {
+	c := newFakeChain(3000)
+	_, genesisE, e := p2pkhAuthbase(t, 1, true)
+	authbaseF, genesisF, f := p2pkhAuthbase(t, 3, true)
+	c.put(2700, genesisE)
+	c.put(900, authbaseF)
+	c.put(1800, genesisF)
+	c.failAt = 2700 - authbaseReach - 1 // The search fails just past E's week.
+	backend := NewSPVBackend(c, hintsFor(t, 50))
+	states := []*State{{Category: e}, {Category: f}}
+	resolve(t, backend, states...)
+	if len(c.outputSearches) != 1 || !states[0].AuthbaseSearched || states[1].AuthbaseSearched {
+		t.Fatalf("searched %v, %+v, %+v", c.outputSearches, states[0], states[1])
+	}
+	if _, waits := backend.searchTried[e]; waits || backend.searchTried[f].tries != 1 {
+		t.Fatalf("%v", backend.searchTried)
+	}
+}
+
 // TestSPVAuthbaseSearchOtherPayments ensures payments to the authbase's script
 // that aren't the authbase are passed over, publication or not.
 func TestSPVAuthbaseSearchOtherPayments(t *testing.T) {

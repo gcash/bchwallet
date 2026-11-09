@@ -608,37 +608,89 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 
 // searchAuthbases looks for the authbase of each token that the walk followed to
 // its head without a publication, in the week before its genesis, as some tokens
-// publish only there.  It's done once, unless it fails, as then the next cycle
-// tries again.
+// publish only there.  It's done once, unless it fails.  The tokens whose weeks
+// overlap or meet share one search, as each downloads the filters of the blocks
+// it covers, and a token's authbase counts only in its own week.  A search that
+// fails has the tokens it didn't find, in the blocks it didn't reach, wait as a
+// registry read does.
 func (b *SPVBackend) searchAuthbases(ctx context.Context, states []*State, save func(*State)) error {
+	var pending []*State
 	for _, state := range states {
 		if state.Status != StatusVerified || state.AuthbaseSearched || len(state.AuthbaseScripts) == 0 ||
 			state.CurrentPublication() != nil {
 			continue
 		}
-		// A search that failed waits as a registry read does, as each
-		// downloads up to a week of blocks.
 		if tried, ok := b.searchTried[state.Category]; ok && time.Since(tried.last) < retryWait(tried.tries) {
 			continue
 		}
-		from := state.GenesisHeight - 1
-		to := max(state.GenesisHeight-authbaseReach, 1)
-		_, err := b.source.SearchOutputs(state.AuthbaseScripts, from, to, func(found OutputFound) bool {
-			if found.Tx.TxHash() != state.Category {
-				return true
+		pending = append(pending, state)
+	}
+	// The searches go down, so the weeks are taken from the top.
+	slices.SortFunc(pending, func(a, b *State) int { return cmp.Compare(b.GenesisHeight, a.GenesisHeight) })
+	for len(pending) > 0 {
+		group := []*State{pending[0]}
+		from, to := authbaseWeek(pending[0])
+		for _, state := range pending[1:] {
+			stateFrom, stateTo := authbaseWeek(state)
+			if stateFrom < to-1 {
+				break
 			}
-			if link := newLink(found.Tx, found.Height, found.BlockHash); link.Publication != nil {
-				state.Older = link.Publication
-			}
-			return false
-		}, ctx.Done())
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+			group = append(group, state)
+			to = min(to, stateTo)
+		}
+		pending = pending[len(group):]
+		if err := b.searchAuthbaseWeeks(ctx, group, from, to, save); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// authbaseWeek returns the blocks a token's authbase is looked for in, from the
+// one before its genesis down.
+func authbaseWeek(state *State) (int32, int32) {
+	return state.GenesisHeight - 1, max(state.GenesisHeight-authbaseReach, 1)
+}
+
+// searchAuthbaseWeeks looks for the authbases of tokens whose weeks overlap, from
+// the top of the highest down to the bottom of the lowest.
+func (b *SPVBackend) searchAuthbaseWeeks(ctx context.Context, group []*State, from, to int32,
+	save func(*State)) error {
+
+	byCategory := make(map[chainhash.Hash]*State, len(group))
+	var scripts [][]byte
+	for _, state := range group {
+		byCategory[state.Category] = state
+		scripts = append(scripts, state.AuthbaseScripts...)
+	}
+	left := len(group)
+	reached, err := b.source.SearchOutputs(scripts, from, to, func(found OutputFound) bool {
+		state, ok := byCategory[found.Tx.TxHash()]
+		if !ok || state.AuthbaseSearched {
+			return true
+		}
+		if weekFrom, weekTo := authbaseWeek(state); found.Height > weekFrom || found.Height < weekTo {
+			return true
+		}
+		if link := newLink(found.Tx, found.Height, found.BlockHash); link.Publication != nil {
+			state.Older = link.Publication
+		}
+		state.AuthbaseSearched = true
+		left--
+		return left > 0
+	}, ctx.Done())
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		log.Debugf("Unable to look for the authbases of %d tokens: %v", left, err)
+	}
+	for _, state := range group {
+		// A failed search that reached the bottom of a token's week still
+		// looked at all of it.
+		if _, weekTo := authbaseWeek(state); !state.AuthbaseSearched && err != nil && reached > weekTo {
 			tried := b.searchTried[state.Category]
 			b.searchTried[state.Category] = retry{time.Now(), tried.tries + 1}
-			log.Debugf("Unable to look for the authbase of token %v: %v", state.Category, err)
 			continue
 		}
 		delete(b.searchTried, state.Category)
