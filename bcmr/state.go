@@ -98,6 +98,13 @@ type State struct {
 	// RegistryFailed reports that there's no metadata to show because the
 	// publication's registry couldn't be read or had nothing to use.
 	RegistryFailed bool
+
+	// RetryHash is the hash of a registry that couldn't be read, RetryTries
+	// how many times in a row, and RetryLast when last, so that the wait
+	// before the next try outlasts a restart.
+	RetryHash  [32]byte
+	RetryTries uint
+	RetryLast  time.Time
 }
 
 // Head returns the head, or nil if none is known yet.

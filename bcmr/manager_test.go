@@ -1321,3 +1321,44 @@ func TestManagerOneReadPerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestManagerRetryOutlastsRestart ensures a registry that couldn't be read waits
+// out its retry after a restart too, and that a Refresh still reads it at once.
+func TestManagerRetryOutlastsRestart(t *testing.T) {
+	category := chainhash.Hash{1}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.backend.pubs[category].Hash = [32]byte{1} // Nothing will match it.
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 1 {
+		t.Fatalf("%d downloads", f.hits.Load())
+	}
+
+	m, err := NewManager(f.m.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(m); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 1 {
+		t.Fatalf("%d downloads after a restart", f.hits.Load())
+	}
+	if failed := m.tried[retryKey{category, [32]byte{1}}]; failed.tries != 1 {
+		t.Fatalf("%+v", failed)
+	}
+
+	m.Refresh(category)
+	if err := cycleAndRead(m); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 2 {
+		t.Fatalf("%d downloads after a refresh", f.hits.Load())
+	}
+	if m.tried[retryKey{category, [32]byte{1}}].tries != 1 {
+		t.Fatalf("a refresh didn't start the count again: %+v", m.tried)
+	}
+}

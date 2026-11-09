@@ -182,6 +182,9 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	for _, state := range states {
 		m.views[state.Category] = m.viewOf(state)
+		if state.RetryTries > 0 {
+			m.tried[retryKey{state.Category, state.RetryHash}] = retry{state.RetryLast, state.RetryTries}
+		}
 	}
 	return m, nil
 }
@@ -378,6 +381,7 @@ func (m *Manager) takeWanted() bool {
 			if pub := state.CurrentPublication(); pub != nil {
 				delete(m.tried, retryKey{category, pub.Hash})
 			}
+			state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
 		}
 	}
 	return asked || len(wanted) != 0
@@ -551,15 +555,18 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 	}
 	if err != nil {
 		failed := m.tried[key]
-		m.tried[key] = retry{time.Now(), failed.tries + 1}
+		failed = retry{time.Now(), failed.tries + 1}
+		m.tried[key] = failed
 		log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
-		if state.Metadata == nil && !state.RegistryFailed {
+		state.RetryHash, state.RetryTries, state.RetryLast = pub.Hash, failed.tries, failed.last
+		if state.Metadata == nil {
 			state.RegistryFailed = true
-			m.save(state)
 		}
+		m.save(state)
 		return
 	}
 	delete(m.tried, key)
+	state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
 	delete(m.reread, state.Category)
 	state.RegistryHash, state.Metadata = pub.Hash, metadata
 	state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
