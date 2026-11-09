@@ -687,6 +687,59 @@ func TestStoreKeepsTypesSize(t *testing.T) {
 	_ = a
 }
 
+// TestStoreTouchesTypesHourly ensures asking for a token's types marks its file
+// as asked for now, but no more often than touchEvery, as each mark is a write
+// to the device's storage.
+func TestStoreTouchesTypesHourly(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{0x62}
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, state.Category.String()+".gob")
+	modified := func() time.Time {
+		t.Helper()
+		info, err := os.Stat(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.ModTime()
+	}
+	then := time.Now().Add(-3 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(file, then, then); err != nil {
+		t.Fatal(err)
+	}
+	store.NFTTypes(state.Category)
+	if !modified().After(then) {
+		t.Fatal("the first ask didn't mark the file")
+	}
+	if err := os.Chtimes(file, then, then); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		store.NFTTypes(state.Category)
+	}
+	if !modified().Equal(then) {
+		t.Fatal("asks within the hour marked the file again")
+	}
+	store.touched[state.Category] = time.Now().Add(-touchEvery)
+	store.NFTTypes(state.Category)
+	if !modified().After(then) {
+		t.Fatal("an ask an hour later didn't mark the file")
+	}
+
+	// Asking for a token with no file keeps nothing of it.
+	store.NFTTypes(chainhash.Hash{0x62, 1})
+	if _, ok := store.touched[chainhash.Hash{0x62, 1}]; ok {
+		t.Fatal("a token with no file was kept as marked")
+	}
+}
+
 // TestStoreRemembersEveryState ensures a state that comes back unchanged isn't
 // written again, whether it has metadata or not.
 func TestStoreRemembersEveryState(t *testing.T) {

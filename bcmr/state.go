@@ -198,6 +198,12 @@ type Store struct {
 	typesSize  int64
 	typesSized bool
 
+	// touched is when each token's types file was last marked as asked
+	// for, which is done at most every touchEvery, as a write to the
+	// device's storage for each ask isn't worth it for what eviction needs
+	// to know.  typesMu guards it.
+	touched map[chainhash.Hash]time.Time
+
 	// last and lastTypes hold what was last written of each state and of its
 	// NFT types, so that what didn't change costs no write.  They belong to
 	// the Manager's goroutine.
@@ -217,6 +223,7 @@ func NewStore(db walletdb.DB, typesDir string, typesLimit int64) (*Store, error)
 		db:         db,
 		typesDir:   typesDir,
 		typesLimit: typesLimit,
+		touched:    make(map[chainhash.Hash]time.Time),
 		last:       make(map[chainhash.Hash][sha256.Size]byte),
 		lastTypes:  make(map[chainhash.Hash][sha256.Size]byte),
 	}
@@ -257,14 +264,24 @@ type recentTypes struct {
 // maxRecentTypes is how many tokens' NFT types the store keeps read.
 const maxRecentTypes = 4
 
+// touchEvery is how often a types file asked for is marked as asked for now.
+// Eviction keeps the files asked for last, against a limit of a gigabyte by
+// default, which an hour's precision serves as well.
+const touchEvery = time.Hour
+
 // NFTTypes returns a token's NFT types, which only its file holds, or nil if
 // there are none, or they can't be read, or were evicted: a file that can't be
-// read is removed.  The file is marked as asked for now, which keeps it longest.
+// read is removed.  The file is marked as asked for now, which keeps it longest,
+// at most every touchEvery.
 func (s *Store) NFTTypes(category chainhash.Hash) map[string]NFTType {
 	s.typesMu.Lock()
 	defer s.typesMu.Unlock()
-	now := time.Now()
-	_ = os.Chtimes(s.typesFile(category), now, now)
+	if now := time.Now(); now.Sub(s.touched[category]) >= touchEvery {
+		// A file that isn't there leaves nothing to keep.
+		if os.Chtimes(s.typesFile(category), now, now) == nil {
+			s.touched[category] = now
+		}
+	}
 	for i, recent := range s.recent {
 		if recent.category == category {
 			s.recent = slices.Insert(slices.Delete(s.recent, i, i+1), 0, recent)
@@ -324,6 +341,7 @@ func (s *Store) typesFileSize(category chainhash.Hash) int64 {
 // typesMu must be held.
 func (s *Store) removeTypes(category chainhash.Hash) error {
 	size := s.typesFileSize(category)
+	delete(s.touched, category)
 	err := os.Remove(s.typesFile(category))
 	if err == nil && s.typesSized {
 		s.typesSize -= size
@@ -382,6 +400,7 @@ func (s *Store) evictTypes(stored chainhash.Hash) {
 		if err := os.Remove(s.typesFile(file.category)); err != nil {
 			continue
 		}
+		delete(s.touched, file.category)
 		total -= file.size
 	}
 }
