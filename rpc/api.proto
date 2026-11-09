@@ -20,6 +20,7 @@ service WalletService {
 	// Queries
 	rpc Ping (PingRequest) returns (PingResponse);
 	rpc Network (NetworkRequest) returns (NetworkResponse);
+	rpc NetworkChanged (NetworkChangedRequest) returns (NetworkChangedResponse);
 	rpc AccountNumber (AccountNumberRequest) returns (AccountNumberResponse);
 	rpc Accounts (AccountsRequest) returns (AccountsResponse);
 	rpc Balance (BalanceRequest) returns (BalanceResponse);
@@ -141,6 +142,15 @@ message NetworkResponse {
 	int32 peer_best_height = 6;
 	// Whether the chain backend considers itself synced with the network.
 	bool chain_current = 7;
+}
+
+// NetworkChanged tells the wallet that the device moved to another network, as
+// from cellular to Wi-Fi, which can leave its peers' connections gone without
+// either side being told, so that the SPV chain backend drops them and
+// connects again at once.  A bchd RPC backend keeps its connection.
+message NetworkChangedRequest {
+}
+message NetworkChangedResponse {
 }
 
 message AccountNumberRequest {

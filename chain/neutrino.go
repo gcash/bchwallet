@@ -213,6 +213,13 @@ func (s *NeutrinoClient) PeerInfo() (count int, bestHeight int32) {
 	return len(peers), bestHeight
 }
 
+// DisconnectPeers drops the peers' connections, so that they're made again at
+// once, as after the device moved to another network, which can leave them gone
+// without either side being told.
+func (s *NeutrinoClient) DisconnectPeers() {
+	s.CS.DisconnectPeers()
+}
+
 // SendRawTransaction replicates the RPC client's SendRawTransaction command.
 func (s *NeutrinoClient) SendRawTransaction(tx *wire.MsgTx, allowHighFees bool) (
 	*chainhash.Hash, error) {

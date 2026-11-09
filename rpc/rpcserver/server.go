@@ -342,6 +342,25 @@ func (s *walletServer) Network(ctx context.Context, req *pb.NetworkRequest) (
 	return resp, nil
 }
 
+// peerDropper is a chain backend whose peers' connections can be made again.
+type peerDropper interface {
+	DisconnectPeers()
+}
+
+func (s *walletServer) NetworkChanged(ctx context.Context, req *pb.NetworkChangedRequest) (
+	*pb.NetworkChangedResponse, error) {
+
+	chainClient := s.wallet.Load().ChainClient()
+	if chainClient == nil {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"chain client not available yet")
+	}
+	if p, ok := chainClient.(peerDropper); ok {
+		p.DisconnectPeers()
+	}
+	return &pb.NetworkChangedResponse{}, nil
+}
+
 func (s *walletServer) AccountNumber(ctx context.Context, req *pb.AccountNumberRequest) (
 	*pb.AccountNumberResponse, error) {
 

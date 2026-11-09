@@ -107,3 +107,36 @@ func TestNetwork(t *testing.T) {
 		t.Errorf("SPV backend: got %v", resp)
 	}
 }
+
+// droppingSPVChain is an SPV backend that counts when it drops its peers.
+type droppingSPVChain struct {
+	fakeSPVChain
+	dropped int
+}
+
+func (c *droppingSPVChain) DisconnectPeers() { c.dropped++ }
+
+// TestNetworkChanged ensures a network change has the SPV backend drop its
+// peers, and leaves a bchd RPC backend as it is.
+func TestNetworkChanged(t *testing.T) {
+	ctx := context.Background()
+
+	s := newNetworkTestServer(t, nil)
+	if _, err := s.NetworkChanged(ctx, &pb.NetworkChangedRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("without a chain backend: got %v, want FailedPrecondition", err)
+	}
+
+	s = newNetworkTestServer(t, &fakeChain{height: 974403})
+	if _, err := s.NetworkChanged(ctx, &pb.NetworkChangedRequest{}); err != nil {
+		t.Errorf("RPC backend: %v", err)
+	}
+
+	spv := &droppingSPVChain{}
+	s = newNetworkTestServer(t, spv)
+	if _, err := s.NetworkChanged(ctx, &pb.NetworkChangedRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if spv.dropped != 1 {
+		t.Errorf("the SPV backend dropped its peers %d times", spv.dropped)
+	}
+}
