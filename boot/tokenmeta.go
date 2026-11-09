@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -77,16 +78,18 @@ func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn
 	if err != nil {
 		return nil, err
 	}
+	// It keeps to a context, which is what has a connect end in time.
+	contextDialer, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, errors.New("the proxy's dialer can't keep to a time")
+	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		if err := bcmr.RefuseLocal(address); err != nil {
 			return nil, err
 		}
 		ctx, cancel := context.WithTimeout(ctx, proxyConnectTimeout)
 		defer cancel()
-		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
-			return contextDialer.DialContext(ctx, network, address)
-		}
-		return dialer.Dial(network, address)
+		return contextDialer.DialContext(ctx, network, address)
 	}, nil
 }
 

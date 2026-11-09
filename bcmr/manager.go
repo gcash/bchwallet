@@ -639,9 +639,9 @@ func (m *Manager) takeReads(ctx context.Context) {
 	}
 }
 
-// finishRead keeps what a download found for the reads that waited for it,
-// and starts the reads that were left waiting for room.  A read whose token
-// published again meanwhile counts for nothing.
+// finishRead keeps what a download found for the reads that waited for it, and
+// starts the reads due since, as a Refresh's that waited for it.  A read whose
+// token published again meanwhile, or was forgotten, counts for nothing.
 func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
 	key := keyOf(read)
 	reads := m.flights[key]
@@ -747,8 +747,10 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 	if changed {
 		_, known := m.cfg.Known[state.Category]
 		switch {
-		case !known || metadata == nil:
+		case !known:
 			err, metadata = fmt.Errorf("%w, for a token that isn't Known", err), nil
+		case metadata == nil:
+			err = fmt.Errorf("%w, with nothing in it to use", err)
 
 		// What was read of the published file stays, when reading it
 		// again gets another.
