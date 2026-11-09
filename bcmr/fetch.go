@@ -205,8 +205,9 @@ func RefuseLocal(address string) error {
 	if err != nil {
 		return err
 	}
+	// A name ends in a dot as easily as not, which "10.0.0.1." does too.
 	name := strings.TrimSuffix(strings.ToLower(host), ".")
-	ip := net.ParseIP(host)
+	ip := net.ParseIP(name)
 	if name == "localhost" || strings.HasSuffix(name, ".localhost") || numericHost(name) ||
 		(ip != nil && !publicAddress(ip)) {
 
