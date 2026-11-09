@@ -117,12 +117,14 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if len(state.Links) != 0 || state.Status == StatusFailed {
+		if len(state.Links) != 0 {
 			continue
 		}
 		if last, ok := b.waiting[state.Category]; ok && time.Since(last) < retryInterval {
 			continue
 		}
+		// A token in the table starts from it, so one that failed and is in
+		// it now is in a newer table, which it starts from.
 		if b.hints != nil {
 			if hint, ok := b.hints.Lookup(state.Category); ok {
 				if err := b.startFromHint(ctx, state, &hint); err != nil {
@@ -131,6 +133,9 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 				}
 				continue
 			}
+		}
+		if state.Status == StatusFailed {
+			continue
 		}
 		search = append(search, state)
 	}

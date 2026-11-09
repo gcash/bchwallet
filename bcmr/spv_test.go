@@ -402,6 +402,32 @@ func TestSPVMissingGenesis(t *testing.T) {
 	}
 }
 
+// TestSPVFailedInNewerTable ensures a token that failed starts from a newer table
+// that has it.
+func TestSPVFailedInNewerTable(t *testing.T) {
+	c := newFakeChain(100)
+	category := chainhash.Hash{1}
+	genesis := withPublication(t, genesisOf(1, category), 7, "genesis.example")
+	c.put(20, genesis)
+	state := &State{Category: category}
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if state.Status != StatusFailed {
+		t.Fatalf("%+v", state)
+	}
+	searches := len(c.searches)
+	resolve(t, NewSPVBackend(c, hintsFor(t, 50)), state)
+	if state.Status != StatusFailed || len(c.searches) != searches {
+		t.Fatalf("searched again with the same table: %v, %+v", c.searches, state)
+	}
+	hints := hintsFor(t, 60, chainbcmr.Hint{Category: category, Head: genesis.TxHash(), HeadHeight: 20})
+	resolve(t, NewSPVBackend(c, hints), state)
+	if pub := state.CurrentPublication(); state.Status != StatusVerified || pub == nil ||
+		pub.URIs[0] != "genesis.example" {
+
+		t.Fatalf("%+v", state)
+	}
+}
+
 // TestSPVNotGenesis ensures a spend of the authbase that creates no such token
 // isn't taken for its genesis.
 func TestSPVNotGenesis(t *testing.T) {
