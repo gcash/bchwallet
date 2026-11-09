@@ -22,6 +22,11 @@ const (
 	saveInterval = 2000
 )
 
+// betweenInterval is how often a scan lets what was asked for meanwhile go on,
+// as a Refresh, which a phone's scan of saveInterval blocks would keep waiting
+// for minutes.  A variable for the tests.
+var betweenInterval = 2 * time.Second
+
 // spvSource is what the SPV backend reads.
 type spvSource interface {
 	GetBestBlock() (*chainhash.Hash, int32, error)
@@ -514,7 +519,7 @@ func (b *SPVBackend) Forget(category chainhash.Hash) {
 // Advance checks each state against the chain, then follows every head that can
 // still move up to the tip, in one pass.  A head the pass doesn't see spent is
 // proven unspent, and its state Verified.
-func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*State)) error {
+func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*State), between func()) error {
 	if err := b.checkFailed(ctx, states, save); err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -606,7 +611,12 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 				spend = later
 			}
 		}
+		lastBetween := time.Now()
 		progress := func(height int32) {
+			if between != nil && time.Since(lastBetween) >= betweenInterval {
+				lastBetween = time.Now()
+				between()
+			}
 			if height-lastSave < saveInterval {
 				return
 			}

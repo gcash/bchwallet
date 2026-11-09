@@ -449,14 +449,19 @@ func (m *Manager) cycle(ctx context.Context) (err error) {
 	m.saveAll(states)
 	m.startReads(ctx, states)
 
-	// A read that comes back during a long scan shows at its next save, and
-	// a token forgotten during it is dropped then.
-	save := func(state *State) {
-		m.save(state)
+	// A read that comes back during a long scan shows at its next save, or
+	// its next moment between, a token forgotten during it is dropped then,
+	// and a Refresh of one that has a publication starts its read.
+	between := func() {
 		m.takeReads(ctx)
 		m.takeForgotten()
+		m.startReads(ctx, m.takeRefreshes())
 	}
-	if err := m.cfg.Backend.Advance(ctx, states, save); err != nil {
+	save := func(state *State) {
+		m.save(state)
+		between()
+	}
+	if err := m.cfg.Backend.Advance(ctx, states, save, between); err != nil {
 		return err
 	}
 	m.startReads(ctx, states)
@@ -500,18 +505,48 @@ func (m *Manager) takeWanted() bool {
 			created = append(created, state)
 		}
 		if refresh {
-			m.reread[category] = struct{}{}
-			m.forgetWaiting(category)
-			state.RegistryFailed = false
-			if state.Status == StatusFailed || state.Status == StatusUnavailable {
-				state.Status = StatusSearching
-			}
-			delete(m.tried, category)
-			state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
+			m.refreshing(state)
 		}
 	}
 	m.saveAll(created)
 	return asked || len(wanted) != 0
+}
+
+// refreshing has a state's registry read again at once, as a Refresh asks.
+func (m *Manager) refreshing(state *State) {
+	m.reread[state.Category] = struct{}{}
+	m.forgetWaiting(state.Category)
+	state.RegistryFailed = false
+	if state.Status == StatusFailed || state.Status == StatusUnavailable {
+		state.Status = StatusSearching
+	}
+	delete(m.tried, state.Category)
+	state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
+}
+
+// takeRefreshes takes the Refreshes asked for meanwhile of the tokens that have
+// a publication, whose reads need nothing of a scan, and returns their states,
+// which have their reads due.  The others stay for the next cycle, which
+// prepares them first.
+func (m *Manager) takeRefreshes() []*State {
+	m.mu.Lock()
+	var refreshed []chainhash.Hash
+	for category, refresh := range m.wanted {
+		state, ok := m.states[category]
+		if refresh && ok && state.CurrentPublication() != nil {
+			refreshed = append(refreshed, category)
+			delete(m.wanted, category)
+		}
+	}
+	m.mu.Unlock()
+	states := make([]*State, 0, len(refreshed))
+	for _, category := range refreshed {
+		state := m.states[category]
+		m.refreshing(state)
+		states = append(states, state)
+	}
+	m.saveAll(states)
+	return states
 }
 
 // takeEvicted returns the states whose NFT types the app asked for and found

@@ -273,7 +273,7 @@ func resolve(t *testing.T, b *SPVBackend, states ...*State) {
 	if err := b.Prepare(context.Background(), states); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Advance(context.Background(), states, noSave); err != nil {
+	if err := b.Advance(context.Background(), states, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -467,6 +467,31 @@ func TestSPVBurnedHint(t *testing.T) {
 	}
 }
 
+// TestSPVScanHasMomentsBetween ensures a scan calls between as it goes, so that
+// what's asked for meanwhile needn't wait for its end.
+func TestSPVScanHasMomentsBetween(t *testing.T) {
+	saved := betweenInterval
+	betweenInterval = 0
+	defer func() { betweenInterval = saved }()
+
+	c := newFakeChain(100)
+	head := spendOf(1, chainhash.Hash{2})
+	c.put(10, head)
+	hints := hintsFor(t, 50, chainbcmr.Hint{Category: chainhash.Hash{1}, Head: head.TxHash(), HeadHeight: 10})
+	state := &State{Category: chainhash.Hash{1}}
+	b := NewSPVBackend(c, hints)
+	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+		t.Fatal(err)
+	}
+	moments := 0
+	if err := b.Advance(context.Background(), []*State{state}, noSave, func() { moments++ }); err != nil {
+		t.Fatal(err)
+	}
+	if moments == 0 {
+		t.Fatal("the scan had no moment between")
+	}
+}
+
 // TestSPVBurnAboveHint ensures a burn found by a scan ends the chain.
 func TestSPVBurnAboveHint(t *testing.T) {
 	c := newFakeChain(100)
@@ -482,7 +507,7 @@ func TestSPVBurnAboveHint(t *testing.T) {
 		t.Fatalf("state %+v", state)
 	}
 	c.searches = nil
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.searches) != 0 {
@@ -677,7 +702,7 @@ func TestSPVNewBlocks(t *testing.T) {
 	c.addBlock(101)
 	c.addBlock(102, next)
 	c.searches = nil
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(c.searches, [][2]int32{{101, 102}}) || state.Head().Txid != next.TxHash() {
@@ -686,7 +711,7 @@ func TestSPVNewBlocks(t *testing.T) {
 
 	// Nothing new costs nothing.
 	c.searches = nil
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.searches) != 0 {
@@ -715,7 +740,7 @@ func TestSPVReorg(t *testing.T) {
 	replay := spendOf(2, head.TxHash())
 	c.put(99, replay)
 	c.searches = nil
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if state.Head().Height != 99 || len(state.Links) != 2 || state.Status != StatusVerified {
@@ -743,7 +768,7 @@ func TestSPVReorgBurn(t *testing.T) {
 		t.Fatal("not burned")
 	}
 	c.replaceFrom(95, 1000)
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if state.Burned || state.Head().Txid != head.TxHash() {
@@ -763,7 +788,7 @@ func TestSPVResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.failAt = 70
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err == nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err == nil {
 		t.Fatal("no error")
 	}
 	if state.ScannedTo != 69 || state.Status == StatusVerified {
@@ -771,7 +796,7 @@ func TestSPVResume(t *testing.T) {
 	}
 	c.failAt = 0
 	c.searches = nil
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(c.searches, [][2]int32{{70, 100}}) || state.Status != StatusVerified {
@@ -876,7 +901,7 @@ func TestSPVReorgAboveScanned(t *testing.T) {
 			t.Fatalf("burned %v", state.Burned)
 		}
 		c.replaceFrom(80, 1000)
-		if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+		if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 			t.Fatal(err)
 		}
 		if len(state.Links) != 0 || state.Status == StatusVerified || state.Burned {
@@ -896,7 +921,7 @@ func TestSPVChainErrorKeepsLinks(t *testing.T) {
 	b := NewSPVBackend(c, hints)
 	resolve(t, b, state)
 	b.source = failingHashes{c}
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err == nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err == nil {
 		t.Fatal("no error")
 	}
 	if len(state.Links) != 1 || state.Status != StatusVerified {
@@ -947,7 +972,7 @@ func TestSPVReorgDuringScan(t *testing.T) {
 	if err := b.Prepare(context.Background(), []*State{state}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	scanned, hash := state.ScannedTo, state.ScannedHash
@@ -958,7 +983,7 @@ func TestSPVReorgDuringScan(t *testing.T) {
 		c.duringSearch = nil
 		c.replaceFrom(height, 2000)
 	}
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if state.ScannedTo != scanned || state.ScannedHash != hash {
@@ -1578,7 +1603,7 @@ func TestSPVAuthbaseSearchBurned(t *testing.T) {
 	}
 	c.failAt = 0
 	b.Forget(category) // As asking for it again does, rather than waiting.
-	if err := b.Advance(context.Background(), []*State{state}, noSave); err != nil {
+	if err := b.Advance(context.Background(), []*State{state}, noSave, nil); err != nil {
 		t.Fatal(err)
 	}
 	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {

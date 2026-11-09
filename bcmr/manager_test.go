@@ -28,6 +28,9 @@ type fakeBackend struct {
 	forgotten []chainhash.Hash
 	prepare   func(states []*State)
 	advance   func(states []*State, save func(*State)) error
+
+	// advanceBetween, if set, is advance with the scan's between.
+	advanceBetween func(states []*State, save func(*State), between func()) error
 }
 
 func (b *fakeBackend) Forget(category chainhash.Hash) {
@@ -52,7 +55,10 @@ func (b *fakeBackend) Prepare(_ context.Context, states []*State) error {
 	return nil
 }
 
-func (b *fakeBackend) Advance(_ context.Context, states []*State, save func(*State)) error {
+func (b *fakeBackend) Advance(_ context.Context, states []*State, save func(*State), between func()) error {
+	if b.advanceBetween != nil {
+		return b.advanceBetween(states, save, between)
+	}
 	if b.advance != nil {
 		return b.advance(states, save)
 	}
@@ -1978,6 +1984,37 @@ func TestManagerEvictedTypesBack(t *testing.T) {
 		return recent.category == category
 	}) {
 		t.Fatal("telling whether the types came back read them")
+	}
+}
+
+// TestManagerRefreshDuringScan ensures a Refresh of a token that has a
+// publication, asked for during a long scan, has its read start at the scan's
+// next moment between, rather than once the scan ends.
+func TestManagerRefreshDuringScan(t *testing.T) {
+	category := chainhash.Hash{0x5c}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	f.backend.advanceBetween = func(_ []*State, _ func(*State), between func()) error {
+		if err := f.m.Refresh(category); err != nil {
+			return err
+		}
+		between()
+		_, started = f.m.reading[category]
+		return nil
+	}
+	f.m.lastFull = time.Time{}
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if !started {
+		t.Fatal("the Refresh waited for the scan")
+	}
+	if f.hits.Load() != 2 {
+		t.Fatalf("%d downloads", f.hits.Load())
 	}
 }
 

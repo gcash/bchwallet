@@ -17,8 +17,9 @@ type Backend interface {
 	Prepare(ctx context.Context, states []*State) error
 
 	// Advance follows the identities to the tip, and calls save whenever a
-	// state changed.
-	Advance(ctx context.Context, states []*State, save func(*State)) error
+	// state changed, and between, if it isn't nil, every few seconds of a
+	// long scan, so that what's asked for meanwhile needn't wait for it.
+	Advance(ctx context.Context, states []*State, save func(*State), between func()) error
 }
 
 // bcmrNode is what the full node backend asks of the node.
@@ -113,7 +114,7 @@ func (b *FullNodeBackend) wait(category chainhash.Hash, err error) {
 }
 
 // Advance has nothing to do, as Prepare reads the node's whole answer.
-func (b *FullNodeBackend) Advance(context.Context, []*State, func(*State)) error {
+func (b *FullNodeBackend) Advance(context.Context, []*State, func(*State), func()) error {
 	return nil
 }
 
