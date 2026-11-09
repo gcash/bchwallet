@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -722,4 +723,14 @@ func TestStorePutAll(t *testing.T) {
 	if _, ok := all[typed.Category]; ok || all[states[0].Category].ScannedTo != 10 {
 		t.Fatalf("%+v", all)
 	}
+}
+
+// forgetRecent drops a token's types from those read, as a test that removes
+// their file does.
+func (s *Store) forgetRecent(category chainhash.Hash) {
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
+	s.recent = slices.DeleteFunc(s.recent, func(recent recentTypes) bool {
+		return recent.category == category
+	})
 }

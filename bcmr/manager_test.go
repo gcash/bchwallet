@@ -1913,6 +1913,18 @@ func TestManagerReadsEvictedTypes(t *testing.T) {
 	if g.m.NFTTypes(plain) != nil || len(g.m.evicted) != 0 {
 		t.Fatalf("types of a token without any: %v", g.m.evicted)
 	}
+
+	// A token that isn't followed isn't read again.
+	f.m.mu.Lock()
+	delete(f.m.asked, category)
+	f.m.mu.Unlock()
+	if err := os.Remove(f.m.cfg.Store.typesFile(category)); err != nil {
+		t.Fatal(err)
+	}
+	f.m.cfg.Store.forgetRecent(category)
+	if f.m.NFTTypes(category) != nil || len(f.m.evicted) != 0 {
+		t.Fatalf("a token not followed is to be read again: %v", f.m.evicted)
+	}
 }
 
 // TestManagerSavesTogether ensures a cycle writes the tokens it takes on in one

@@ -411,6 +411,9 @@ func (m *Manager) run(ctx context.Context) {
 // in as their downloads end, so that a slow host holds up no chain.
 func (m *Manager) cycle(ctx context.Context) (err error) {
 	m.takeForgotten()
+	// The reads need nothing of the chain, so they start whatever the cycle
+	// has to do.
+	m.startReads(ctx, m.takeEvicted())
 	if m.cfg.Ready != nil && !m.cfg.Ready() {
 		return nil
 	}
@@ -485,23 +488,11 @@ func (m *Manager) askedStates() []*State {
 // It returns whether there was anything to take.
 func (m *Manager) takeWanted() bool {
 	m.mu.Lock()
-	wanted, evicted := m.wanted, m.evicted
-	m.wanted, m.evicted = make(map[chainhash.Hash]bool), make(map[chainhash.Hash]struct{})
+	wanted := m.wanted
+	m.wanted = make(map[chainhash.Hash]bool)
 	asked := len(m.asked) != m.lastAsked
 	m.lastAsked = len(m.asked)
 	m.mu.Unlock()
-
-	// Types that are still gone are read again, as the user's, as the user
-	// is looking at them.
-	for category := range evicted {
-		state, ok := m.states[category]
-		if ok && state.Metadata != nil && state.Metadata.NFTTypeCount != 0 &&
-			m.cfg.Store.NFTTypes(category) == nil {
-
-			m.reread[category] = struct{}{}
-			asked = true
-		}
-	}
 	var created []*State
 	for category, refresh := range wanted {
 		state, ok := m.states[category]
@@ -528,6 +519,28 @@ func (m *Manager) takeWanted() bool {
 	}
 	m.saveAll(created)
 	return asked || len(wanted) != 0
+}
+
+// takeEvicted returns the states whose NFT types the app asked for and found
+// gone, as evicted, with their registries due to be read again.  Unlike a
+// Refresh, a read that failed waits as it would.
+func (m *Manager) takeEvicted() []*State {
+	m.mu.Lock()
+	evicted := m.evicted
+	m.evicted = make(map[chainhash.Hash]struct{})
+	m.mu.Unlock()
+	var states []*State
+	for category := range evicted {
+		state, ok := m.states[category]
+		if !ok || state.Metadata == nil || state.Metadata.NFTTypeCount == 0 ||
+			m.cfg.Store.NFTTypes(category) != nil {
+
+			continue
+		}
+		state.RegistryParser = 0
+		states = append(states, state)
+	}
+	return states
 }
 
 // flightKey is a download: a registry's hash and the URIs it's read from.
@@ -793,8 +806,12 @@ func (m *Manager) NFTTypes(category chainhash.Hash) map[string]NFTType {
 	}
 	types := m.cfg.Store.NFTTypes(category)
 	if types == nil && tracked && info.Metadata != nil && info.Metadata.NFTTypeCount != 0 {
+		// Only a token that's followed is read again, as asking about one
+		// that isn't, as a peek does, shows its host nothing.
 		m.mu.Lock()
-		m.evicted[category] = struct{}{}
+		if _, asked := m.asked[category]; asked {
+			m.evicted[category] = struct{}{}
+		}
 		m.mu.Unlock()
 		m.signal()
 	}
