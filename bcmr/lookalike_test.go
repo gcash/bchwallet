@@ -63,7 +63,8 @@ func TestNameCopies(t *testing.T) {
 // symbols does, and others don't.
 func TestReadsAsAmount(t *testing.T) {
 	symbols := []string{symbolSkeleton("BCH"), symbolSkeleton("MUSD")}
-	for _, name := range []string{"10 BCH", "+500 MUSD", "-1,000.5 bch", "\u2212 2 BCH", "3 B-CH", "4 BCH-X", "7 MU5D", "9MUSD"} {
+	for _, name := range []string{"10 BCH", "+500 MUSD", "-1,000.5 bch", "\u2212 2 BCH", "3 B-CH", "4 BCH-X", "7 MU5D", "9MUSD",
+		"+10 ВСН", "＋１０ ＢＣＨ", "+10 B\u200bCH", "\u200b+10 BCH", "١٠ BCH"} {
 		if !readsAsAmount(name, symbols) {
 			t.Errorf("%q doesn't read as an amount", name)
 		}

@@ -152,13 +152,21 @@ var reservedSymbolSkeletons = func() []string {
 }()
 
 // amountName matches an NFT's name that reads as an amount of a token: a sign,
-// a number, and a word that could be a symbol.
-var amountName = regexp.MustCompile(`^[+\-\x{2212}]?\s*[0-9][0-9.,'\s]*\s*([A-Za-z0-9-]+)$`)
+// a number, in any script's digits, and a word that could be a symbol, in any
+// script's letters, which its skeleton reads.
+var amountName = regexp.MustCompile(`^[+\-\x{2212}]?\s*\p{Nd}[\p{Nd}.,'\s]*\s*([\p{L}\p{N}-]+)$`)
 
 // readsAsAmount returns whether an NFT's name reads as an amount of a token with
 // one of the symbols, by their skeletons, as "+10 BCH" would beside a row of a
-// transaction.
+// transaction.  Compatibility forms, as fullwidth digits and signs, read as
+// what they look like, and what doesn't show is left out first.
 func readsAsAmount(name string, symbols []string) bool {
+	name = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, norm.NFKC.String(name))
 	match := amountName.FindStringSubmatch(strings.TrimSpace(name))
 	if match == nil {
 		return false
