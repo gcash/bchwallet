@@ -58,3 +58,19 @@ func TestNameCopies(t *testing.T) {
 		}
 	}
 }
+
+// TestReadsAsAmount ensures an NFT's name that reads as an amount of one of the
+// symbols does, and others don't.
+func TestReadsAsAmount(t *testing.T) {
+	symbols := []string{symbolSkeleton("BCH"), symbolSkeleton("MUSD")}
+	for _, name := range []string{"10 BCH", "+500 MUSD", "-1,000.5 bch", "\u2212 2 BCH", "3 B-CH", "4 BCH-X", "7 MU5D", "9MUSD"} {
+		if !readsAsAmount(name, symbols) {
+			t.Errorf("%q doesn't read as an amount", name)
+		}
+	}
+	for _, name := range []string{"Ninja #10", "BCH Ninja 10", "10 Ninjas", "Reaper 4322", "10 BCH Ninja"} {
+		if readsAsAmount(name, symbols) {
+			t.Errorf("%q reads as an amount", name)
+		}
+	}
+}

@@ -1570,3 +1570,33 @@ func TestManagerReservedName(t *testing.T) {
 		t.Fatalf("a Known token: %+v", info)
 	}
 }
+
+// TestManagerHidesAmountNames ensures a collection's NFT named as an amount of BCH
+// shows by its commitment, while a Known token's names stay as they are.
+func TestManagerHidesAmountNames(t *testing.T) {
+	category := chainhash.Hash{1}
+	registry := []byte(fmt.Sprintf(`{"identities":{"%[1]s":{"2024-01-01T00:00:00.000Z":
+		{"name":"Gifts","token":{"category":"%[1]s","symbol":"GIFT","nfts":{"parse":{"bytecode":"",
+		"types":{"01":{"name":"10 BCH"},"02":{"name":"Gift 2"},"03":{"name":"5 ROACH"}}}}}}}}}`, category))
+	for _, known := range []bool{false, true} {
+		list := map[chainhash.Hash]*Metadata{{2}: {Name: "Broach", Symbol: "ROACH"}}
+		if known {
+			list[category] = &Metadata{Name: "Gifts", Symbol: "GIFT"}
+		}
+		f := newManagerFixture(t, category, registry, list, always)
+		f.m.Tokens([]chainhash.Hash{category})
+		if err := cycleAndRead(f.m); err != nil {
+			t.Fatal(err)
+		}
+		types := f.m.states[category].Metadata.NFTTypes
+		if want := map[bool]string{false: "", true: "10 BCH"}[known]; types["01"].Name != want {
+			t.Errorf("known %v: the amount's name is %q", known, types["01"].Name)
+		}
+		if want := map[bool]string{false: "", true: "5 ROACH"}[known]; types["03"].Name != want {
+			t.Errorf("known %v: a Known token's amount's name is %q", known, types["03"].Name)
+		}
+		if types["02"].Name != "Gift 2" {
+			t.Errorf("known %v: another name is %q", known, types["02"].Name)
+		}
+	}
+}

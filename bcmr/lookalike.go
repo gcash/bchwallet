@@ -1,6 +1,8 @@
 package bcmr
 
 import (
+	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -131,6 +133,22 @@ var reservedSymbolSkeletons = func() []string {
 	}
 	return skeletons
 }()
+
+// amountName matches an NFT's name that reads as an amount of a token: a sign,
+// a number, and a word that could be a symbol.
+var amountName = regexp.MustCompile(`^[+\-\x{2212}]?\s*[0-9][0-9.,'\s]*\s*([A-Za-z0-9-]+)$`)
+
+// readsAsAmount returns whether an NFT's name reads as an amount of a token with
+// one of the symbols, by their skeletons, as "+10 BCH" would beside a row of a
+// transaction.
+func readsAsAmount(name string, symbols []string) bool {
+	match := amountName.FindStringSubmatch(strings.TrimSpace(name))
+	if match == nil {
+		return false
+	}
+	symbol := symbolSkeleton(match[1])
+	return slices.Contains(symbols, symbol) || slices.Contains(symbols, symbolSkeleton(baseSymbol(match[1])))
+}
 
 // withinOneEdit returns whether a can be made b by adding, removing or changing
 // one character.

@@ -604,6 +604,9 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 			log.Debugf("Registry of token %v: %v", state.Category, parseErr)
 			metadata = nil
 		}
+		if _, known := m.cfg.Known[state.Category]; metadata != nil && !known {
+			m.hideAmountNames(metadata)
+		}
 	}
 
 	// A file that can't be used on a second reading loses nothing that
@@ -717,6 +720,18 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 		info.KnownSymbol = !info.ReservedSymbol && symbolCopies(info.Metadata.Symbol, m.known.symbols)
 	}
 	return info
+}
+
+// hideAmountNames drops the names of a collection's NFTs that read as amounts
+// of BCH or of a Known or reserved token, which then show by their commitments.
+func (m *Manager) hideAmountNames(metadata *Metadata) {
+	symbols := slices.Concat(reservedSymbolSkeletons, m.known.symbols)
+	for commitment, nft := range metadata.NFTTypes {
+		if readsAsAmount(nft.Name, symbols) {
+			nft.Name = ""
+			metadata.NFTTypes[commitment] = nft
+		}
+	}
 }
 
 // copiesKnownName returns whether a name, by its skeleton, copies a Known
