@@ -80,6 +80,31 @@ func (b *SPVBackend) floor() int32 {
 	return b.hints.Height
 }
 
+// RolledBack sets back what the state's scans covered above the height, as
+// neutrino rolled back the filter headers to it, having found them wrong above
+// it, so that the filters of those blocks, which could have hidden a spend or a
+// genesis, are read again.  The hints table vouches for what's below its height.
+// It returns whether the state changed.
+func (b *SPVBackend) RolledBack(state *State, height int32) (bool, error) {
+	height = max(height, b.floor())
+	changed := false
+	if state.ScannedTo > height {
+		hash, err := b.source.GetBlockHash(int64(height))
+		if err != nil {
+			return false, err
+		}
+		state.ScannedTo, state.ScannedHash = height, *hash
+		changed = true
+	}
+
+	// An authbase search that found nothing reached into those blocks.
+	if state.AuthbaseSearched && len(state.AuthbaseScripts) > 0 && state.GenesisHeight-1 > height {
+		state.AuthbaseSearched = false
+		changed = true
+	}
+	return changed, nil
+}
+
 // Prepare gives each state that has no links its starting point: the table's
 // entry, or the genesis from a search down to just above the table's height.  A
 // token that can't be read waits and doesn't hold up the others.

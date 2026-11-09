@@ -31,6 +31,10 @@ type fakeChain struct {
 	failAt         int32
 
 	failBlock bool
+
+	// hidden are blocks whose spends a search misses, as wrong filters
+	// would have it.
+	hidden map[int32]bool
 }
 
 func newFakeChain(height int) *fakeChain {
@@ -160,6 +164,9 @@ func (c *fakeChain) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 func (c *fakeChain) searchBlock(h int32, watched map[wire.OutPoint]bool,
 	found func(SpendFound) []wire.OutPoint, follow bool) {
 
+	if c.hidden[h] {
+		return
+	}
 	block := c.blocks[h-1]
 	spends := make(map[wire.OutPoint]*wire.MsgTx)
 	reported := make(map[wire.OutPoint]bool)
@@ -1325,5 +1332,64 @@ func TestSPVAuthbaseSearchBurned(t *testing.T) {
 	}
 	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "authbase.example" {
 		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVRolledBack ensures a rollback of the filter headers sets back what a
+// state's scans covered above its height, but not below the table's, and has an
+// authbase search that reached above it done again.
+func TestSPVRolledBack(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	state := &State{ScannedTo: 100, AuthbaseScripts: [][]byte{{1}}, GenesisHeight: 90,
+		AuthbaseSearched: true}
+	changed, err := b.RolledBack(state, 80)
+	if err != nil || !changed {
+		t.Fatalf("changed %v, %v", changed, err)
+	}
+	if state.ScannedTo != 80 || state.ScannedHash != c.blocks[79].BlockHash() || state.AuthbaseSearched {
+		t.Fatalf("%+v", state)
+	}
+	if changed, _ := b.RolledBack(state, 85); changed {
+		t.Fatal("a rollback above the scan changed it")
+	}
+
+	// The table vouches for what's below its height, and a search that
+	// ended below the rollback stands.
+	state = &State{ScannedTo: 100, AuthbaseScripts: [][]byte{{1}}, GenesisHeight: 30,
+		AuthbaseSearched: true}
+	if changed, err := b.RolledBack(state, 20); err != nil || !changed {
+		t.Fatalf("changed %v, %v", changed, err)
+	}
+	if state.ScannedTo != 50 || !state.AuthbaseSearched {
+		t.Fatalf("%+v", state)
+	}
+}
+
+// TestSPVRolledBackFindsHiddenSpend ensures a spend that wrong filters hid is
+// found once the filter headers are rolled back below it.
+func TestSPVRolledBackFindsHiddenSpend(t *testing.T) {
+	c := newFakeChain(100)
+	category := chainhash.Hash{1}
+	head := spendOf(1, chainhash.Hash{2})
+	next := withPublication(t, spendOf(2, head.TxHash()), 8, "next.example")
+	c.put(10, head)
+	c.put(70, next)
+	c.hidden = map[int32]bool{70: true}
+	hints := hintsFor(t, 50, chainbcmr.Hint{Category: category, Head: head.TxHash(), HeadHeight: 10})
+	b := NewSPVBackend(c, hints)
+	state := &State{Category: category}
+	resolve(t, b, state)
+	if state.Head().Txid != head.TxHash() || state.ScannedTo != 100 {
+		t.Fatalf("head %v, scanned to %d", state.Head().Txid, state.ScannedTo)
+	}
+
+	c.hidden = nil
+	if _, err := b.RolledBack(state, 60); err != nil {
+		t.Fatal(err)
+	}
+	resolve(t, b, state)
+	if state.Head().Txid != next.TxHash() {
+		t.Fatalf("the hidden spend wasn't found: head %v", state.Head().Txid)
 	}
 }

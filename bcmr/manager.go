@@ -87,6 +87,12 @@ type Config struct {
 	// Tip returns the hash of the tip, so that a cycle with no new block and
 	// nothing new to do costs nothing.
 	Tip func() (*chainhash.Hash, error)
+
+	// FilterRollbacks gives the height the filter headers were rolled back
+	// to each time they were found wrong above it, for a backend that reads
+	// filters to scan those blocks again, and StopRollbacks ends that.
+	FilterRollbacks <-chan uint32
+	StopRollbacks   func()
 }
 
 // retryKey is a token's registry, as tokens can publish the same one and fail on
@@ -207,6 +213,9 @@ func (m *Manager) Stop() {
 		m.cancel()
 		<-m.done
 	}
+	if m.cfg.StopRollbacks != nil {
+		m.cfg.StopRollbacks()
+	}
 }
 
 // Tokens returns what's known of the categories, and starts on those that load
@@ -290,6 +299,8 @@ func (m *Manager) run(ctx context.Context) {
 		case read := <-m.results:
 			m.finishRead(ctx, read)
 			continue
+		case height := <-m.cfg.FilterRollbacks:
+			m.rolledBack(int32(height))
 		case <-m.wake:
 		case <-ticker.C:
 		}
@@ -453,6 +464,29 @@ func (m *Manager) startReads(ctx context.Context, states []*State) {
 			}
 		}()
 	}
+}
+
+// rolledBack has the backend set back each state's scans above the height the
+// filter headers were rolled back to, and the next cycle scan them again.
+func (m *Manager) rolledBack(height int32) {
+	backend, ok := m.cfg.Backend.(interface {
+		RolledBack(*State, int32) (bool, error)
+	})
+	if !ok {
+		return
+	}
+	log.Infof("Scanning the tokens' blocks above %d again, as their filters were wrong", height)
+	for _, state := range m.states {
+		changed, err := backend.RolledBack(state, height)
+		if err != nil {
+			log.Warnf("Unable to scan token %v again above %d: %v", state.Category, height, err)
+			continue
+		}
+		if changed {
+			m.save(state)
+		}
+	}
+	m.lastFull = time.Time{}
 }
 
 // takeReads keeps the registry reads that came back, without waiting for the

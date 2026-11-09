@@ -1480,3 +1480,59 @@ func TestManagerFailedRefreshEnds(t *testing.T) {
 		t.Fatal("the failed refresh still counts")
 	}
 }
+
+// rollbackBackend is a fakeBackend that tells of rollbacks.
+type rollbackBackend struct {
+	*fakeBackend
+	rolledBack chan int32
+}
+
+func (b *rollbackBackend) RolledBack(state *State, height int32) (bool, error) {
+	state.ScannedTo = height
+	b.rolledBack <- height
+	return true, nil
+}
+
+// TestManagerFilterRollback ensures the Manager has the backend set back every
+// state at a rollback of the filter headers, and saves them, those the app hasn't
+// asked about since the start too, and goes on to scan them again.
+func TestManagerFilterRollback(t *testing.T) {
+	category := chainhash.Hash{1}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+
+	// After a restart, the token is stored but not asked about yet.
+	cfg := f.m.cfg
+	backend := &rollbackBackend{f.backend, make(chan int32, 1)}
+	rollbacks := make(chan uint32, 1)
+	stopped := make(chan struct{})
+	cfg.Backend = backend
+	cfg.FilterRollbacks = rollbacks
+	cfg.StopRollbacks = func() { close(stopped) }
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Start()
+	rollbacks <- 77
+	select {
+	case height := <-backend.rolledBack:
+		if height != 77 {
+			t.Fatalf("rolled back to %d", height)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("the state wasn't set back")
+	}
+	m.Stop()
+	<-stopped
+	stored, err := cfg.Store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored[category].ScannedTo != 77 {
+		t.Fatalf("saved scanned to %d", stored[category].ScannedTo)
+	}
+}

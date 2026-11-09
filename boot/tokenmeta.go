@@ -148,6 +148,9 @@ func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager
 	switch c := client.(type) {
 	case *chain.NeutrinoClient:
 		config.Backend = bcmr.NewSPVBackend(spvSource{c}, hints)
+		config.FilterRollbacks, config.StopRollbacks = (&neutrino.RescanChainSource{
+			ChainService: c.CS,
+		}).SubscribeFilterHeaderRollbacks()
 	case *chain.RPCClient:
 		config.Backend = bcmr.NewFullNodeBackend(c)
 	default:
