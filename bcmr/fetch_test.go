@@ -1558,3 +1558,38 @@ func TestFetchWaiterSeesGatewayLeave(t *testing.T) {
 		close(release)
 	}
 }
+
+// TestFetchPassesOverOutLocations ensures a location whose hosts are all out of
+// rotation is passed over for the next, as an icon at a gateway that's out is
+// read at another, and a registry whose gateways are all out from its own host,
+// rather than end the round or wait there.
+func TestFetchPassesOverOutLocations(t *testing.T) {
+	icon := []byte("icon")
+	registry := []byte(`{"r":1}`)
+	serve := func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "icon.png") {
+			_, _ = w.Write(icon)
+			return
+		}
+		_, _ = w.Write(registry)
+	}
+	paused, f := testServer(t, serve)
+	open := httptest.NewTLSServer(http.HandlerFunc(serve))
+	t.Cleanup(open.Close)
+	own := httptest.NewTLSServer(http.HandlerFunc(serve))
+	t.Cleanup(own.Close)
+	f.Gateways = []string{paused.URL, open.URL}
+	f.pause(hostOf(paused.URL), time.Hour)
+
+	data, err := f.FetchIcon(UserAction(context.Background()), paused.URL+"/ipfs/bafy1/icon.png")
+	if err != nil || string(data) != "icon" {
+		t.Fatalf("icon: %q, %v", data, err)
+	}
+
+	f.pause(hostOf(open.URL), time.Hour)
+	data, err = f.Fetch(context.Background(), sha256.Sum256(registry),
+		[]string{"ipfs://bafy2", own.URL + "/registry.json"})
+	if err != nil || string(data) != string(registry) {
+		t.Fatalf("registry: %q, %v", data, err)
+	}
+}

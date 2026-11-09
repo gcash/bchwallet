@@ -56,8 +56,24 @@ func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
 }
 
 // fetchIconRound is one round of fetchIcon, and returns whether another may do
-// better.
+// better.  It passes over a location whose hosts are all out of rotation as
+// fetchRound does.
 func (f *Fetcher) fetchIconRound(ctx context.Context, uri string) ([]byte, bool, error) {
+	for {
+		data, again, out, err := f.fetchIconRoundOnce(ctx, uri)
+		if out == nil {
+			return data, again, err
+		}
+		if err := f.waitBack(ctx, f.icons, hostsOf(out)); err != nil {
+			return nil, false, err
+		}
+	}
+}
+
+// fetchIconRoundOnce is a pass of fetchIconRound over the locations in rotation,
+// and returns the locations out of it if they were all there was.
+func (f *Fetcher) fetchIconRoundOnce(ctx context.Context, uri string) ([]byte, bool, []string, error) {
+	var out []string
 	var last error
 	var again bool
 	tried := make(map[string]bool)
@@ -65,10 +81,14 @@ func (f *Fetcher) fetchIconRound(ctx context.Context, uri string) ([]byte, bool,
 		digest, checked := ipfsRawDigest(candidate)
 		for _, group := range f.locationGroups(candidate) {
 			left := untried(group, tried)
+			if skipped := f.outOfRotation(left); skipped != nil {
+				out = append(out, skipped...)
+				continue
+			}
 			for len(left) > 0 {
 				data, _, location, err := f.downloadAny(ctx, f.icons, left, maxIconSize)
 				if location == "" {
-					return nil, false, err
+					return nil, false, nil, err
 				}
 				tried[location] = true
 				left = untried(left, tried)
@@ -79,20 +99,23 @@ func (f *Fetcher) fetchIconRound(ctx context.Context, uri string) ([]byte, bool,
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, false, ctx.Err()
+						return nil, false, nil, ctx.Err()
 					}
 					last = err
 					again = again || mayPass(err, wrongFile)
 					continue
 				}
-				return data, false, nil
+				return data, false, nil, nil
 			}
 		}
 	}
-	if last != nil {
-		return nil, again, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
+	if len(tried) == 0 && out != nil {
+		return nil, false, out, ErrIconUnavailable
 	}
-	return nil, false, ErrIconUnavailable
+	if last != nil {
+		return nil, again, nil, fmt.Errorf("%w: %v", ErrIconUnavailable, last)
+	}
+	return nil, false, nil, ErrIconUnavailable
 }
 
 // iconURIs returns the URIs to try for an icon.  An ipfs URI with a file name on

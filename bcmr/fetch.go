@@ -305,10 +305,27 @@ func mayPass(err error, wrongFile bool) bool {
 }
 
 // fetchRound is one round of fetch, and returns whether another may do better.
+// A location whose hosts are all out of rotation is passed over for the next,
+// and only when every location is out does the round wait for one to come back.
 func (f *Fetcher) fetchRound(ctx context.Context, hash [32]byte, uris []string) ([]byte, bool, error) {
-	if data := f.cached(hash); data != nil {
-		return data, false, nil
+	for {
+		data, again, out, err := f.fetchRoundOnce(ctx, hash, uris)
+		if out == nil {
+			return data, again, err
+		}
+		if err := f.waitBack(ctx, f.registries, hostsOf(out)); err != nil {
+			return nil, false, err
+		}
 	}
+}
+
+// fetchRoundOnce is a pass of fetchRound over the locations in rotation, and
+// returns the locations out of it if they were all there was.
+func (f *Fetcher) fetchRoundOnce(ctx context.Context, hash [32]byte, uris []string) ([]byte, bool, []string, error) {
+	if data := f.cached(hash); data != nil {
+		return data, false, nil, nil
+	}
+	var out []string
 	var last error
 	var again bool
 	var changed []byte
@@ -321,13 +338,17 @@ uris:
 			// A location already tried, as a publisher's URL on a gateway is,
 			// isn't tried again, nor waited for.
 			left := untried(group, tried)
+			if skipped := f.outOfRotation(left); skipped != nil {
+				out = append(out, skipped...)
+				continue
+			}
 			for len(left) > 0 {
 				if tries++; tries > maxLocations {
 					break uris
 				}
 				data, final, location, err := f.downloadAny(ctx, f.registries, left, maxRegistrySize)
 				if location == "" {
-					return nil, false, err
+					return nil, false, nil, err
 				}
 				tried[location] = true
 				left = untried(left, tried)
@@ -343,24 +364,27 @@ uris:
 				}
 				if err != nil {
 					if ctx.Err() != nil {
-						return nil, false, ctx.Err()
+						return nil, false, nil, ctx.Err()
 					}
 					last = err
 					again = again || mayPass(err, wrongFile)
 					continue
 				}
 				f.keep(hash, data)
-				return data, false, nil
+				return data, false, nil, nil
 			}
 		}
 	}
+	if len(tried) == 0 && out != nil {
+		return nil, false, out, ErrRegistryUnavailable
+	}
 	if changed != nil {
-		return changed, false, ErrRegistryChanged
+		return changed, false, nil, ErrRegistryChanged
 	}
 	if last != nil {
-		return nil, again, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
+		return nil, again, nil, fmt.Errorf("%w: %v", ErrRegistryUnavailable, last)
 	}
-	return nil, false, ErrRegistryUnavailable
+	return nil, false, nil, ErrRegistryUnavailable
 }
 
 // locations returns the URLs to try for a URI, by the CHIP: no scheme means
@@ -479,18 +503,11 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	var host string
 	var release func()
 	for {
-		in, back := f.inRotation(hosts)
+		if err := f.waitBack(ctx, slots, hosts); err != nil {
+			return nil, nil, "", err
+		}
+		in, _ := f.inRotation(hosts)
 		if len(in) == 0 {
-			if slots == f.icons && isUserAction(ctx) {
-				return nil, nil, "", ErrNoGateway
-			}
-			timer := time.NewTimer(back)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, nil, "", ctx.Err()
-			}
 			continue
 		}
 		var err error
@@ -508,6 +525,46 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	location := locations[slices.Index(hosts, host)]
 	data, final, err := f.get(ctx, location, limit)
 	return data, final, location, err
+}
+
+// waitBack waits for one of the hosts to be in rotation, as what loads by itself
+// and any registry do, while an icon the user asked for is told that every one is
+// out instead.
+func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string) error {
+	for {
+		in, back := f.inRotation(hosts)
+		if len(in) > 0 {
+			return nil
+		}
+		if slots == f.icons && isUserAction(ctx) {
+			return ErrNoGateway
+		}
+		timer := time.NewTimer(back)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
+	}
+}
+
+// outOfRotation returns the locations whose hosts are all out of rotation, if
+// they all are, or nil.
+func (f *Fetcher) outOfRotation(locations []string) []string {
+	if in, _ := f.inRotation(hostsOf(locations)); len(in) > 0 {
+		return nil
+	}
+	return locations
+}
+
+// hostsOf returns the hosts of the locations.
+func hostsOf(locations []string) []string {
+	hosts := make([]string, len(locations))
+	for i, location := range locations {
+		hosts[i] = hostOf(location)
+	}
+	return hosts
 }
 
 // sharedItem is something being downloaded, by however many requests for it, and
