@@ -148,6 +148,14 @@ type Manager struct {
 	// lastAsked is how many tokens had been asked about at the last cycle.
 	lastAsked int
 
+	// flights are the registry downloads under way, by the published hash,
+	// each with the reads that wait for it, reading the categories with a
+	// read among them, and results where each download's read comes back
+	// to the run goroutine.
+	flights map[[32]byte][]*registryRead
+	reading map[chainhash.Hash]struct{}
+	results chan *registryRead
+
 	wake   chan struct{}
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -160,14 +168,17 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{
-		cfg:    cfg,
-		views:  make(map[chainhash.Hash]TokenInfo),
-		wanted: make(map[chainhash.Hash]bool),
-		states: states,
-		asked:  make(map[chainhash.Hash]struct{}),
-		tried:  make(map[retryKey]retry),
-		reread: make(map[chainhash.Hash]struct{}),
-		wake:   make(chan struct{}, 1),
+		cfg:     cfg,
+		views:   make(map[chainhash.Hash]TokenInfo),
+		wanted:  make(map[chainhash.Hash]bool),
+		states:  states,
+		asked:   make(map[chainhash.Hash]struct{}),
+		tried:   make(map[retryKey]retry),
+		reread:  make(map[chainhash.Hash]struct{}),
+		wake:    make(chan struct{}, 1),
+		flights: make(map[[32]byte][]*registryRead),
+		reading: make(map[chainhash.Hash]struct{}),
+		results: make(chan *registryRead),
 	}
 	for _, state := range states {
 		m.views[state.Category] = m.viewOf(state)
@@ -261,6 +272,9 @@ func (m *Manager) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case read := <-m.results:
+			m.finishRead(ctx, read)
+			continue
 		case <-m.wake:
 		case <-ticker.C:
 		}
@@ -270,9 +284,10 @@ func (m *Manager) run(ctx context.Context) {
 	}
 }
 
-// cycle takes on what was asked for, shows what's published as soon as it's
-// found, then follows the identities to the tip.  A Status is only left by a
-// cycle that reaches its end.
+// cycle takes on what was asked for, starts reading what's published as soon
+// as it's found, then follows the identities to the tip.  A Status is only left
+// by a cycle that reaches its end.  It doesn't wait for registries, which come
+// in as their downloads end, so that a slow host holds up no chain.
 func (m *Manager) cycle(ctx context.Context) error {
 	if m.cfg.Ready != nil && !m.cfg.Ready() {
 		return nil
@@ -303,12 +318,17 @@ func (m *Manager) cycle(ctx context.Context) error {
 	for _, state := range states {
 		m.save(state)
 	}
-	m.fetchRegistries(ctx, states)
+	m.startReads(ctx, states)
 
-	if err := m.cfg.Backend.Advance(ctx, states, m.save); err != nil {
+	// A read that comes back during a long scan shows at its next save.
+	save := func(state *State) {
+		m.save(state)
+		m.takeReads(ctx)
+	}
+	if err := m.cfg.Backend.Advance(ctx, states, save); err != nil {
 		return err
 	}
-	m.fetchRegistries(ctx, states)
+	m.startReads(ctx, states)
 	for _, state := range states {
 		m.save(state)
 	}
@@ -363,64 +383,86 @@ func (m *Manager) takeWanted() bool {
 	return asked || len(wanted) != 0
 }
 
-// fetchRegistries reads the registry of each state whose publication changed,
-// a few at once so that a slow host doesn't hold up the tokens behind it.  Only
-// the download leaves this goroutine, which the states and what's tried belong to.
-func (m *Manager) fetchRegistries(ctx context.Context, states []*State) {
-	results := make(chan *registryRead)
-
-	// Tokens can share a registry, so each download has the reads that wait
-	// for it.  A file that matches the hash serves them all, while anything
-	// else only says something of the URIs that were tried.
-	reading := make(map[[32]byte][]*registryRead)
-	var later []*State
-	use := func() {
-		read := <-results
-		sharers := reading[read.pub.Hash]
-		delete(reading, read.pub.Hash)
-		m.useRegistry(ctx, read)
-		for _, sharer := range sharers {
-			if read.err != nil && !slices.Equal(sharer.pub.URIs, read.pub.URIs) {
-				later = append(later, sharer.state)
-				continue
-			}
-			sharer.data, sharer.err = read.data, read.err
-			m.useRegistry(ctx, sharer)
-		}
-	}
-
+// startReads starts reading the registry of each state whose publication
+// changed, a few at once, unless one is under way.  Each read comes back to the
+// run goroutine, which the states and what's tried belong to, as finishRead.
+// Tokens can share a registry, so a read joins a download of the same file
+// under way, which a file that matches the hash serves too, while anything else
+// only says something of the URIs that were tried.
+func (m *Manager) startReads(ctx context.Context, states []*State) {
 	for _, state := range states {
 		if ctx.Err() != nil {
-			break
+			return
+		}
+		if _, ok := m.reading[state.Category]; ok {
+			continue
 		}
 		read := m.registryDue(state)
 		if read == nil {
 			continue
 		}
-		if sharers, ok := reading[read.pub.Hash]; ok {
-			reading[read.pub.Hash] = append(sharers, read)
+		if sharers, ok := m.flights[read.pub.Hash]; ok {
+			m.flights[read.pub.Hash] = append(sharers, read)
+			m.reading[state.Category] = struct{}{}
 			continue
 		}
-		for len(reading) == maxRegistryReads {
-			use()
+		if len(m.flights) >= maxRegistryReads {
+			continue
 		}
-		reading[read.pub.Hash] = nil
-		// A token the user refreshed goes ahead of those that load by themselves.
+		m.flights[read.pub.Hash] = []*registryRead{read}
+		m.reading[state.Category] = struct{}{}
+
+		// A token the user refreshed goes ahead of those that load by
+		// themselves.
 		fetchCtx := ctx
 		if read.user {
 			fetchCtx = UserAction(ctx)
 		}
 		go func() {
 			read.data, read.err = m.cfg.Fetcher.Fetch(fetchCtx, read.pub.Hash, read.pub.URIs)
-			results <- read
+			select {
+			case m.results <- read:
+			case <-ctx.Done():
+			}
 		}()
 	}
-	for len(reading) != 0 {
-		use()
+}
+
+// takeReads keeps the registry reads that came back, without waiting for the
+// others.
+func (m *Manager) takeReads(ctx context.Context) {
+	for {
+		select {
+		case read := <-m.results:
+			m.finishRead(ctx, read)
+		default:
+			return
+		}
 	}
-	if len(later) != 0 {
-		m.fetchRegistries(ctx, later)
+}
+
+// finishRead keeps what a download found for the reads that waited for it,
+// and starts the reads that were left waiting for room.  A read whose token
+// published again meanwhile counts for nothing.
+func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
+	reads := m.flights[read.pub.Hash]
+	delete(m.flights, read.pub.Hash)
+	for _, waiting := range reads {
+		delete(m.reading, waiting.state.Category)
+		if waiting != read {
+			if read.err != nil && !slices.Equal(waiting.pub.URIs, read.pub.URIs) {
+				continue
+			}
+			waiting.data, waiting.err = read.data, read.err
+		}
+		if pub := waiting.state.CurrentPublication(); pub == nil || pub.Hash != waiting.pub.Hash ||
+			!slices.Equal(pub.URIs, waiting.pub.URIs) {
+
+			continue
+		}
+		m.useRegistry(ctx, waiting)
 	}
+	m.startReads(ctx, m.askedStates())
 }
 
 // registryDue returns the read a state's registry needs, if any.

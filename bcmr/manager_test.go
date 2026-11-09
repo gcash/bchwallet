@@ -101,6 +101,39 @@ func newManagerFixture(t *testing.T, category chainhash.Hash, registry []byte,
 	return &managerFixture{m, backend, hits, server.URL + "/r", hash}
 }
 
+// waitReads hands the Manager each registry read that comes back, and those they
+// start in turn, as the run goroutine does, until none is under way.
+func waitReads(m *Manager) error {
+	for len(m.flights) > 0 {
+		select {
+		case read := <-m.results:
+			m.finishRead(context.Background(), read)
+		case <-time.After(time.Minute):
+			return errors.New("a registry read didn't come back")
+		}
+	}
+	return nil
+}
+
+// cycleAndRead runs a cycle, and waits for the registry reads it started.
+func cycleAndRead(m *Manager) error {
+	err := m.cycle(context.Background())
+	if waitErr := waitReads(m); err == nil {
+		err = waitErr
+	}
+	return err
+}
+
+// readRegistries starts the registry reads of the states, as a cycle does, and
+// waits for them.
+func readRegistries(t *testing.T, m *Manager, states []*State) {
+	t.Helper()
+	m.startReads(context.Background(), states)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // always loads every token by itself.
 func always(chainhash.Hash) bool { return true }
 
@@ -117,7 +150,7 @@ func TestManagerAutoLoad(t *testing.T) {
 	if len(infos) != 1 || infos[0].Metadata != nil || !infos[0].InHints {
 		t.Fatalf("got %+v", infos)
 	}
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -136,7 +169,7 @@ func TestManagerManualToken(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, never)
 
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 0 || f.hits.Load() != 0 {
@@ -144,7 +177,7 @@ func TestManagerManualToken(t *testing.T) {
 	}
 
 	f.m.Refresh(category)
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -153,7 +186,7 @@ func TestManagerManualToken(t *testing.T) {
 	}
 
 	// Once asked for, it's followed from then on.
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 2 {
@@ -168,13 +201,19 @@ func TestManagerUnverifiedFirst(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	var during TokenInfo
 	f.backend.advance = func(states []*State, save func(*State)) error {
-		during = f.m.Tokens([]chainhash.Hash{category})[0]
+		// A scan saves as it goes, which takes the reads that came back.
+		deadline := time.Now().Add(time.Minute)
+		for during.Metadata == nil && time.Now().Before(deadline) {
+			save(states[0])
+			during = f.m.Tokens([]chainhash.Hash{category})[0]
+			time.Sleep(time.Millisecond)
+		}
 		states[0].Status = StatusVerified
 		save(states[0])
 		return nil
 	}
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if during.Metadata == nil || during.Status != StatusSearching {
@@ -189,7 +228,7 @@ func TestManagerFetchesOnce(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
 	for range 3 {
-		if err := f.m.cycle(context.Background()); err != nil {
+		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -197,7 +236,7 @@ func TestManagerFetchesOnce(t *testing.T) {
 		t.Fatalf("%d downloads", f.hits.Load())
 	}
 	f.m.Refresh(category)
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.hits.Load() != 2 {
@@ -214,7 +253,7 @@ func TestManagerSkipsIdleCycles(t *testing.T) {
 	f.m.cfg.Tip = func() (*chainhash.Hash, error) { return &tip, nil }
 	f.m.Tokens([]chainhash.Hash{category})
 	for range 3 {
-		if err := f.m.cycle(context.Background()); err != nil {
+		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -222,7 +261,7 @@ func TestManagerSkipsIdleCycles(t *testing.T) {
 		t.Fatalf("%d prepared", f.backend.preparedCount())
 	}
 	tip = chainhash.Hash{2}
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 2 {
@@ -236,7 +275,7 @@ func TestManagerOnlyAskedTokens(t *testing.T) {
 	category := chainhash.Hash{1}
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	m, err := NewManager(f.m.cfg)
@@ -244,14 +283,14 @@ func TestManagerOnlyAskedTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.backend.prepared = nil
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 0 {
 		t.Fatal("a token that isn't shown was followed")
 	}
 	m.Tokens([]chainhash.Hash{category})
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 1 {
@@ -266,13 +305,13 @@ func TestManagerNewPublicationReplaces(t *testing.T) {
 	category := chainhash.Hash{1}
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	state.Links = []Link{{Height: 1, Publication: &Publication{Hash: [32]byte{1},
 		URIs: []string{f.url}}}}
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if info := f.m.views[category]; info.Metadata != nil {
 		t.Fatalf("got %+v", info)
 	}
@@ -280,7 +319,7 @@ func TestManagerNewPublicationReplaces(t *testing.T) {
 	f.backend.pubs = nil
 	state.Metadata, state.RegistryHash = &Metadata{Name: "Old"}, [32]byte{9}
 	state.Links = []Link{{Height: 1}}
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if info := f.m.views[category]; info.Metadata != nil {
 		t.Fatalf("with no publication: %+v", info)
 	}
@@ -304,7 +343,7 @@ func TestManagerRetriesLater(t *testing.T) {
 	f.backend.pubs[category].Hash = [32]byte{1} // Nothing will match it.
 	f.m.Tokens([]chainhash.Hash{category})
 	for range 3 {
-		if err := f.m.cycle(context.Background()); err != nil {
+		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -312,7 +351,7 @@ func TestManagerRetriesLater(t *testing.T) {
 		t.Fatalf("%d downloads", f.hits.Load())
 	}
 	f.m.Refresh(category)
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.hits.Load() != 2 {
@@ -327,7 +366,7 @@ func TestManagerNoUsableMetadata(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(chainhash.Hash{9}, "Other", "OTH"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
 	for range 2 {
-		if err := f.m.cycle(context.Background()); err != nil {
+		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -348,7 +387,7 @@ func TestManagerKnown(t *testing.T) {
 	if !info.Known || info.Metadata == nil || info.Metadata.Name != "Listed" {
 		t.Fatalf("before: %+v", info)
 	}
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	info = f.m.Tokens([]chainhash.Hash{category})[0]
@@ -373,7 +412,7 @@ func TestManagerLookAlike(t *testing.T) {
 		f := newManagerFixture(t, category, registryFor(category, test.name, test.symbol), known, always)
 		f.backend.advance = func([]*State, func(*State)) error { return nil }
 		f.m.Tokens([]chainhash.Hash{category})
-		if err := f.m.cycle(context.Background()); err != nil {
+		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
 		info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -389,7 +428,7 @@ func TestManagerRestart(t *testing.T) {
 	category := chainhash.Hash{1}
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	cfg := f.m.cfg
@@ -401,7 +440,7 @@ func TestManagerRestart(t *testing.T) {
 	if info.Metadata == nil || info.Metadata.Name != "Token" || info.Status != StatusVerified {
 		t.Fatalf("got %+v", info)
 	}
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if f.hits.Load() != 1 {
@@ -415,7 +454,7 @@ func TestManagerNotReady(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.m.cfg.Ready = func() bool { return false }
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.backend.preparedCount() != 0 {
@@ -429,7 +468,7 @@ func TestManagerAdvanceError(t *testing.T) {
 	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
 	f.backend.advance = func([]*State, func(*State)) error { return errors.New("no filter") }
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err == nil {
+	if err := cycleAndRead(f.m); err == nil {
 		t.Fatal("no error")
 	}
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -467,7 +506,7 @@ func changedFixture(t *testing.T, category chainhash.Hash, file []byte) *manager
 	f := newManagerFixture(t, category, file, nil, always)
 	f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -489,12 +528,12 @@ func TestManagerChangedCollection(t *testing.T) {
 
 	hits := f.hits.Load()
 	state := f.m.states[category]
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits {
 		t.Fatal("read again right away")
 	}
 	state.RegistryRead = time.Now().Add(-changedRegistryInterval - time.Minute)
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits+1 {
 		t.Fatal("not read again after the interval")
 	}
@@ -504,7 +543,7 @@ func TestManagerChangedCollection(t *testing.T) {
 	if state.Metadata == nil {
 		t.Fatal("Refresh dropped what shows, which no cache can bring back")
 	}
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits+2 {
 		t.Fatal("not read again when asked")
 	}
@@ -530,7 +569,7 @@ func TestManagerRegistryFailed(t *testing.T) {
 	uris := f.backend.pubs[category].URIs
 	f.backend.pubs[category].URIs = []string{"https://127.0.0.1:1/r"}
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if info := f.m.Tokens([]chainhash.Hash{category})[0]; !info.RegistryFailed {
@@ -542,7 +581,7 @@ func TestManagerRegistryFailed(t *testing.T) {
 	}
 	f.m.Refresh(category)
 	f.m.takeWanted()
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if info := f.m.Tokens([]chainhash.Hash{category})[0]; info.RegistryFailed || info.Metadata == nil {
 		t.Fatalf("%+v", info)
 	}
@@ -556,7 +595,7 @@ func TestManagerKnownOverChanged(t *testing.T) {
 	f := newManagerFixture(t, category, collectionFor(category, "Host"), known, always)
 	f.backend.pubs[category].Hash = sha256.Sum256([]byte("the whole set"))
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -571,7 +610,7 @@ func TestManagerRefreshKeepsWhatShows(t *testing.T) {
 	category := chainhash.Hash{0x35}
 	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
@@ -580,7 +619,7 @@ func TestManagerRefreshKeepsWhatShows(t *testing.T) {
 	}
 	f.m.Refresh(category)
 	f.m.takeWanted()
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
 	if info.Metadata == nil || info.RegistryFailed {
 		t.Fatalf("%+v", info)
@@ -593,12 +632,12 @@ func TestManagerOldFailure(t *testing.T) {
 	category := chainhash.Hash{0x36}
 	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	state.Metadata = nil
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if info := f.m.Tokens([]chainhash.Hash{category})[0]; !info.RegistryFailed {
 		t.Fatalf("%+v", info)
 	}
@@ -609,18 +648,18 @@ func TestManagerNewParser(t *testing.T) {
 	category := chainhash.Hash{0x37}
 	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	hits := f.hits.Load()
 	state.RegistryParser = 0
 	state.Metadata.Name = "Old"
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits+1 || state.Metadata.Name != "Coin" || state.RegistryParser != registryParser {
 		t.Fatalf("%d hits, %+v", f.hits.Load()-hits, state.Metadata)
 	}
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits+1 {
 		t.Fatal("read again")
 	}
@@ -632,14 +671,14 @@ func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
 	category := chainhash.Hash{0x38}
 	f := newManagerFixture(t, category, []byte(`{"identities":{}}`), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	state.RegistryHash = f.backend.pubs[category].Hash
 	state.Metadata = &Metadata{Name: "Shown", Symbol: "S"}
 	state.RegistryFailed, state.RegistryParser = false, 0
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if state.Metadata == nil || state.RegistryFailed || state.RegistryParser == registryParser {
 		t.Fatalf("%+v", state)
 	}
@@ -671,7 +710,7 @@ func TestManagerChangedFileKeepsPublished(t *testing.T) {
 	category := chainhash.Hash{0x39}
 	f := newManagerFixture(t, category, collectionFor(category, "Host"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
@@ -679,7 +718,7 @@ func TestManagerChangedFileKeepsPublished(t *testing.T) {
 	state.RegistryHash = state.Links[0].Publication.Hash
 	state.Metadata = &Metadata{Name: "Published", Symbol: "P", Decimals: 8}
 	state.RegistryParser = 0
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if state.Metadata.Name != "Published" || state.Metadata.Decimals != 8 || state.RegistryChanged {
 		t.Fatalf("%+v", state.Metadata)
 	}
@@ -691,18 +730,18 @@ func TestManagerNextSnapshot(t *testing.T) {
 	category := chainhash.Hash{0x3a}
 	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	hits := f.hits.Load()
 	state.Metadata.NextSnapshot = time.Now().Add(time.Hour)
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits {
 		t.Fatal("read before its time")
 	}
 	state.Metadata.NextSnapshot = time.Now().Add(-time.Hour)
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if state.Metadata == nil || !state.Metadata.NextSnapshot.IsZero() {
 		t.Fatalf("%+v", state.Metadata)
 	}
@@ -715,12 +754,12 @@ func TestManagerZeroHash(t *testing.T) {
 	f := newManagerFixture(t, category, collectionFor(category, "Host"), nil, always)
 	f.backend.pubs[category].Hash = [32]byte{}
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	state := f.m.states[category]
 	hits := f.hits.Load()
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits || state.Metadata == nil {
 		t.Fatalf("%d more reads, %+v", f.hits.Load()-hits, state.Metadata)
 	}
@@ -733,7 +772,7 @@ func TestManagerPeek(t *testing.T) {
 	if info := f.m.Peek([]chainhash.Hash{category})[0]; info.Metadata != nil {
 		t.Fatalf("%+v", info)
 	}
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if f.hits.Load() != 0 || len(f.m.asked) != 0 {
@@ -741,7 +780,7 @@ func TestManagerPeek(t *testing.T) {
 	}
 
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if info := f.m.Peek([]chainhash.Hash{category})[0]; info.Metadata == nil || info.Metadata.Name != "Coin" {
@@ -755,7 +794,7 @@ func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {
 	category := chainhash.Hash{0x3d}
 	f := newManagerFixture(t, category, registryFor(category, "Coin", "COIN"), nil, always)
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	m, err := NewManager(Config{Backend: f.backend, Store: f.m.cfg.Store, Fetcher: f.m.cfg.Fetcher})
@@ -768,7 +807,7 @@ func TestManagerNoAutoLoadLeavesStoredTokens(t *testing.T) {
 		t.Fatalf("%+v", info)
 	}
 	m.states[category].RegistryParser = 0
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if f.hits.Load() != hits || len(m.asked) != 0 {
@@ -784,7 +823,7 @@ func TestManagerRetriesApart(t *testing.T) {
 	pub := &Publication{Hash: sha256.Sum256([]byte("the whole set")), URIs: f.backend.pubs[collection].URIs}
 	coinState := &State{Category: coin, Links: []Link{{Height: 1, Publication: pub}}}
 	state := &State{Category: collection, Links: []Link{{Height: 1, Publication: pub}}}
-	f.m.fetchRegistries(context.Background(), []*State{coinState, state})
+	readRegistries(t, f.m, []*State{coinState, state})
 	if coinState.Metadata != nil || state.Metadata == nil {
 		t.Fatalf("%+v, %+v", coinState.Metadata, state.Metadata)
 	}
@@ -856,7 +895,7 @@ func TestManagerSlowHostHoldsNoOthers(t *testing.T) {
 	})
 	m.Tokens([]chainhash.Hash{slow, fast})
 	done := make(chan error)
-	go func() { done <- m.cycle(context.Background()) }()
+	go func() { done <- cycleAndRead(m) }()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for m.Peek([]chainhash.Hash{fast})[0].Metadata == nil {
@@ -906,7 +945,7 @@ func TestManagerLimitsReads(t *testing.T) {
 	})
 	m.Tokens(categories)
 	done := make(chan error)
-	go func() { done <- m.cycle(context.Background()) }()
+	go func() { done <- cycleAndRead(m) }()
 
 	for range maxRegistryReads {
 		select {
@@ -954,7 +993,7 @@ func TestManagerSharedRegistryReadOnce(t *testing.T) {
 		func(chainhash.Hash) {})
 	m.cfg.Fetcher.CacheDir = ""
 	m.Tokens([]chainhash.Hash{first, second})
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 1 {
@@ -979,7 +1018,7 @@ func TestManagerSharedRegistryFailing(t *testing.T) {
 	wrong := sha256.Sum256([]byte("not this file"))
 	pubs[first].Hash, pubs[second].Hash = wrong, wrong
 	m.Tokens([]chainhash.Hash{first, second})
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 2 {
@@ -991,7 +1030,7 @@ func TestManagerSharedRegistryFailing(t *testing.T) {
 	pubs[first].Hash = wrong
 	pubs[second].Hash, pubs[second].URIs = wrong, pubs[first].URIs
 	m.Tokens([]chainhash.Hash{first, second})
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 1 {
@@ -1017,7 +1056,7 @@ func TestManagerChangedFileNotShared(t *testing.T) {
 	wrong := sha256.Sum256([]byte("the whole set"))
 	pubs[first].Hash, pubs[second].Hash = wrong, wrong
 	m.Tokens([]chainhash.Hash{first, second})
-	if err := m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
 	if hits.Load() != 2 {
@@ -1078,12 +1117,12 @@ func TestManagerChangedFileClaimsSnapshot(t *testing.T) {
 	}
 	hits := f.hits.Load()
 	state.Metadata.NextSnapshot = time.Now().Add(-time.Hour)
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits {
 		t.Fatal("read for its snapshot")
 	}
 	state.RegistryRead = time.Now().Add(-2 * changedRegistryInterval)
-	f.m.fetchRegistries(context.Background(), []*State{state})
+	readRegistries(t, f.m, []*State{state})
 	if f.hits.Load() != hits+1 {
 		t.Fatal("not read the next day")
 	}
@@ -1110,17 +1149,175 @@ func TestManagerRefreshIsUserAction(t *testing.T) {
 	spy := &userActionSpy{next: f.m.cfg.Fetcher.client.Transport}
 	f.m.cfg.Fetcher.client.Transport = spy
 	f.m.Tokens([]chainhash.Hash{category})
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if spy.users.Load() != 0 {
 		t.Fatal("a token that loads by itself was the user's")
 	}
 	f.m.Refresh(category)
-	if err := f.m.cycle(context.Background()); err != nil {
+	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
 	if spy.users.Load() != 1 {
 		t.Fatalf("%d of the user's", spy.users.Load())
+	}
+}
+
+// TestManagerReadHoldsNoChain ensures a cycle follows the chain while a registry
+// read is under way, rather than wait for it, and that the read shows once it
+// comes back.
+func TestManagerReadHoldsNoChain(t *testing.T) {
+	category := chainhash.Hash{1}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{
+		category: registryFor(category, "Token", "TOK"),
+	}, func(chainhash.Hash) {
+		arrived <- struct{}{}
+		<-release
+	})
+	advanced := false
+	backend := m.cfg.Backend.(*fakeBackend)
+	backend.advance = func(states []*State, save func(*State)) error {
+		advanced = true
+		for _, state := range states {
+			state.Status = StatusVerified
+			save(state)
+		}
+		return nil
+	}
+	m.Tokens([]chainhash.Hash{category})
+	done := make(chan error, 1)
+	go func() { done <- m.cycle(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil || !advanced {
+			t.Fatalf("advanced %v, %v", advanced, err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a registry read held up the chain")
+	}
+	<-arrived
+	if m.Peek([]chainhash.Hash{category})[0].Metadata != nil {
+		t.Fatal("the registry showed before it came")
+	}
+	release <- struct{}{}
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Peek([]chainhash.Hash{category})[0]; info.Metadata == nil || info.Status != StatusVerified {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerRefreshDuringRead ensures a Refresh is read at once, while another
+// token's read is still under way.
+func TestManagerRefreshDuringRead(t *testing.T) {
+	slow, asked := chainhash.Hash{1}, chainhash.Hash{2}
+	release := make(chan struct{})
+	defer close(release)
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{
+		slow:  registryFor(slow, "Slow", "SLOW"),
+		asked: registryFor(asked, "Asked", "ASK"),
+	}, func(category chainhash.Hash) {
+		if category == slow {
+			<-release
+		}
+	})
+	m.cfg.AutoLoad = func(category chainhash.Hash) bool { return category == slow }
+
+	// A scan that saves nothing leaves the reads to the run loop.
+	m.cfg.Backend.(*fakeBackend).advance = func([]*State, func(*State)) error { return nil }
+	m.Start()
+	defer m.Stop()
+	m.Tokens([]chainhash.Hash{slow, asked})
+	m.Refresh(asked)
+	deadline := time.Now().Add(time.Minute)
+	for m.Peek([]chainhash.Hash{asked})[0].Metadata == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("a slow read held up a Refresh")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if m.Peek([]chainhash.Hash{slow})[0].Metadata != nil {
+		t.Fatal("the slow token showed early")
+	}
+}
+
+// TestManagerReadOfOldPublication ensures a read that comes back after its token
+// published again counts for nothing, and that the new publication is read.
+func TestManagerReadOfOldPublication(t *testing.T) {
+	category := chainhash.Hash{1}
+	newer := registryFor(category, "Newer", "NEW")
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	held := true
+	registries := map[chainhash.Hash][]byte{category: registryFor(category, "Older", "OLD")}
+	m, _ := readsFixture(t, registries, func(chainhash.Hash) {
+		if held {
+			held = false
+			arrived <- struct{}{}
+			<-release
+		}
+	})
+	m.Tokens([]chainhash.Hash{category})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-arrived
+
+	// The token publishes the newer registry, at the same URI, while the older
+	// one is under way.
+	state := m.states[category]
+	old := *state.Links[0].Publication
+	state.Links = append(state.Links, Link{Height: 2, Publication: &Publication{
+		Hash: sha256.Sum256(newer), URIs: old.URIs,
+	}})
+	m.cfg.Backend.(*fakeBackend).pubs[category] = state.Links[1].Publication
+	registries[category] = newer
+	release <- struct{}{}
+	read := <-m.results
+	m.finishRead(context.Background(), read)
+	if len(m.tried) != 0 {
+		t.Fatalf("an old read counted as a failure: %v", m.tried)
+	}
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Peek([]chainhash.Hash{category})[0]; info.Metadata == nil || info.Metadata.Name != "Newer" {
+		t.Fatalf("not the newer registry: %+v", info.Metadata)
+	}
+}
+
+// TestManagerOneReadPerToken ensures a cycle while a token's read is under way
+// doesn't read it again.
+func TestManagerOneReadPerToken(t *testing.T) {
+	category := chainhash.Hash{1}
+	registry := registryFor(category, "Token", "TOK")
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{category: registry}, func(chainhash.Hash) {
+		arrived <- struct{}{}
+		<-release
+	})
+	m.Tokens([]chainhash.Hash{category})
+	for range 2 {
+		m.lastFull = time.Time{}
+		if err := m.cycle(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-arrived
+	if reads := m.flights[sha256.Sum256(registry)]; len(reads) != 1 {
+		t.Fatalf("%d reads of the token under way", len(reads))
+	}
+
+	// The read ends before the test, which would remove the cache under it.
+	close(release)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
 	}
 }
