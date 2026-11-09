@@ -333,6 +333,13 @@ func (s *Store) changeTypes(category chainhash.Hash, encoded []byte) error {
 	return err
 }
 
+// HasTypes returns whether a token's types file is there, without reading it,
+// as for telling whether types found gone came back.
+func (s *Store) HasTypes(category chainhash.Hash) bool {
+	_, err := os.Stat(s.typesFile(category))
+	return err == nil
+}
+
 // typesFileSize returns the size of a token's types file, or 0 if there's none.
 func (s *Store) typesFileSize(category chainhash.Hash) int64 {
 	info, err := os.Stat(s.typesFile(category))

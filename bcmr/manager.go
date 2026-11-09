@@ -536,7 +536,7 @@ func (m *Manager) takeEvicted() []*State {
 	for category := range evicted {
 		state, ok := m.states[category]
 		if !ok || state.Metadata == nil || state.Metadata.NFTTypeCount == 0 ||
-			m.cfg.Store.NFTTypes(category) != nil {
+			m.cfg.Store.HasTypes(category) {
 
 			continue
 		}

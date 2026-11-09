@@ -1927,6 +1927,32 @@ func TestManagerReadsEvictedTypes(t *testing.T) {
 	}
 }
 
+// TestManagerEvictedTypesBack ensures types found gone that came back, as when
+// another read wrote them meanwhile, aren't read again, and that telling so
+// doesn't read them, which would decode the file and take a place among the
+// types read last.
+func TestManagerEvictedTypesBack(t *testing.T) {
+	category := chainhash.Hash{0x59}
+	f := newManagerFixture(t, category, collectionFor(category, "Set"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	store := f.m.cfg.Store
+	store.forgetRecent(category)
+	f.m.mu.Lock()
+	f.m.evicted[category] = struct{}{}
+	f.m.mu.Unlock()
+	if states := f.m.takeEvicted(); len(states) != 0 {
+		t.Fatalf("types that are there are to be read again: %d", len(states))
+	}
+	if slices.ContainsFunc(store.recent, func(recent recentTypes) bool {
+		return recent.category == category
+	}) {
+		t.Fatal("telling whether the types came back read them")
+	}
+}
+
 // TestManagerSavesTogether ensures a cycle writes the tokens it takes on in one
 // transaction, those it prepared in another, and those it followed in a third.
 func TestManagerSavesTogether(t *testing.T) {
