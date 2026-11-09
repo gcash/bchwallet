@@ -118,6 +118,25 @@ func TestFetchIconCIDAlone(t *testing.T) {
 	}
 }
 
+// TestFetchIconURLOfCID ensures an icon whose URL isn't ipfs:// but has the path of
+// a raw CID is checked against it, as it's the same item as that CID's.
+func TestFetchIconURLOfCID(t *testing.T) {
+	cid := strings.TrimPrefix(rawCID([]byte("icon")), "ipfs://")
+	serve := []byte("icon")
+	server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(serve)
+	})
+	skipRests(f)
+	uri := server.URL + "/ipfs/" + cid
+	if data, err := f.FetchIcon(context.Background(), uri); err != nil || string(data) != "icon" {
+		t.Fatalf("got %q, %v", data, err)
+	}
+	serve = []byte("another token's icon")
+	if _, err := f.FetchIcon(context.Background(), uri); !errors.Is(err, ErrIconUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 // TestIconItem ensures an icon is the same item whether its URI is ipfs:// or a
 // gateway's URL of the same path, and another for another path or a plain URL.
 func TestIconItem(t *testing.T) {

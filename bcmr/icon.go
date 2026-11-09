@@ -97,9 +97,12 @@ func (f *Fetcher) fetchIconRoundOnce(ctx context.Context, uri string) ([]byte, b
 	result, err := f.round(ctx, roundOf{
 		slots: f.icons,
 		limit: maxIconSize,
+		// The location fetched is checked too, by the raw CID of its own IPFS path,
+		// as a URL that isn't ipfs:// can name one, and what it gives is the same
+		// item as the ipfs:// request's, which takes it.
 		check: func(candidate, location string, _ *url.URL, data []byte) (error, bool) {
 			digest, checked := ipfsRawDigest(candidate)
-			if checked && sha256.Sum256(data) != digest {
+			if checked && sha256.Sum256(data) != digest || failsItsCID(location, data) {
 				return fmt.Errorf("%s doesn't match the hash of the URI", location), true
 			}
 			return nil, false
