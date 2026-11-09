@@ -70,6 +70,9 @@ func iconItem(uri string) string {
 
 // fetchIcon is FetchIcon for one copy of the request.
 func (f *Fetcher) fetchIcon(ctx context.Context, uri string) ([]byte, error) {
+	faults := &itemFaults{}
+	ctx = withFaults(ctx, faults)
+	defer f.settle(faults)
 	return f.inRounds(ctx, func() ([]byte, bool, error) {
 		return f.fetchIconRound(ctx, uri)
 	})

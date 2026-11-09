@@ -970,6 +970,63 @@ func TestStallRestsGateway(t *testing.T) {
 	}
 }
 
+// TestMissingFilesRestNoGateway ensures files that no gateway gives, as ones
+// nobody pins, rest none of them, however many there are and however often
+// they're asked for, as it's the files that are missing.
+func TestMissingFilesRestNoGateway(t *testing.T) {
+	timeout := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}
+	first, f := testServer(t, timeout)
+	second := httptest.NewTLSServer(http.HandlerFunc(timeout))
+	t.Cleanup(second.Close)
+	f.Gateways = []string{first.URL, second.URL}
+	f.roundPause = 0
+	hosts := []string{hostOf(first.URL), hostOf(second.URL)}
+
+	for _, uri := range []string{"ipfs://bafygone/icon.png", "ipfs://bafygone2/icon.png",
+		"ipfs://bafygone/icon.png", "ipfs://bafygone3/icon.png"} {
+
+		if _, err := f.FetchIcon(context.Background(), uri); err == nil {
+			t.Fatalf("%s came", uri)
+		}
+		if inRotationLen(f, hosts...) != 2 {
+			t.Fatalf("after %s, files no gateway has rested a gateway", uri)
+		}
+	}
+	file := []byte(`{"r":1}`)
+	if _, err := f.Fetch(context.Background(), sha256.Sum256(file), []string{"ipfs://bafygone/r.json"}); err == nil {
+		t.Fatal("a registry no gateway has came")
+	}
+	if inRotationLen(f, hosts...) != 2 {
+		t.Fatal("a registry no gateway has rested a gateway")
+	}
+}
+
+// TestFaultOnFileAnotherGivesRests ensures a gateway that times out on a file
+// that another gateway gives rests, as then it's the gateway that failed.
+func TestFaultOnFileAnotherGivesRests(t *testing.T) {
+	first, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	})
+	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("icon"))
+	}))
+	t.Cleanup(second.Close)
+	f.Gateways = []string{first.URL, second.URL}
+	f.roundPause = 0
+	data, err := f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+	if err != nil || string(data) != "icon" {
+		t.Fatalf("%q, %v", data, err)
+	}
+	if inRotationLen(f, hostOf(first.URL)) != 0 {
+		t.Fatal("a gateway that failed a file another gave is still in")
+	}
+	if inRotationLen(f, hostOf(second.URL)) != 1 {
+		t.Fatal("the gateway that gave the file rests")
+	}
+}
+
 // TestFetchSkipsGatewayOut ensures a gateway out of rotation isn't asked until it's
 // back, while another is.
 func TestFetchSkipsGatewayOut(t *testing.T) {

@@ -277,6 +277,9 @@ func (f *Fetcher) Fetch(ctx context.Context, hash [32]byte, uris []string) ([]by
 
 // fetch is Fetch for one copy of the request.
 func (f *Fetcher) fetch(ctx context.Context, hash [32]byte, uris []string) ([]byte, error) {
+	faults := &itemFaults{}
+	ctx = withFaults(ctx, faults)
+	defer f.settle(faults)
 	return f.inRounds(ctx, func() ([]byte, bool, error) {
 		return f.fetchRound(ctx, hash, uris)
 	})
@@ -428,6 +431,7 @@ uris:
 					continue
 				}
 				f.worked(hostOf(location))
+				f.gave(ctx, hostOf(location))
 				return roundResult{data: data}, nil
 			}
 		}
@@ -783,7 +787,9 @@ func (f *Fetcher) leftRotation() {
 }
 
 // failed takes a gateway that failed out of rotation, for longer the more times
-// in a row it has.  A host that isn't a gateway has no rotation to leave.
+// in a row it has, as for a file that fails its own CID or a 429 that doesn't
+// say how long to wait, which are the gateway's whatever the file.  A host that
+// isn't a gateway has no rotation to leave.
 func (f *Fetcher) failed(host string) {
 	if !f.isGateway(host) {
 		return
@@ -799,6 +805,69 @@ func (f *Fetcher) failed(host string) {
 	f.out[host] = out
 	f.healthMu.Unlock()
 	f.leftRotation()
+}
+
+// itemFaults is what an item's downloads found of the gateways: those that
+// faulted on it, by not connecting, a 5xx, no answer or a stall, and the one
+// that gave it, if one did.  A file that no gateway can find, as one nobody
+// pins, gets such faults from every gateway, which says nothing of them, so a
+// fault counts only once another gateway gave the item.
+type itemFaults struct {
+	mu     sync.Mutex
+	hosts  []string
+	served string
+}
+
+// faultsKey is the context key of an item's faults.
+type faultsKey struct{}
+
+// withFaults has the downloads of a context keep their faults in faults.
+func withFaults(ctx context.Context, faults *itemFaults) context.Context {
+	return context.WithValue(ctx, faultsKey{}, faults)
+}
+
+// faulted takes a gateway's fault on what a download is for, which counts when
+// the item is done, if another gateway gave it.  A download that isn't for an
+// item counts it at once.
+func (f *Fetcher) faulted(ctx context.Context, host string) {
+	faults, ok := ctx.Value(faultsKey{}).(*itemFaults)
+	if !ok {
+		f.failed(host)
+		return
+	}
+	faults.mu.Lock()
+	defer faults.mu.Unlock()
+	if !slices.Contains(faults.hosts, host) {
+		faults.hosts = append(faults.hosts, host)
+	}
+}
+
+// gave notes the gateway that gave an item.
+func (f *Fetcher) gave(ctx context.Context, host string) {
+	faults, ok := ctx.Value(faultsKey{}).(*itemFaults)
+	if !ok || !f.isGateway(host) {
+		return
+	}
+	faults.mu.Lock()
+	defer faults.mu.Unlock()
+	faults.served = host
+}
+
+// settle counts the faults of an item that's done: those of the gateways other
+// than the one that gave it, if one did, and none if none did, as then it's the
+// file that's missing.
+func (f *Fetcher) settle(faults *itemFaults) {
+	faults.mu.Lock()
+	served, hosts := faults.served, faults.hosts
+	faults.mu.Unlock()
+	if served == "" {
+		return
+	}
+	for _, host := range hosts {
+		if host != served {
+			f.failed(host)
+		}
+	}
 }
 
 // worked puts a gateway back in rotation, with no failures counted.
@@ -838,7 +907,7 @@ func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte
 	case err == nil:
 	case ctx.Err() != nil:
 	case errors.Is(err, errGatewayFault):
-		f.failed(host)
+		f.faulted(ctx, host)
 	case errors.Is(err, errRateLimited):
 		var limit *rateLimit
 		if errors.As(err, &limit) && limit.wait > 0 {
