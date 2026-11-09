@@ -1589,13 +1589,13 @@ func TestManagerRefreshWhileOut(t *testing.T) {
 
 	fetcher := f.m.cfg.Fetcher
 	fetcher.healthMu.Lock()
-	fetcher.out["gw1.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+	fetcher.out["gw1.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
 	fetcher.healthMu.Unlock()
 	if err := f.m.Refresh(category); err != nil {
 		t.Fatalf("a refresh with a gateway left: %v", err)
 	}
 	fetcher.healthMu.Lock()
-	fetcher.out["gw2.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+	fetcher.out["gw2.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
 	fetcher.healthMu.Unlock()
 	if err := f.m.Refresh(category); !errors.Is(err, ErrNoGateway) {
 		t.Fatalf("a refresh with every gateway out: %v", err)

@@ -902,7 +902,7 @@ func TestAllGatewaysOut(t *testing.T) {
 	host := hostOf(server.URL)
 	rest := func(d time.Duration) {
 		f.healthMu.Lock()
-		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(d)}
+		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(d), rest: d}
 		f.healthMu.Unlock()
 	}
 
@@ -1531,7 +1531,7 @@ func TestFetcherUnavailable(t *testing.T) {
 	f := newFetcher([]string{"https://gw1.example", "https://gw2.example"}, "", nil)
 	out := func(host string) {
 		f.healthMu.Lock()
-		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour), rest: time.Hour}
 		f.healthMu.Unlock()
 	}
 	uris := []string{"https://host.example/ipfs/bafkrei1", "ipfs://bafkrei1"}
@@ -1617,7 +1617,7 @@ func TestWaitMovesToGatewayBack(t *testing.T) {
 	}()
 	const rest = 200 * time.Millisecond
 	f.healthMu.Lock()
-	f.out[hostOf(back.URL)] = gatewayOut{failures: 1, until: time.Now().Add(rest)}
+	f.out[hostOf(back.URL)] = gatewayOut{failures: 1, until: time.Now().Add(rest), rest: rest}
 	f.healthMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1904,6 +1904,83 @@ func TestFetchWaitsOnlyWhenAllOut(t *testing.T) {
 		}
 	case <-time.After(time.Minute):
 		t.Fatal("a round with a location tried waited for those out of rotation")
+	}
+}
+
+// TestRestsGoByTheWallClock ensures a fetcher reads the wall clock, with no
+// monotonic reading, as Go's monotonic clock stops while the device sleeps.
+func TestRestsGoByTheWallClock(t *testing.T) {
+	_, f := testServer(t, http.NotFound)
+	if now := f.now(); now != now.Round(0) {
+		t.Fatal("the fetcher's clock has a monotonic reading")
+	}
+}
+
+// TestClockSetBackEndsWaits ensures a rest or a pause that has more left than
+// it was given, as when the clock is set back, is over, rather than last as long
+// again as the clock moved.
+func TestClockSetBackEndsWaits(t *testing.T) {
+	p := newGatewayPair(t)
+	p.f.failed(p.first, "test")
+	if inRotationLen(p.f, p.first) != 0 {
+		t.Fatal("a gateway that failed is in rotation")
+	}
+	p.pass(-time.Hour)
+	if inRotationLen(p.f, p.first) != 1 {
+		t.Fatal("a rest lasted longer as the clock was set back")
+	}
+
+	p.f.pause(p.first, 15*time.Minute, "test")
+	p.pass(14 * time.Minute)
+	if inRotationLen(p.f, p.first) != 0 {
+		t.Fatal("a pause ended early")
+	}
+	p.pass(-time.Hour)
+	if inRotationLen(p.f, p.first) != 1 {
+		t.Fatal("a pause lasted longer as the clock was set back")
+	}
+
+	// A shorter pause asked later doesn't cut one that's still on.
+	p.pass(time.Hour)
+	p.f.pause(p.first, 15*time.Minute, "test")
+	p.f.pause(p.first, time.Minute, "test")
+	p.pass(2 * time.Minute)
+	if inRotationLen(p.f, p.first) != 0 {
+		t.Fatal("a shorter pause cut a longer one")
+	}
+}
+
+// TestWaitEndsByTheWallClock ensures an icon that waits for its gateways to come
+// back gets them once their pause is over by the wall clock, though its timer
+// had far less time pass, as when the device slept.
+func TestWaitEndsByTheWallClock(t *testing.T) {
+	p := newGatewayPair(t)
+	p.f.recheckEvery = 10 * time.Millisecond
+	for _, gateway := range p.f.Gateways {
+		p.f.pause(hostOf(gateway), time.Hour, "test")
+	}
+	got := make(chan string, 1)
+	go func() {
+		data, err := p.f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+		if err != nil {
+			got <- err.Error()
+			return
+		}
+		got <- string(data)
+	}()
+	select {
+	case data := <-got:
+		t.Fatalf("an icon came while every gateway was paused: %s", data)
+	case <-time.After(100 * time.Millisecond):
+	}
+	p.pass(2 * time.Hour)
+	select {
+	case data := <-got:
+		if data != "first" {
+			t.Fatalf("%s", data)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wait didn't end once the pause was over by the wall clock")
 	}
 }
 

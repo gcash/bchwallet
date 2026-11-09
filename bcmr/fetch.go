@@ -55,6 +55,11 @@ const (
 	gatewayRestFirst = 30 * time.Second
 	gatewayRestMost  = 5 * time.Minute
 
+	// rotationRecheck is how often at most a wait for a gateway to come back
+	// looks at the clock again.  A timer stops while the device sleeps, and the
+	// rest or pause it waits out doesn't, as both go by the wall clock.
+	rotationRecheck = 10 * time.Second
+
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
 
@@ -114,8 +119,12 @@ type Fetcher struct {
 	itemsMu sync.Mutex
 	items   map[string]*sharedItem
 
-	// now is the time, apart for tests.
+	// now is the time by the wall clock, apart for tests.
 	now func() time.Time
+
+	// recheckEvery is how often at most a wait for a gateway looks at the
+	// clock again, which tests shorten.
+	recheckEvery time.Duration
 
 	// roundPause is the wait between rounds, which tests leave out.
 	roundPause time.Duration
@@ -159,9 +168,11 @@ func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper)
 		CacheDir:   cacheDir,
 		registries: newHostSlots(maxPerHost),
 		icons:      newHostSlots(maxPerHost),
-		now:        time.Now,
+		now:        wallClock,
 		items:      make(map[string]*sharedItem),
 		out:        make(map[string]gatewayOut),
+
+		recheckEvery: rotationRecheck,
 		client: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -549,11 +560,12 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 		}
 		// A wait in line lasts only until a gateway of the item that rests
 		// is back, which may have a slot free, as the line only has those in
-		// rotation when it joined.
+		// rotation when it joined, and it looks at the clock again now and
+		// then, as its timer stops while the device sleeps.
 		take := ctx
 		stop := func() {}
 		if back := f.soonestBack(hosts); back > 0 {
-			take, stop = context.WithTimeout(ctx, back)
+			take, stop = context.WithTimeout(ctx, min(back, f.recheckEvery))
 		}
 		var err error
 		host, release, err = slots.takeAny(take, f.avoidOthers(ctx, in))
@@ -594,7 +606,8 @@ func failsItsCID(location string, data []byte) bool {
 
 // waitBack waits for one of the hosts to be in rotation, as what loads by itself
 // and any registry do, while an icon the user asked for is told that every one is
-// out instead.
+// out instead.  It looks at the clock again now and then, as its timer stops
+// while the device sleeps.
 func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string) error {
 	for {
 		in, back := f.inRotation(hosts)
@@ -606,7 +619,7 @@ func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string
 				f.rotationState(hosts))
 			return ErrNoGateway
 		}
-		timer := time.NewTimer(back)
+		timer := time.NewTimer(min(back, f.recheckEvery))
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
@@ -728,21 +741,38 @@ func (f *Fetcher) using(ctx context.Context, host string) func() {
 	}
 }
 
-// gatewayOut is a gateway out of rotation: its failures in a row and until when
-// they rest it, and until when a rate limit pauses it, which a success doesn't
-// end, as the gateway asked for that long.
+// wallClock returns the time by the wall clock alone.  Go's own clock for
+// durations stops while the device sleeps, so a gateway that asked for 15
+// minutes would be left alone for 15 minutes awake, which on an idle phone can
+// be hours.
+func wallClock() time.Time {
+	return time.Now().Round(0)
+}
+
+// gatewayOut is a gateway out of rotation: its failures in a row, until when and
+// for how long they rest it, and until when and for how long a rate limit pauses
+// it, which a success doesn't end, as the gateway asked for that long.
 type gatewayOut struct {
 	failures int
 	until    time.Time
+	rest     time.Duration
 	paused   time.Time
+	pause    time.Duration
 }
 
-// back returns when the gateway is back in rotation.
-func (out gatewayOut) back() time.Time {
-	if out.paused.After(out.until) {
-		return out.paused
+// left returns how long until the gateway is back in rotation, or 0 if it is.
+func (out gatewayOut) left(now time.Time) time.Duration {
+	return max(within(out.until.Sub(now), out.rest), within(out.paused.Sub(now), out.pause))
+}
+
+// within returns what's left of a wait, or 0 if it's over, or if more is left
+// than the whole wait, as when the clock was set back, which would otherwise
+// make it last as long again.
+func within(left, wait time.Duration) time.Duration {
+	if left <= 0 || left > wait {
+		return 0
 	}
-	return out.until
+	return left
 }
 
 // inRotation returns the hosts but the gateways out of rotation, in their order,
@@ -755,11 +785,12 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 	var back time.Duration
 	for _, host := range hosts {
 		out, ok := f.out[host]
-		if !ok || !now.Before(out.back()) {
+		wait := out.left(now)
+		if !ok || wait == 0 {
 			in = append(in, host)
 			continue
 		}
-		if wait := out.back().Sub(now); back == 0 || wait < back {
+		if back == 0 || wait < back {
 			back = wait
 		}
 	}
@@ -775,10 +806,11 @@ func (f *Fetcher) soonestBack(hosts []string) time.Duration {
 	var soonest time.Duration
 	for _, host := range hosts {
 		out, ok := f.out[host]
-		if !ok || !now.Before(out.back()) {
+		wait := out.left(now)
+		if !ok || wait == 0 {
 			continue
 		}
-		if wait := out.back().Sub(now); soonest == 0 || wait < soonest {
+		if soonest == 0 || wait < soonest {
 			soonest = wait
 		}
 	}
@@ -821,14 +853,15 @@ func (f *Fetcher) rotationState(hosts []string) string {
 		}
 		seen[host] = true
 		out, ok := f.out[host]
+		rest, pause := within(out.until.Sub(now), out.rest), within(out.paused.Sub(now), out.pause)
 		switch {
-		case !ok || !now.Before(out.back()):
+		case !ok || out.left(now) == 0:
 			state = append(state, host+" in rotation")
-		case out.paused.After(out.until):
-			state = append(state, fmt.Sprintf("%s paused %v more", host, out.paused.Sub(now).Round(time.Second)))
+		case pause > rest:
+			state = append(state, fmt.Sprintf("%s paused %v more", host, pause.Round(time.Second)))
 		default:
 			state = append(state, fmt.Sprintf("%s out %v more after %d failures",
-				host, out.until.Sub(now).Round(time.Second), out.failures))
+				host, rest.Round(time.Second), out.failures))
 		}
 	}
 	return strings.Join(state, ", ")
@@ -863,7 +896,7 @@ func (f *Fetcher) failed(host, cause string) {
 	if out.failures < 10 {
 		rest = min(gatewayRestFirst<<(out.failures-1), gatewayRestMost)
 	}
-	out.until = f.now().Add(rest)
+	out.until, out.rest = f.now().Add(rest), rest
 	f.out[host] = out
 	f.healthMu.Unlock()
 	log.Infof("Gateway %s out of rotation for %v, after %d failures in a row: %s",
@@ -944,11 +977,11 @@ func (f *Fetcher) worked(host string) {
 	if !ok {
 		return
 	}
-	if !f.now().Before(out.paused) {
+	if within(out.paused.Sub(f.now()), out.pause) == 0 {
 		delete(f.out, host)
 		return
 	}
-	f.out[host] = gatewayOut{paused: out.paused}
+	f.out[host] = gatewayOut{paused: out.paused, pause: out.pause}
 }
 
 // isGateway returns whether a host is one of the gateways.
@@ -1022,8 +1055,9 @@ func (f *Fetcher) pause(host string, wait time.Duration, cause string) {
 	}
 	f.healthMu.Lock()
 	out := f.out[host]
-	if until := f.now().Add(wait); until.After(out.paused) {
-		out.paused = until
+	now := f.now()
+	if wait > within(out.paused.Sub(now), out.pause) {
+		out.paused, out.pause = now.Add(wait), wait
 	}
 	f.out[host] = out
 	f.healthMu.Unlock()
