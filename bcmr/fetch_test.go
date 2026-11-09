@@ -1593,3 +1593,54 @@ func TestFetchPassesOverOutLocations(t *testing.T) {
 		t.Fatalf("registry: %q, %v", data, err)
 	}
 }
+
+// TestFetchWrongPublicationSparesGateways ensures a registry whose publication
+// names a hash that isn't its CID's file leaves the gateways that served that
+// file in rotation, while one that serves other than its CID names is rested.
+func TestFetchWrongPublicationSparesGateways(t *testing.T) {
+	file := []byte(`{"r":1}`)
+	cid := strings.TrimPrefix(rawCID(file), "ipfs://")
+	serve := file
+	server, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(serve)
+	})
+	f.Gateways = []string{server.URL}
+	host := hostOf(server.URL)
+	wrong := sha256.Sum256([]byte("another file"))
+	if _, err := f.Fetch(context.Background(), wrong, []string{"ipfs://" + cid}); err == nil {
+		t.Fatal("no error")
+	}
+	if !f.available(host) {
+		t.Fatal("a gateway that served the CID's file was rested")
+	}
+
+	serve = []byte(`{"r":2}`)
+	if _, err := f.Fetch(context.Background(), sha256.Sum256(file), []string{"ipfs://" + cid}); err == nil {
+		t.Fatal("no error")
+	}
+	if f.available(host) {
+		t.Fatal("a gateway that served another file than its CID's stayed in rotation")
+	}
+}
+
+// TestFailsItsCID ensures only a file at a raw CID's path that isn't that CID's
+// file counts against the location.
+func TestFailsItsCID(t *testing.T) {
+	file := []byte("file")
+	cid := strings.TrimPrefix(rawCID(file), "ipfs://")
+	tests := []struct {
+		location string
+		data     []byte
+		want     bool
+	}{
+		{"https://gw.example/ipfs/" + cid, file, false},
+		{"https://gw.example/ipfs/" + cid, []byte("other"), true},
+		{"https://gw.example/ipfs/bafybeidirectory/1.json", []byte("other"), false},
+		{"https://host.example/registry.json", []byte("other"), false},
+	}
+	for _, test := range tests {
+		if got := failsItsCID(test.location, test.data); got != test.want {
+			t.Errorf("%s: got %v", test.location, got)
+		}
+	}
+}

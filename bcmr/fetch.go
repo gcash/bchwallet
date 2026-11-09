@@ -355,7 +355,9 @@ uris:
 				wrongFile := err == nil && sha256.Sum256(data) != hash
 				if wrongFile {
 					err = fmt.Errorf("%s doesn't match the published hash", location)
-					f.failed(hostOf(location))
+					if failsItsCID(location, data) {
+						f.failed(hostOf(location))
+					}
 					if changed == nil && !strings.HasPrefix(uri, "ipfs://") &&
 						ipfsPath(final) == "" && json.Valid(data) {
 
@@ -525,6 +527,23 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	location := locations[slices.Index(hosts, host)]
 	data, final, err := f.get(ctx, location, limit)
 	return data, final, location, err
+}
+
+// failsItsCID returns whether a file that isn't the published one isn't what the
+// location's IPFS path names either, which shows the gateway at fault.  A file
+// that the path names, or one at a path that can't be checked, as a directory's
+// is, says nothing of the gateway: the publication named another file.
+func failsItsCID(location string, data []byte) bool {
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return false
+	}
+	path := ipfsPath(parsed)
+	if path == "" {
+		return false
+	}
+	digest, raw := ipfsRawDigest("ipfs://" + path)
+	return raw && sha256.Sum256(data) != digest
 }
 
 // waitBack waits for one of the hosts to be in rotation, as what loads by itself
