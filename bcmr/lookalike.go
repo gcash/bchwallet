@@ -106,18 +106,15 @@ func symbolSkeleton(symbol string) string {
 	return b.String()
 }
 
-// minNearSymbol is the shortest symbol that a symbol one character from it
-// copies.  Shorter ones would match far too many that copy nothing.
-const minNearSymbol = 4
-
-// symbolCopies returns whether a symbol, whole or up to its first hyphen,
-// reads as one of the symbols' skeletons, or is one character from one of
-// minNearSymbol or more characters.
+// symbolCopies returns whether a symbol, whole or up to its first hyphen, reads
+// as one of the symbols' skeletons.  Only the same reading counts: tickers are
+// short, so honest ones are often a character apart, as FBTC from WBTC and
+// HASH from DASH, and a name and icon that copy a token are checked apart.
 func symbolCopies(symbol string, symbols []string) bool {
 	forms := []string{symbolSkeleton(symbol), symbolSkeleton(baseSymbol(symbol))}
 	for _, other := range symbols {
 		for _, form := range forms {
-			if form == other || len(other) >= minNearSymbol && withinOneEdit(form, other) {
+			if form == other {
 				return true
 			}
 		}
