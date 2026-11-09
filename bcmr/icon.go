@@ -44,9 +44,28 @@ func ipfsRawDigest(uri string) ([32]byte, bool) {
 // URI names, if it names one.  Connections have the limits of a registry's, and
 // a smaller size.
 func (f *Fetcher) FetchIcon(ctx context.Context, uri string) ([]byte, error) {
-	return f.shared(ctx, "icon "+uri, func(ctx context.Context) ([]byte, error) {
+	return f.shared(ctx, "icon "+iconItem(uri), func(ctx context.Context) ([]byte, error) {
 		return f.fetchIcon(ctx, uri)
 	})
+}
+
+// iconItem returns what an icon's URI names, as rule 4 of the gateways has items
+// go by their content: the IPFS path, whether through ipfs:// or a gateway's URL,
+// or else the URL.
+func iconItem(uri string) string {
+	if rest, ok := strings.CutPrefix(uri, "ipfs://"); ok {
+		return "ipfs " + rest
+	}
+	location := uri
+	if !strings.HasPrefix(location, "https://") {
+		location = "https://" + location
+	}
+	if parsed, err := url.Parse(location); err == nil {
+		if path := ipfsPath(parsed); path != "" {
+			return "ipfs " + path
+		}
+	}
+	return uri
 }
 
 // fetchIcon is FetchIcon for one copy of the request.

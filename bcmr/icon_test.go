@@ -117,3 +117,17 @@ func TestFetchIconCIDAlone(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// TestIconItem ensures an icon is the same item whether its URI is ipfs:// or a
+// gateway's URL of the same path, and another for another path or a plain URL.
+func TestIconItem(t *testing.T) {
+	ipfs := iconItem("ipfs://bafy1/icon.png")
+	if iconItem("https://ipfs.io/ipfs/bafy1/icon.png") != ipfs ||
+		iconItem("https://bafy1.ipfs.dweb.link/icon.png") != ipfs {
+
+		t.Fatal("one path through a gateway's URL is another item")
+	}
+	if iconItem("ipfs://bafy1") == ipfs || iconItem("https://host.example/icon.png") == ipfs {
+		t.Fatal("other icons are the same item")
+	}
+}
