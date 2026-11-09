@@ -1,8 +1,10 @@
 package bcmr
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	chainbcmr "github.com/gcash/bchd/bcmr"
@@ -112,11 +114,13 @@ func (b *SPVBackend) RolledBack(state *State, height int32) (bool, error) {
 // entry, or the genesis from a search down to just above the table's height.  A
 // token that can't be read waits and doesn't hold up the others.
 func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
+	type start struct {
+		state *State
+		hint  chainbcmr.Hint
+	}
+	var starts []start
 	var search []*State
 	for _, state := range states {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if len(state.Links) != 0 {
 			continue
 		}
@@ -127,10 +131,7 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 		// it now is in a newer table, which it starts from.
 		if b.hints != nil {
 			if hint, ok := b.hints.Lookup(state.Category); ok {
-				if err := b.startFromHint(ctx, state, &hint); err != nil {
-					log.Debugf("Unable to start token %v: %v", state.Category, err)
-					b.waiting[state.Category] = time.Now()
-				}
+				starts = append(starts, start{state, hint})
 				continue
 			}
 		}
@@ -138,6 +139,30 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 			continue
 		}
 		search = append(search, state)
+	}
+
+	// Tokens whose links share a block read it once, and in the order of
+	// their heights, so that each block can go after its last use.
+	slices.SortFunc(starts, func(a, b start) int { return cmp.Compare(a.hint.HeadHeight, b.hint.HeadHeight) })
+	blocks := &passBlocks{source: b.source, uses: make(map[int32]int),
+		blocks: make(map[chainhash.Hash]*wire.MsgBlock)}
+	for _, start := range starts {
+		blocks.uses[start.hint.HeadHeight]++
+		if start.hint.Publication != nil {
+			blocks.uses[start.hint.Publication.Height]++
+		}
+	}
+	for _, start := range starts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := b.startFromHint(ctx, blocks, start.state, &start.hint); err != nil {
+			log.Debugf("Unable to start token %v: %v", start.state.Category, err)
+			b.waiting[start.state.Category] = time.Now()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if len(search) == 0 {
 		return nil
@@ -160,12 +185,14 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 // startFromHint sets a state from the table.  Everything is read first, so that
 // a block that can't be read leaves the state to try again rather than start
 // without its publication.
-func (b *SPVBackend) startFromHint(ctx context.Context, state *State, hint *chainbcmr.Hint) error {
+func (b *SPVBackend) startFromHint(ctx context.Context, blocks *passBlocks, state *State,
+	hint *chainbcmr.Hint) error {
+
 	hash, err := b.source.GetBlockHash(int64(hint.HeadHeight))
 	if err != nil {
 		return err
 	}
-	head, err := b.readLink(ctx, hint.Head, hint.HeadHeight, hash)
+	head, err := blocks.readLink(ctx, hint.Head, hint.HeadHeight, hash)
 	if err != nil {
 		return err
 	}
@@ -179,7 +206,7 @@ func (b *SPVBackend) startFromHint(ctx context.Context, state *State, hint *chai
 		if err != nil {
 			return err
 		}
-		older, err = b.readLink(ctx, hint.Publication.Txid, hint.Publication.Height, pubHash)
+		older, err = blocks.readLink(ctx, hint.Publication.Txid, hint.Publication.Height, pubHash)
 		if err != nil {
 			return err
 		}
@@ -195,13 +222,30 @@ func (b *SPVBackend) startFromHint(ctx context.Context, state *State, hint *chai
 	return nil
 }
 
+// passBlocks reads the blocks of a pass's links, keeping each until its last use
+// of those counted.
+type passBlocks struct {
+	source spvSource
+	uses   map[int32]int
+	blocks map[chainhash.Hash]*wire.MsgBlock
+}
+
 // readLink reads a transaction from its block, with its publication.
-func (b *SPVBackend) readLink(ctx context.Context, txid chainhash.Hash, height int32,
+func (p *passBlocks) readLink(ctx context.Context, txid chainhash.Hash, height int32,
 	hash *chainhash.Hash) (*Link, error) {
 
-	block, err := b.source.GetBlock(hash, ctx.Done())
-	if err != nil {
-		return nil, err
+	block, ok := p.blocks[*hash]
+	if !ok {
+		var err error
+		if block, err = p.source.GetBlock(hash, ctx.Done()); err != nil {
+			return nil, err
+		}
+	}
+	p.uses[height]--
+	if p.uses[height] > 0 {
+		p.blocks[*hash] = block
+	} else {
+		delete(p.blocks, *hash)
 	}
 	for _, tx := range block.Transactions {
 		if tx.TxHash() == txid {

@@ -40,6 +40,9 @@ type fakeChain struct {
 	// beforeHash is told of each height whose hash is asked for, before
 	// it's given.
 	beforeHash func(height int32)
+
+	// reads counts the reads of each block.
+	reads map[chainhash.Hash]int
 }
 
 func newFakeChain(height int) *fakeChain {
@@ -91,6 +94,10 @@ func (c *fakeChain) GetBlockHash(height int64) (*chainhash.Hash, error) {
 }
 
 func (c *fakeChain) GetBlock(hash *chainhash.Hash, _ <-chan struct{}) (*wire.MsgBlock, error) {
+	if c.reads == nil {
+		c.reads = make(map[chainhash.Hash]int)
+	}
+	c.reads[*hash]++
 	if c.failBlock {
 		return nil, errors.New("no peer sent the block")
 	}
@@ -326,6 +333,63 @@ func TestSPVPrepareShowsWhatsThere(t *testing.T) {
 	}
 	if pub := state.CurrentPublication(); pub == nil || pub.URIs[0] != "older.example" {
 		t.Fatalf("publication %+v", pub)
+	}
+}
+
+// TestSPVHintBlocksReadOnce ensures tokens whose links from the table share a
+// block read it once in a pass.
+func TestSPVHintBlocksReadOnce(t *testing.T) {
+	c := newFakeChain(100)
+	older := withPublication(t, spendOf(1, chainhash.Hash{2}), 7, "older.example")
+	first, second := spendOf(2, chainhash.Hash{3}), spendOf(3, chainhash.Hash{4})
+	third := spendOf(4, older.TxHash())
+	c.put(10, older, first, second)
+	c.put(20, third)
+	hints := hintsFor(t, 50,
+		chainbcmr.Hint{Category: chainhash.Hash{1}, Head: first.TxHash(), HeadHeight: 10},
+		chainbcmr.Hint{Category: chainhash.Hash{5}, Head: third.TxHash(), HeadHeight: 20,
+			Publication: &chainbcmr.HintPublication{Txid: older.TxHash(), Height: 10}},
+		chainbcmr.Hint{Category: chainhash.Hash{6}, Head: second.TxHash(), HeadHeight: 10})
+	states := []*State{{Category: chainhash.Hash{5}}, {Category: chainhash.Hash{1}}, {Category: chainhash.Hash{6}}}
+	if err := NewSPVBackend(c, hints).Prepare(context.Background(), states); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range states {
+		if state.Head() == nil {
+			t.Fatalf("%+v", state)
+		}
+	}
+	if pub := states[0].CurrentPublication(); pub == nil || pub.URIs[0] != "older.example" {
+		t.Fatalf("%+v", states[0])
+	}
+	for _, height := range []int64{10, 20} {
+		hash, err := c.GetBlockHash(height)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.reads[*hash] != 1 {
+			t.Fatalf("block %d read %d times", height, c.reads[*hash])
+		}
+	}
+}
+
+// TestPassBlocksLetGo ensures a pass keeps a block only until its last use.
+func TestPassBlocksLetGo(t *testing.T) {
+	c := newFakeChain(100)
+	first, second := spendOf(1, chainhash.Hash{2}), spendOf(2, chainhash.Hash{3})
+	c.put(10, first, second)
+	hash, err := c.GetBlockHash(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := &passBlocks{source: c, uses: map[int32]int{10: 2}, blocks: make(map[chainhash.Hash]*wire.MsgBlock)}
+	for i, tx := range []*wire.MsgTx{first, second} {
+		if _, err := blocks.readLink(context.Background(), tx.TxHash(), 10, hash); err != nil {
+			t.Fatal(err)
+		}
+		if kept := len(blocks.blocks); kept != 1-i {
+			t.Fatalf("%d blocks kept after %d uses", kept, i+1)
+		}
 	}
 }
 
