@@ -393,6 +393,36 @@ func TestPassBlocksLetGo(t *testing.T) {
 	}
 }
 
+// TestSPVStartEndsTheWait ensures a token that starts after a start that failed
+// no longer waits, from the table and from its genesis alike.
+func TestSPVStartEndsTheWait(t *testing.T) {
+	c := newFakeChain(100)
+	head := spendOf(1, chainhash.Hash{2})
+	c.put(10, head)
+	hinted := chainhash.Hash{1}
+	b := NewSPVBackend(c, hintsFor(t, 50, chainbcmr.Hint{Category: hinted, Head: head.TxHash(), HeadHeight: 10}))
+	state := &State{Category: hinted}
+	c.failBlock = true
+	resolve(t, b, state)
+	if _, waits := b.waiting[hinted]; !waits {
+		t.Fatal("a start that failed doesn't wait")
+	}
+	c.failBlock = false
+	b.waiting[hinted] = time.Now().Add(-retryInterval)
+	resolve(t, b, state)
+	if _, waits := b.waiting[hinted]; waits || state.Head() == nil {
+		t.Fatalf("still waits after starting: %+v", state)
+	}
+
+	genesisCategory := chainhash.Hash{3}
+	c.put(80, genesisOf(4, genesisCategory))
+	b.waiting[genesisCategory] = time.Now().Add(-retryInterval)
+	resolve(t, b, &State{Category: genesisCategory})
+	if _, waits := b.waiting[genesisCategory]; waits {
+		t.Fatal("still waits after its genesis was found")
+	}
+}
+
 // TestSPVBurnedHint ensures a burned identity is never scanned.
 func TestSPVBurnedHint(t *testing.T) {
 	c := newFakeChain(100)

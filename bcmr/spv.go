@@ -160,7 +160,9 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 		if err := b.startFromHint(ctx, blocks, start.state, &start.hint); err != nil {
 			log.Debugf("Unable to start token %v: %v", start.state.Category, err)
 			b.waiting[start.state.Category] = time.Now()
+			continue
 		}
+		delete(b.waiting, start.state.Category)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -336,6 +338,7 @@ func (b *SPVBackend) genesisFinder(ctx context.Context, states []*State,
 			return nil
 		}
 		state.Links = []Link{*newLink(spend.Tx, spend.Height, spend.BlockHash)}
+		delete(b.waiting, state.Category)
 		state.Burned = chainbcmr.IsBurn(spend.Tx)
 		state.ScannedTo, state.ScannedHash = spend.Height-1, *before
 		state.Status = StatusSearching
