@@ -163,6 +163,9 @@ type Manager struct {
 	lastTip  chainhash.Hash
 	lastFull time.Time
 
+	// lastFailed is when a cycle last failed.
+	lastFailed time.Time
+
 	// reread holds the tokens whose registry Refresh has read again, which
 	// keep what shows until then.
 	reread map[chainhash.Hash]struct{}
@@ -393,7 +396,7 @@ func (m *Manager) run(ctx context.Context) {
 // as it's found, then follows the identities to the tip.  A Status is only left
 // by a cycle that reaches its end.  It doesn't wait for registries, which come
 // in as their downloads end, so that a slow host holds up no chain.
-func (m *Manager) cycle(ctx context.Context) error {
+func (m *Manager) cycle(ctx context.Context) (err error) {
 	m.takeForgotten()
 	if m.cfg.Ready != nil && !m.cfg.Ready() {
 		return nil
@@ -403,6 +406,17 @@ func (m *Manager) cycle(ctx context.Context) error {
 	if len(states) == 0 {
 		return nil
 	}
+
+	// A cycle that failed has the next wait as a registry read does, unless
+	// something new is asked for, as each could download a week of blocks.
+	if !news && time.Since(m.lastFailed) < retryInterval {
+		return nil
+	}
+	defer func() {
+		if err != nil && ctx.Err() == nil {
+			m.lastFailed = time.Now()
+		}
+	}()
 
 	// With nothing new and no new block, only what's due to be tried again
 	// has anything to do.
@@ -580,7 +594,7 @@ func (m *Manager) rolledBack(height int32) {
 			m.save(state)
 		}
 	}
-	m.lastFull = time.Time{}
+	m.lastFull, m.lastFailed = time.Time{}, time.Time{}
 }
 
 // takeReads keeps the registry reads that came back, without waiting for the

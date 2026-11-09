@@ -1936,3 +1936,56 @@ func TestManagerKeepsTypesNotStored(t *testing.T) {
 		t.Fatalf("%d reads, %q", f.hits.Load(), got)
 	}
 }
+
+// TestManagerFailedCycleWaits ensures a cycle that failed has the next wait
+// before following the chain again, unless something new is asked for or the
+// filters were rolled back.
+func TestManagerFailedCycleWaits(t *testing.T) {
+	category := chainhash.Hash{0x59}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	advances := 0
+	f.backend.advance = func([]*State, func(*State)) error {
+		advances++
+		return errors.New("no peers")
+	}
+	f.m.Tokens([]chainhash.Hash{category})
+	cycle := func() int {
+		t.Helper()
+		before := advances
+		_ = f.m.cycle(context.Background())
+		if err := waitReads(f.m); err != nil {
+			t.Fatal(err)
+		}
+		return advances - before
+	}
+	if n := cycle(); n != 1 {
+		t.Fatalf("%d scans in the first cycle", n)
+	}
+	if n := cycle(); n != 0 {
+		t.Fatalf("%d scans right after a failure", n)
+	}
+	f.m.lastFailed = f.m.lastFailed.Add(-retryInterval)
+	if n := cycle(); n != 1 {
+		t.Fatalf("%d scans after the wait", n)
+	}
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
+	if n := cycle(); n != 1 {
+		t.Fatalf("%d scans after a Refresh", n)
+	}
+	f.m.cfg.Backend = rollingBackend{f.backend}
+	f.m.rolledBack(1)
+	if n := cycle(); n != 1 {
+		t.Fatalf("%d scans after a rollback", n)
+	}
+}
+
+// rollingBackend is a fakeBackend that takes filter rollbacks.
+type rollingBackend struct {
+	*fakeBackend
+}
+
+func (rollingBackend) RolledBack(*State, int32) (bool, error) {
+	return false, nil
+}
