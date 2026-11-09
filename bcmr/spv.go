@@ -608,12 +608,14 @@ func (b *SPVBackend) sameChain(height int32, hash *chainhash.Hash) (bool, error)
 func (b *SPVBackend) markScanned(states []*State, height, tip int32, tipHash *chainhash.Hash,
 	save func(*State)) error {
 
-	same, err := b.sameChain(tip, tipHash)
-	if err != nil || !same {
-		return err
-	}
+	// The hash to keep is read first, so that the chain found the same after
+	// it is the one it's from.
 	hash, err := b.source.GetBlockHash(int64(height))
 	if err != nil {
+		return err
+	}
+	same, err := b.sameChain(tip, tipHash)
+	if err != nil || !same {
 		return err
 	}
 	for _, state := range states {

@@ -35,6 +35,10 @@ type fakeChain struct {
 	// hidden are blocks whose spends a search misses, as wrong filters
 	// would have it.
 	hidden map[int32]bool
+
+	// beforeHash is told of each height whose hash is asked for, before
+	// it's given.
+	beforeHash func(height int32)
 }
 
 func newFakeChain(height int) *fakeChain {
@@ -75,6 +79,9 @@ func (c *fakeChain) GetBestBlock() (*chainhash.Hash, int32, error) {
 }
 
 func (c *fakeChain) GetBlockHash(height int64) (*chainhash.Hash, error) {
+	if c.beforeHash != nil {
+		c.beforeHash(int32(height))
+	}
 	if height < 1 || height > int64(len(c.blocks)) {
 		return nil, fmt.Errorf("no block at %d", height)
 	}
@@ -1391,5 +1398,28 @@ func TestSPVRolledBackFindsHiddenSpend(t *testing.T) {
 	resolve(t, b, state)
 	if state.Head().Txid != next.TxHash() {
 		t.Fatalf("the hidden spend wasn't found: head %v", state.Head().Txid)
+	}
+}
+
+// TestSPVMarkScannedReorg ensures a reorganization just as the hash to keep is
+// read leaves the state as it was, rather than keep a hash of a block that wasn't
+// scanned.
+func TestSPVMarkScannedReorg(t *testing.T) {
+	c := newFakeChain(100)
+	b := NewSPVBackend(c, nil)
+	state := &State{ScannedTo: 10, ScannedHash: c.blocks[9].BlockHash()}
+	tipHash := c.blocks[99].BlockHash()
+	reorged := false
+	c.beforeHash = func(height int32) {
+		if height == 90 && !reorged {
+			reorged = true
+			c.replaceFrom(50, 1000)
+		}
+	}
+	if err := b.markScanned([]*State{state}, 90, 100, &tipHash, noSave); err != nil {
+		t.Fatal(err)
+	}
+	if state.ScannedTo != 10 {
+		t.Fatalf("scanned to %d of a chain that changed", state.ScannedTo)
 	}
 }
