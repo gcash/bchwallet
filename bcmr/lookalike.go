@@ -82,6 +82,56 @@ func nameCopies(name, known string) bool {
 	return strings.Contains(name, known) || withinOneEdit(name, known)
 }
 
+// symbolSkeleton returns what a symbol reads as: the digits that read as letters
+// made those, and hyphens left out.  The CHIP has symbols in uppercase ASCII.
+func symbolSkeleton(symbol string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(symbol) {
+		switch r {
+		case '-':
+			continue
+		case '0':
+			r = 'O'
+		case '1':
+			r = 'I'
+		case '5':
+			r = 'S'
+		case '8':
+			r = 'B'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// minNearSymbol is the shortest symbol that a symbol one character from it
+// copies.  Shorter ones would match far too many that copy nothing.
+const minNearSymbol = 4
+
+// symbolCopies returns whether a symbol, whole or up to its first hyphen,
+// reads as one of the symbols' skeletons, or is one character from one of
+// minNearSymbol or more characters.
+func symbolCopies(symbol string, symbols []string) bool {
+	forms := []string{symbolSkeleton(symbol), symbolSkeleton(baseSymbol(symbol))}
+	for _, other := range symbols {
+		for _, form := range forms {
+			if form == other || len(other) >= minNearSymbol && withinOneEdit(form, other) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reservedSymbolSkeletons are the reserved symbols' skeletons.
+var reservedSymbolSkeletons = func() []string {
+	skeletons := make([]string, len(reservedSymbolList))
+	for i, symbol := range reservedSymbolList {
+		skeletons[i] = symbolSkeleton(symbol)
+	}
+	return skeletons
+}()
+
 // withinOneEdit returns whether a can be made b by adding, removing or changing
 // one character.
 func withinOneEdit(a, b string) bool {

@@ -616,6 +616,7 @@ func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadat
 			RegistryFailed:   info.RegistryFailed,
 			ReservedSymbol:   info.ReservedSymbol,
 			ReservedName:     info.ReservedName,
+			KnownSymbol:      info.KnownSymbol,
 		}
 		if m := info.Metadata; m != nil {
 			token.HasMetadata = true

@@ -19,12 +19,3 @@ var reservedSymbolList = []string{
 	"VET", "WAVES", "WBTC", "XBCH", "XBT", "XCN", "XDC", "XEC", "XLM", "XMR",
 	"XRP", "XTZ", "ZEC", "ZIL",
 }
-
-// reservedSymbols holds reservedSymbolList for looking up.
-var reservedSymbols = func() map[string]bool {
-	symbols := make(map[string]bool, len(reservedSymbolList))
-	for _, symbol := range reservedSymbolList {
-		symbols[symbol] = true
-	}
-	return symbols
-}()

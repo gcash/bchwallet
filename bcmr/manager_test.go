@@ -412,7 +412,7 @@ func TestManagerLookAlike(t *testing.T) {
 		want         bool
 	}{
 		{"real token", "FAKE", true},
-		{"Other", "REAL", true},
+		{"Other", "REAL", false}, // Only its symbol, which drops it.
 		{"Other", "OTHER", false},
 		{"Rеal  Tokеn", "FAKE", true},         // Cyrillic letters, and a space more.
 		{"Real Token Official", "FAKE", true}, // Holding the Known name.
@@ -705,19 +705,23 @@ func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
 // a look-alike, also with no Known list, and that a class of a Known token's
 // symbol is too.
 func TestManagerReservedSymbol(t *testing.T) {
-	known := map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}, {2}: {Name: "Listed", Symbol: "USDT"}}
-	m := &Manager{cfg: Config{Known: known}, known: knownNames(known)}
-	for symbol, want := range map[string][2]bool{"BCH": {true, true}, "BCH-X": {true, true}, "USD": {true, true},
-		"DOGE": {true, true}, "MUSD-A": {true, false}, "OTHER": {false, false}, "TOP": {false, false}} {
+	known := map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "ROACH"}, {2}: {Name: "Listed", Symbol: "USDT"}}
+	m := &Manager{cfg: Config{Known: known}, known: knownNamesOf(known)}
+	// What each symbol is: reserved, and a Known token's.  MUSD is one from TUSD,
+	// which is reserved.
+	for symbol, want := range map[string][2]bool{"BCH": {true, false}, "BCH-X": {true, false},
+		"USD": {true, false}, "DOGE": {true, false}, "D0GE": {true, false}, "USDX": {true, false},
+		"MUSD": {true, false}, "S0L": {true, false}, "B-CH": {true, false}, "ROACH-A": {false, true}, "R0ACH": {false, true}, "ROACHX": {false, true},
+		"OTHER": {false, false}, "TOP": {false, false}, "ROA": {false, false}} {
 
 		state := &State{Category: chainhash.Hash{9}, Metadata: &Metadata{Name: "N", Symbol: symbol}}
 		info := m.viewOf(state)
-		if info.LookAlike != want[0] || info.ReservedSymbol != want[1] {
+		if info.ReservedSymbol != want[0] || info.KnownSymbol != want[1] || info.LookAlike {
 			t.Errorf("%q: %+v", symbol, info)
 		}
 	}
 	state := &State{Category: chainhash.Hash{2}, Metadata: &Metadata{Name: "Listed", Symbol: "USDT"}}
-	if info := m.viewOf(state); info.LookAlike || info.ReservedSymbol {
+	if info := m.viewOf(state); info.LookAlike || info.ReservedSymbol || info.KnownSymbol {
 		t.Errorf("a Known token: %+v", info)
 	}
 }

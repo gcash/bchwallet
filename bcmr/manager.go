@@ -50,14 +50,15 @@ type TokenInfo struct {
 	// head has published nothing.
 	Stale bool
 
-	// LookAlike reports that the token has the name or symbol of a Known
-	// token, under another category, or a reserved symbol.
-	LookAlike bool
+	// LookAlike reports that the token's name copies a Known token's, under
+	// another category, or is the coin's own, which ReservedName reports.
+	LookAlike    bool
+	ReservedName bool
 
-	// ReservedSymbol reports that a LookAlike is one for its reserved symbol,
-	// and ReservedName for its name, which is the coin's own.
+	// KnownSymbol and ReservedSymbol report that the token's symbol copies a
+	// Known token's or a reserved one, so its amounts show none.
+	KnownSymbol    bool
 	ReservedSymbol bool
-	ReservedName   bool
 
 	Burned bool
 
@@ -144,9 +145,9 @@ type Manager struct {
 	// Refresh to tell whether any of them can be read now.
 	pubURIs map[chainhash.Hash][]string
 
-	// known are the Known tokens' names, by their skeletons, and symbols, as
+	// known are the Known tokens' names and symbols, by their skeletons, as
 	// every view is checked against them.
-	known []knownName
+	known knownNames
 
 	// The rest belongs to the run goroutine.
 	states   map[chainhash.Hash]*State
@@ -181,7 +182,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{
-		known:   knownNames(cfg.Known),
+		known:   knownNamesOf(cfg.Known),
 		cfg:     cfg,
 		views:   make(map[chainhash.Hash]TokenInfo),
 		wanted:  make(map[chainhash.Hash]bool),
@@ -207,17 +208,18 @@ func NewManager(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// knownName is what a Known token's name and symbol are checked against.
-type knownName struct {
-	name   string
-	symbol string
+// knownNames are the skeletons of the Known tokens' names and symbols.
+type knownNames struct {
+	names   []string
+	symbols []string
 }
 
-// knownNames returns the names and symbols of the Known list to check against.
-func knownNames(known map[chainhash.Hash]*Metadata) []knownName {
-	names := make([]knownName, 0, len(known))
+// knownNamesOf returns the names and symbols of the Known list to check against.
+func knownNamesOf(known map[chainhash.Hash]*Metadata) knownNames {
+	var names knownNames
 	for _, metadata := range known {
-		names = append(names, knownName{skeleton(metadata.Name), baseSymbol(metadata.Symbol)})
+		names.names = append(names.names, skeleton(metadata.Name))
+		names.symbols = append(names.symbols, symbolSkeleton(metadata.Symbol))
 	}
 	return names
 }
@@ -709,19 +711,19 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 	}
 	if !info.Known && info.Metadata != nil {
 		name := skeleton(info.Metadata.Name)
-		info.ReservedSymbol = reservedSymbols[baseSymbol(info.Metadata.Symbol)]
 		info.ReservedName = reservedNames[name]
-		info.LookAlike = info.ReservedSymbol || info.ReservedName || m.looksKnown(name, info.Metadata.Symbol)
+		info.LookAlike = info.ReservedName || m.copiesKnownName(name)
+		info.ReservedSymbol = symbolCopies(info.Metadata.Symbol, reservedSymbolSkeletons)
+		info.KnownSymbol = !info.ReservedSymbol && symbolCopies(info.Metadata.Symbol, m.known.symbols)
 	}
 	return info
 }
 
-// looksKnown returns whether a name, by its skeleton, copies a Known token's, or
-// a symbol is one.
-func (m *Manager) looksKnown(name, symbol string) bool {
-	symbol = baseSymbol(symbol)
-	for _, known := range m.known {
-		if nameCopies(name, known.name) || known.symbol == symbol {
+// copiesKnownName returns whether a name, by its skeleton, copies a Known
+// token's.
+func (m *Manager) copiesKnownName(name string) bool {
+	for _, known := range m.known.names {
+		if nameCopies(name, known) {
 			return true
 		}
 	}

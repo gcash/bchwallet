@@ -242,14 +242,15 @@ message TokenMetadataResponse {
 		Status status = 9;
 		bool known = 10; // On the Known list.
 		bool loads_by_itself = 11; // Otherwise it takes RefreshTokenMetadata.
-		bool look_alike = 12; // Has the name or symbol of a Known token.
+		bool look_alike = 12; // Its name copies a Known token's, or is the coin's own.
 		bool burned = 13; // Its identity ended, so its metadata can't change.
 		repeated NftType nft_types = 14; // Sorted by commitment, with include_nft_types.
 		bool publication_stale = 15; // The publication isn't on the head.
 		bool registry_changed = 16; // The fields above are from a file other than the published one.
 		bool registry_failed = 17; // A registry was published, but nothing could be read from it.
-		bool reserved_symbol = 18; // A look_alike that is one for its reserved symbol.
+		bool reserved_symbol = 18; // Its symbol copies a reserved one, so its amounts show none.
 		bool reserved_name = 19; // A look_alike that is one for its name, which is the coin's own.
+		bool known_symbol = 20; // Its symbol copies a Known token's, so its amounts show none.
 	}
 	repeated Token tokens = 1; // In the order of the request.
 }
