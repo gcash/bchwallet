@@ -132,6 +132,10 @@ type Manager struct {
 	// spent, costs nothing.
 	asked map[chainhash.Hash]struct{}
 
+	// pubURIs are the URIs of each token's current publication, for a
+	// Refresh to tell whether any of them can be read now.
+	pubURIs map[chainhash.Hash][]string
+
 	// The rest belongs to the run goroutine.
 	states   map[chainhash.Hash]*State
 	tried    map[retryKey]retry
@@ -170,6 +174,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		wanted:  make(map[chainhash.Hash]bool),
 		states:  states,
 		asked:   make(map[chainhash.Hash]struct{}),
+		pubURIs: make(map[chainhash.Hash][]string),
 		tried:   make(map[retryKey]retry),
 		reread:  make(map[chainhash.Hash]struct{}),
 		wake:    make(chan struct{}, 1),
@@ -179,6 +184,9 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	for _, state := range states {
 		m.views[state.Category] = m.viewOf(state)
+		if pub := state.CurrentPublication(); pub != nil {
+			m.pubURIs[state.Category] = pub.URIs
+		}
 		if state.RetryTries > 0 {
 			m.tried[retryKey{state.Category, state.RetryHash}] = retry{state.RetryLast, state.RetryTries}
 		}
@@ -248,13 +256,20 @@ func (m *Manager) Peek(categories []chainhash.Hash) []TokenInfo {
 }
 
 // Refresh fetches a token's metadata again, or for the first time, whether it
-// loads by itself or not.
-func (m *Manager) Refresh(category chainhash.Hash) {
+// loads by itself or not.  It returns ErrNoGateway if every location of the
+// token's registry is paused or out of rotation, so that the user is told at
+// once that it won't be read now, though it will be later.
+func (m *Manager) Refresh(category chainhash.Hash) error {
 	m.mu.Lock()
 	m.wanted[category] = true
 	m.asked[category] = struct{}{}
+	uris := m.pubURIs[category]
 	m.mu.Unlock()
 	m.signal()
+	if len(uris) > 0 && m.cfg.Fetcher != nil && m.cfg.Fetcher.Unavailable(uris) {
+		return ErrNoGateway
+	}
+	return nil
 }
 
 func (m *Manager) signal() {
@@ -602,8 +617,14 @@ func (m *Manager) save(state *State) {
 		log.Warnf("Unable to save token %v: %v", state.Category, err)
 	}
 	view := m.viewOf(state)
+	pub := state.CurrentPublication()
 	m.mu.Lock()
 	m.views[state.Category] = view
+	if pub != nil {
+		m.pubURIs[state.Category] = pub.URIs
+	} else {
+		delete(m.pubURIs, state.Category)
+	}
 	m.mu.Unlock()
 }
 

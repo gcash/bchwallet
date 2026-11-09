@@ -572,7 +572,9 @@ func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.Refresh
 	if manager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "the wallet has no chain client")
 	}
-	manager.Refresh(*category)
+	if err := manager.Refresh(*category); errors.Is(err, bcmr.ErrNoGateway) {
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
 	return &pb.RefreshTokenMetadataResponse{}, nil
 }
 

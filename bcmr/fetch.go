@@ -78,9 +78,9 @@ var (
 	// answers with a 5xx, or stalls.
 	errGatewayFault = errors.New("the host failed")
 
-	// ErrNoGateway is the answer to an icon the user asked for while every
-	// gateway that has it is paused or out of rotation, rather than have the
-	// user wait with no end in sight.
+	// ErrNoGateway is the answer to an icon or a Refresh the user asked for
+	// while every gateway or host that has it is paused or out of rotation,
+	// rather than have the user wait with no end in sight.
 	ErrNoGateway = errors.New("every gateway is paused or out of rotation")
 
 	// errRateLimited is a host that answered 429, Too Many Requests.
@@ -619,6 +619,25 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 		}
 	}
 	return in, back
+}
+
+// Unavailable returns whether every location of the URIs is at a host that's
+// paused or out of rotation, so that reading them now would only wait.  URIs
+// with no location give no reason to wait.
+func (f *Fetcher) Unavailable(uris []string) bool {
+	var hosts []string
+	for _, uri := range uris {
+		for _, group := range f.locationGroups(uri) {
+			for _, location := range group {
+				hosts = append(hosts, hostOf(location))
+			}
+		}
+	}
+	if len(hosts) == 0 {
+		return false
+	}
+	in, _ := f.inRotation(hosts)
+	return len(in) == 0
 }
 
 // failed takes a gateway that failed out of rotation, for longer the more times

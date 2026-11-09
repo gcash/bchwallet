@@ -176,7 +176,9 @@ func TestManagerManualToken(t *testing.T) {
 		t.Fatalf("%d prepared, %d downloads", f.backend.preparedCount(), f.hits.Load())
 	}
 
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +237,9 @@ func TestManagerFetchesOnce(t *testing.T) {
 	if f.hits.Load() != 1 {
 		t.Fatalf("%d downloads", f.hits.Load())
 	}
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +354,9 @@ func TestManagerRetriesLater(t *testing.T) {
 	if f.hits.Load() != 1 {
 		t.Fatalf("%d downloads", f.hits.Load())
 	}
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +544,9 @@ func TestManagerChangedCollection(t *testing.T) {
 		t.Fatal("not read again after the interval")
 	}
 
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	f.m.takeWanted()
 	if state.Metadata == nil {
 		t.Fatal("Refresh dropped what shows, which no cache can bring back")
@@ -579,7 +587,9 @@ func TestManagerRegistryFailed(t *testing.T) {
 	for i := range state.Links {
 		state.Links[i].Publication.URIs = uris
 	}
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	f.m.takeWanted()
 	readRegistries(t, f.m, []*State{state})
 	if info := f.m.Tokens([]chainhash.Hash{category})[0]; info.RegistryFailed || info.Metadata == nil {
@@ -617,7 +627,9 @@ func TestManagerRefreshKeepsWhatShows(t *testing.T) {
 	for i := range state.Links {
 		state.Links[i].Publication.URIs = []string{"https://127.0.0.1:1/r"}
 	}
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	f.m.takeWanted()
 	readRegistries(t, f.m, []*State{state})
 	info := f.m.Tokens([]chainhash.Hash{category})[0]
@@ -1157,7 +1169,9 @@ func TestManagerRefreshIsUserAction(t *testing.T) {
 	if spy.users.Load() != 0 {
 		t.Fatal("a token that loads by itself was the user's")
 	}
-	f.m.Refresh(category)
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	if err := cycleAndRead(f.m); err != nil {
 		t.Fatal(err)
 	}
@@ -1235,7 +1249,9 @@ func TestManagerRefreshDuringRead(t *testing.T) {
 	m.Start()
 	defer m.Stop()
 	m.Tokens([]chainhash.Hash{slow, asked})
-	m.Refresh(asked)
+	if err := m.Refresh(asked); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(time.Minute)
 	for m.Peek([]chainhash.Hash{asked})[0].Metadata == nil {
 		if time.Now().After(deadline) {
@@ -1358,7 +1374,9 @@ func TestManagerRetryOutlastsRestart(t *testing.T) {
 		t.Fatalf("%+v", failed)
 	}
 
-	m.Refresh(category)
+	if err := m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
 	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
 	}
@@ -1404,5 +1422,40 @@ func TestManagerStrangerSharesNoWait(t *testing.T) {
 	}
 	if info := m.Peek([]chainhash.Hash{stranger})[0]; info.Metadata == nil || info.Metadata.Name != "One" {
 		t.Fatalf("the file didn't serve the stranger: %+v", info.Metadata)
+	}
+}
+
+// TestManagerRefreshWhileOut ensures a Refresh says at once that every gateway
+// of the token's registry is out, and that the token is still read later, and
+// that it says nothing while one is in rotation.
+func TestManagerRefreshWhileOut(t *testing.T) {
+	category := chainhash.Hash{1}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.m.cfg.Fetcher.Gateways = []string{"https://gw1.example", "https://gw2.example"}
+	f.backend.pubs[category].URIs = []string{"ipfs://bafkrei1"}
+	f.m.Tokens([]chainhash.Hash{category})
+	f.m.lastFull = time.Time{}
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	fetcher := f.m.cfg.Fetcher
+	fetcher.healthMu.Lock()
+	fetcher.out["gw1.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+	fetcher.healthMu.Unlock()
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatalf("a refresh with a gateway left: %v", err)
+	}
+	fetcher.healthMu.Lock()
+	fetcher.out["gw2.example"] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+	fetcher.healthMu.Unlock()
+	if err := f.m.Refresh(category); !errors.Is(err, ErrNoGateway) {
+		t.Fatalf("a refresh with every gateway out: %v", err)
+	}
+	f.m.mu.Lock()
+	refresh, wanted := f.m.wanted[category]
+	f.m.mu.Unlock()
+	if !wanted || !refresh {
+		t.Fatal("the token isn't read later")
 	}
 }

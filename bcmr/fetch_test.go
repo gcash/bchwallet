@@ -1378,3 +1378,31 @@ func TestFetchNoRoundsForWrongFiles(t *testing.T) {
 		t.Fatalf("got %v after %d", err, hits.Load())
 	}
 }
+
+// TestFetcherUnavailable ensures URIs count as unavailable only when every
+// location they have is at a host out of rotation, and that URIs with none
+// don't.
+func TestFetcherUnavailable(t *testing.T) {
+	f := newFetcher([]string{"https://gw1.example", "https://gw2.example"}, "", nil)
+	out := func(host string) {
+		f.healthMu.Lock()
+		f.out[host] = gatewayOut{failures: 1, until: time.Now().Add(time.Hour)}
+		f.healthMu.Unlock()
+	}
+	uris := []string{"https://host.example/ipfs/bafkrei1", "ipfs://bafkrei1"}
+	if f.Unavailable(uris) {
+		t.Fatal("unavailable with every host in rotation")
+	}
+	out("gw1.example")
+	out("gw2.example")
+	if f.Unavailable(uris) {
+		t.Fatal("unavailable with the publisher's host in rotation")
+	}
+	out("host.example")
+	if !f.Unavailable(uris) {
+		t.Fatal("available with every host out")
+	}
+	if f.Unavailable([]string{"ftp://nothing.example"}) {
+		t.Fatal("unavailable with no location")
+	}
+}
