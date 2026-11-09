@@ -74,3 +74,19 @@ func TestReadsAsAmount(t *testing.T) {
 		}
 	}
 }
+
+// TestSymbolCopiesInOtherForms ensures a symbol that reads as a reserved one in
+// another script, in fullwidth forms or with characters that don't show copies
+// it, and that one that only looks like none doesn't.
+func TestSymbolCopiesInOtherForms(t *testing.T) {
+	for _, symbol := range []string{"ВСН", "ＢＣＨ", "B\u200bCH", "B.C.H", "bch", "ＵＳＤＴ", "UЅDТ", "ВІТ", "S0L", "ЅOL"} {
+		if !symbolCopies(symbol, reservedSymbolSkeletons) {
+			t.Errorf("%q doesn't copy a reserved symbol", symbol)
+		}
+	}
+	for _, symbol := range []string{"FBTC", "HASH", "東京", "ROACH", "BLT", "UNL", "IEO", "ITC", "SOI", "FLL"} {
+		if symbolCopies(symbol, reservedSymbolSkeletons) {
+			t.Errorf("%q copies a reserved symbol", symbol)
+		}
+	}
+}

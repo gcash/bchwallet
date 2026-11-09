@@ -84,14 +84,34 @@ func nameCopies(name, known string) bool {
 	return strings.Contains(name, known) || withinOneEdit(name, known)
 }
 
-// symbolSkeleton returns what a symbol reads as: the digits that read as letters
-// made those, and hyphens left out.  The CHIP has symbols in uppercase ASCII.
+// symbolSkeleton returns what a symbol reads as, in uppercase: compatibility
+// forms and other scripts' letters made the Latin ones they read as, the
+// digits that read as letters made those, and what doesn't show, spaces,
+// hyphens and other punctuation left out.  The CHIP has symbols in uppercase
+// ASCII, but nothing keeps a registry to it, and a fullwidth "ＢＣＨ", a
+// Cyrillic "ВСН" or a "BCH" with a zero-width space read as BCH.  Unlike a
+// name's skeleton, it keeps I and L apart, as they don't read alike in
+// uppercase, and a letter of another script that reads as either reads as I.
 func symbolSkeleton(symbol string) string {
 	var b strings.Builder
-	for _, r := range strings.ToUpper(symbol) {
-		switch r {
-		case '-':
+	for _, r := range norm.NFKD.String(symbol) {
+		switch {
+		case unicode.In(r, unicode.Mn, unicode.Me):
 			continue
+		case unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.Is(unicode.Cf, r):
+			continue
+		}
+		if r > unicode.MaxASCII {
+			if like, ok := lookAlikeLetters[r]; ok {
+				r = like
+			} else if like, ok := lookAlikeLetters[unicode.ToLower(r)]; ok {
+				r = like
+			}
+			if r == 'l' {
+				r = 'I'
+			}
+		}
+		switch r = unicode.ToUpper(r); r {
 		case '0':
 			r = 'O'
 		case '1':
