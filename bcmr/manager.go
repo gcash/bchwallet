@@ -597,22 +597,23 @@ func (m *Manager) startReads(ctx context.Context, states []*State) {
 // filter headers were rolled back to, and the next cycle scan them again.
 func (m *Manager) rolledBack(height int32) {
 	backend, ok := m.cfg.Backend.(interface {
-		RolledBack(*State, int32) (bool, error)
+		RolledBack([]*State, int32) ([]*State, error)
 	})
 	if !ok {
 		return
 	}
 	log.Infof("Scanning the tokens' blocks above %d again, as their filters were wrong", height)
+	states := make([]*State, 0, len(m.states))
 	for _, state := range m.states {
-		changed, err := backend.RolledBack(state, height)
-		if err != nil {
-			log.Warnf("Unable to scan token %v again above %d: %v", state.Category, height, err)
-			continue
-		}
-		if changed {
-			m.save(state)
-		}
+		states = append(states, state)
 	}
+	// Together, as the block they're set back to is the same, and in one
+	// write.  What changed before an error is kept.
+	changed, err := backend.RolledBack(states, height)
+	if err != nil {
+		log.Warnf("Unable to scan the tokens again above %d: %v", height, err)
+	}
+	m.saveAll(changed)
 	m.lastFull, m.lastFailed = time.Time{}, time.Time{}
 }
 

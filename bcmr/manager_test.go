@@ -1629,10 +1629,12 @@ type rollbackBackend struct {
 	rolledBack chan int32
 }
 
-func (b *rollbackBackend) RolledBack(state *State, height int32) (bool, error) {
-	state.ScannedTo = height
+func (b *rollbackBackend) RolledBack(states []*State, height int32) ([]*State, error) {
+	for _, state := range states {
+		state.ScannedTo = height
+	}
 	b.rolledBack <- height
-	return true, nil
+	return states, nil
 }
 
 // TestManagerFilterRollback ensures the Manager has the backend set back every
@@ -2019,6 +2021,36 @@ func TestManagerSavesTogether(t *testing.T) {
 	}
 }
 
+// TestManagerRollbackSavesTogether ensures the states a rollback of the filter
+// headers set back are saved in one write.
+func TestManagerRollbackSavesTogether(t *testing.T) {
+	db := &countingDB{DB: testDB(t)}
+	store, err := NewStore(db, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &rollbackBackend{&fakeBackend{}, make(chan int32, 1)}
+	m, err := NewManager(Config{Backend: backend, Store: store, AutoLoad: always})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for b := range byte(5) {
+		m.states[chainhash.Hash{0x72, b}] = &State{Category: chainhash.Hash{0x72, b}, ScannedTo: 100}
+	}
+	db.writes.Store(0)
+	m.rolledBack(77)
+	if got := db.writes.Load(); got != 1 {
+		t.Fatalf("%d write transactions", got)
+	}
+	stored, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 5 || stored[chainhash.Hash{0x72, 3}].ScannedTo != 77 {
+		t.Fatalf("%d stored", len(stored))
+	}
+}
+
 // TestManagerKeepsTypesNotStored ensures NFT types that couldn't be stored are
 // kept until a later save stores them, without reading the registry again.
 func TestManagerKeepsTypesNotStored(t *testing.T) {
@@ -2093,8 +2125,8 @@ type rollingBackend struct {
 	*fakeBackend
 }
 
-func (rollingBackend) RolledBack(*State, int32) (bool, error) {
-	return false, nil
+func (rollingBackend) RolledBack([]*State, int32) ([]*State, error) {
+	return nil, nil
 }
 
 // TestManagerParsesOnce ensures tokens that share a download share its parsing,

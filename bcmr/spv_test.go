@@ -1594,14 +1594,14 @@ func TestSPVRolledBack(t *testing.T) {
 	b := NewSPVBackend(c, hintsFor(t, 50))
 	state := &State{ScannedTo: 100, AuthbaseScripts: [][]byte{{1}}, GenesisHeight: 90,
 		AuthbaseSearched: true}
-	changed, err := b.RolledBack(state, 80)
-	if err != nil || !changed {
+	changed, err := b.RolledBack([]*State{state}, 80)
+	if err != nil || len(changed) != 1 {
 		t.Fatalf("changed %v, %v", changed, err)
 	}
 	if state.ScannedTo != 80 || state.ScannedHash != c.blocks[79].BlockHash() || state.AuthbaseSearched {
 		t.Fatalf("%+v", state)
 	}
-	if changed, _ := b.RolledBack(state, 85); changed {
+	if changed, _ := b.RolledBack([]*State{state}, 85); len(changed) != 0 {
 		t.Fatal("a rollback above the scan changed it")
 	}
 
@@ -1609,11 +1609,70 @@ func TestSPVRolledBack(t *testing.T) {
 	// ended below the rollback stands.
 	state = &State{ScannedTo: 100, AuthbaseScripts: [][]byte{{1}}, GenesisHeight: 30,
 		AuthbaseSearched: true}
-	if changed, err := b.RolledBack(state, 20); err != nil || !changed {
+	if changed, err := b.RolledBack([]*State{state}, 20); err != nil || len(changed) != 1 {
 		t.Fatalf("changed %v, %v", changed, err)
 	}
 	if state.ScannedTo != 50 || !state.AuthbaseSearched {
 		t.Fatalf("%+v", state)
+	}
+}
+
+// hashCounting is a chain that counts the hashes asked for, and fails them if
+// fail is set.
+type hashCounting struct {
+	*fakeChain
+	hashes int
+	fail   bool
+}
+
+func (c *hashCounting) GetBlockHash(height int64) (*chainhash.Hash, error) {
+	c.hashes++
+	if c.fail {
+		return nil, errors.New("no hash")
+	}
+	return c.fakeChain.GetBlockHash(height)
+}
+
+// TestSPVRolledBackWithoutHash ensures a rollback whose block hash can't be read
+// leaves the scans as they were, but still sets back each search that reached
+// above it, the later states' too, and says it failed.
+func TestSPVRolledBackWithoutHash(t *testing.T) {
+	c := &hashCounting{fakeChain: newFakeChain(100), fail: true}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	scanned := &State{ScannedTo: 100}
+	searched := &State{ScannedTo: 100, AuthbaseScripts: [][]byte{{1}}, GenesisHeight: 90, AuthbaseSearched: true}
+	changed, err := b.RolledBack([]*State{scanned, searched}, 80)
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if scanned.ScannedTo != 100 || searched.ScannedTo != 100 || searched.AuthbaseSearched {
+		t.Fatalf("scanned %d, %d, searched %v", scanned.ScannedTo, searched.ScannedTo, searched.AuthbaseSearched)
+	}
+	if len(changed) != 1 || changed[0] != searched {
+		t.Fatalf("%d states changed", len(changed))
+	}
+}
+
+// TestSPVRolledBackTogether ensures a rollback of many states looks up the hash
+// of the block they're set back to once, and returns only those it changed.
+func TestSPVRolledBackTogether(t *testing.T) {
+	c := &hashCounting{fakeChain: newFakeChain(100)}
+	b := NewSPVBackend(c, hintsFor(t, 50))
+	var states []*State
+	for range 5 {
+		states = append(states, &State{ScannedTo: 100})
+	}
+	below := &State{ScannedTo: 70}
+	states = append(states, below)
+	changed, err := b.RolledBack(states, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.hashes != 1 {
+		t.Fatalf("%d hashes looked up", c.hashes)
+	}
+	if len(changed) != 5 || slices.Contains(changed, below) {
+		t.Fatalf("%d states changed", len(changed))
 	}
 }
 
@@ -1636,7 +1695,7 @@ func TestSPVRolledBackFindsHiddenSpend(t *testing.T) {
 	}
 
 	c.hidden = nil
-	if _, err := b.RolledBack(state, 60); err != nil {
+	if _, err := b.RolledBack([]*State{state}, 60); err != nil {
 		t.Fatal(err)
 	}
 	resolve(t, b, state)

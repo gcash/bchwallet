@@ -90,25 +90,36 @@ func (b *SPVBackend) floor() int32 {
 // neutrino rolled back the filter headers to it, having found them wrong above
 // it, so that the filters of those blocks, which could have hidden a spend or a
 // genesis, are read again.  The hints table vouches for what's below its height.
-// It returns whether the state changed.
-func (b *SPVBackend) RolledBack(state *State, height int32) (bool, error) {
+// It takes every state at once, as the block they're set back to is the same,
+// and returns those it changed.  If that block's hash can't be read, the
+// scans are left as they were and the error returned, but the searches are
+// still set back, as they need no hash.
+func (b *SPVBackend) RolledBack(states []*State, height int32) ([]*State, error) {
 	height = max(height, b.floor())
-	changed := false
-	if state.ScannedTo > height {
-		hash, err := b.source.GetBlockHash(int64(height))
-		if err != nil {
-			return false, err
+	var hash *chainhash.Hash
+	var hashErr error
+	var changed []*State
+	for _, state := range states {
+		was := len(changed)
+		if state.ScannedTo > height {
+			if hash == nil && hashErr == nil {
+				hash, hashErr = b.source.GetBlockHash(int64(height))
+			}
+			if hashErr == nil {
+				state.ScannedTo, state.ScannedHash = height, *hash
+				changed = append(changed, state)
+			}
 		}
-		state.ScannedTo, state.ScannedHash = height, *hash
-		changed = true
-	}
 
-	// An authbase search that found nothing reached into those blocks.
-	if state.AuthbaseSearched && len(state.AuthbaseScripts) > 0 && state.GenesisHeight-1 > height {
-		state.AuthbaseSearched = false
-		changed = true
+		// An authbase search that found nothing reached into those blocks.
+		if state.AuthbaseSearched && len(state.AuthbaseScripts) > 0 && state.GenesisHeight-1 > height {
+			state.AuthbaseSearched = false
+			if len(changed) == was {
+				changed = append(changed, state)
+			}
+		}
 	}
-	return changed, nil
+	return changed, hashErr
 }
 
 // Prepare gives each state that has no links its starting point: the table's
