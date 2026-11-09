@@ -26,6 +26,7 @@ type fakeBackend struct {
 	pubs      map[chainhash.Hash]*Publication
 	prepared  []chainhash.Hash
 	forgotten []chainhash.Hash
+	prepare   func(states []*State)
 	advance   func(states []*State, save func(*State)) error
 }
 
@@ -36,6 +37,10 @@ func (b *fakeBackend) Forget(category chainhash.Hash) {
 }
 
 func (b *fakeBackend) Prepare(_ context.Context, states []*State) error {
+	if b.prepare != nil {
+		b.prepare(states)
+		return nil
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, state := range states {
@@ -1864,5 +1869,70 @@ func TestManagerReadsEvictedTypes(t *testing.T) {
 	}
 	if g.m.NFTTypes(plain) != nil || len(g.m.evicted) != 0 {
 		t.Fatalf("types of a token without any: %v", g.m.evicted)
+	}
+}
+
+// TestManagerSavesTogether ensures a cycle writes the tokens it takes on in one
+// transaction, those it prepared in another, and those it followed in a third.
+func TestManagerSavesTogether(t *testing.T) {
+	db := &countingDB{DB: testDB(t)}
+	store, err := NewStore(db, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeBackend{
+		prepare: func(states []*State) {
+			for _, state := range states {
+				state.ScannedTo = 1
+			}
+		},
+		advance: func(states []*State, _ func(*State)) error {
+			for _, state := range states {
+				state.Status = StatusVerified
+			}
+			return nil
+		},
+	}
+	m, err := NewManager(Config{Backend: backend, Store: store, AutoLoad: always})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Tokens([]chainhash.Hash{{0x71, 1}, {0x71, 2}, {0x71, 3}})
+	db.writes.Store(0)
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.writes.Load(); got != 3 {
+		t.Fatalf("%d write transactions", got)
+	}
+	for _, info := range m.Tokens([]chainhash.Hash{{0x71, 1}, {0x71, 2}, {0x71, 3}}) {
+		if info.Status != StatusVerified {
+			t.Fatalf("%+v", info)
+		}
+	}
+}
+
+// TestManagerKeepsTypesNotStored ensures NFT types that couldn't be stored are
+// kept until a later save stores them, without reading the registry again.
+func TestManagerKeepsTypesNotStored(t *testing.T) {
+	category := chainhash.Hash{0x58}
+	f := newManagerFixture(t, category, collectionFor(category, "Set"), nil, always)
+	dir := f.m.cfg.Store.typesDir
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0700) }()
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.m.NFTTypes(category)["01"].Name; got != "One" || f.hits.Load() != 1 {
+		t.Fatalf("%d reads, %q", f.hits.Load(), got)
 	}
 }

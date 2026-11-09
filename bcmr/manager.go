@@ -421,9 +421,7 @@ func (m *Manager) cycle(ctx context.Context) error {
 	if err := m.cfg.Backend.Prepare(ctx, states); err != nil {
 		return err
 	}
-	for _, state := range states {
-		m.save(state)
-	}
+	m.saveAll(states)
 	m.startReads(ctx, states)
 
 	// A read that comes back during a long scan shows at its next save, and
@@ -437,9 +435,7 @@ func (m *Manager) cycle(ctx context.Context) error {
 		return err
 	}
 	m.startReads(ctx, states)
-	for _, state := range states {
-		m.save(state)
-	}
+	m.saveAll(states)
 	m.lastTip, m.lastFull = tip, time.Now()
 	return nil
 }
@@ -479,6 +475,7 @@ func (m *Manager) takeWanted() bool {
 			asked = true
 		}
 	}
+	var created []*State
 	for category, refresh := range wanted {
 		state, ok := m.states[category]
 		if !ok {
@@ -487,7 +484,7 @@ func (m *Manager) takeWanted() bool {
 			state = &State{Category: category}
 			m.states[category] = state
 			m.forgetWaiting(category)
-			m.save(state)
+			created = append(created, state)
 		}
 		if refresh {
 			m.reread[category] = struct{}{}
@@ -502,6 +499,7 @@ func (m *Manager) takeWanted() bool {
 			state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
 		}
 	}
+	m.saveAll(created)
 	return asked || len(wanted) != 0
 }
 
@@ -773,33 +771,48 @@ func retryWait(tries uint) time.Duration {
 	return min(retryInterval<<(tries-1), maxRetryInterval)
 }
 
-// save stores a state and updates what the app sees.
+// save stores a state, and shows it.
 func (m *Manager) save(state *State) {
+	m.saveAll([]*State{state})
+}
+
+// saveAll stores states, in one write, and shows them.
+func (m *Manager) saveAll(states []*State) {
 	// A state Forget dropped is kept no more, as a scan can go on with it.
-	if m.states[state.Category] != state {
+	states = slices.DeleteFunc(slices.Clone(states), func(state *State) bool {
+		return m.states[state.Category] != state
+	})
+	if len(states) == 0 {
 		return
 	}
-	if err := m.cfg.Store.Put(state); err != nil {
-		log.Warnf("Unable to save token %v: %v", state.Category, err)
-	} else if state.Metadata != nil {
+	err := m.cfg.Store.PutAll(states)
+	if err != nil {
+		log.Warnf("Unable to save tokens: %v", err)
+	}
+	views := make([]TokenInfo, len(states))
+	pubs := make([]*Publication, len(states))
+	for i, state := range states {
 		// The store has the types now, and reads them when they're asked
 		// for.  They go before the view is shared, as any goroutine reads it.
-		state.Metadata.NFTTypes = nil
+		if err == nil && state.Metadata != nil {
+			state.Metadata.NFTTypes = nil
+		}
+		views[i], pubs[i] = m.viewOf(state), state.CurrentPublication()
 	}
-	view := m.viewOf(state)
-	pub := state.CurrentPublication()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// One Forget was asked about shows no more, and is dropped at the next
-	// turn.
-	if _, forgotten := m.forgotten[state.Category]; forgotten {
-		return
-	}
-	m.views[state.Category] = view
-	if pub != nil {
-		m.pubURIs[state.Category] = pub.URIs
-	} else {
-		delete(m.pubURIs, state.Category)
+	for i, state := range states {
+		// One Forget was asked about shows no more, and is dropped at the
+		// next turn.
+		if _, forgotten := m.forgotten[state.Category]; forgotten {
+			continue
+		}
+		m.views[state.Category] = views[i]
+		if pubs[i] != nil {
+			m.pubURIs[state.Category] = pubs[i].URIs
+		} else {
+			delete(m.pubURIs, state.Category)
+		}
 	}
 }
 

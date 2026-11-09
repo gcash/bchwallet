@@ -414,54 +414,87 @@ func typesVersion(state *State) [sha256.Size]byte {
 
 // Put stores a state.
 func (s *Store) Put(state *State) error {
-	light := *state
-	var types map[string]NFTType
-	if state.Metadata != nil {
-		metadata := *state.Metadata
-		types, metadata.NFTTypes = metadata.NFTTypes, nil
-		light.Metadata = &metadata
+	return s.PutAll([]*State{state})
+}
+
+// PutAll stores states, writing those that changed to the database in one
+// transaction.  One whose NFT types can't be stored isn't, and the others are.
+func (s *Store) PutAll(states []*State) error {
+	type put struct {
+		category        chainhash.Hash
+		value           []byte
+		digest, version [sha256.Size]byte
 	}
-	var value bytes.Buffer
-	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
-		return err
+	var errs []error
+	puts := make([]put, 0, len(states))
+	for _, state := range states {
+		light := *state
+		var types map[string]NFTType
+		if state.Metadata != nil {
+			metadata := *state.Metadata
+			types, metadata.NFTTypes = metadata.NFTTypes, nil
+			light.Metadata = &metadata
+		}
+		var value bytes.Buffer
+		if err := gob.NewEncoder(&value).Encode(&light); err != nil {
+			errs = append(errs, fmt.Errorf("token %v: %w", state.Category, err))
+			continue
+		}
+		digest := sha256.Sum256(value.Bytes())
+		version := typesVersion(state)
+		last, stored := s.last[state.Category]
+		lastTypes, storedTypes := s.lastTypes[state.Category]
+		sameState := stored && last == digest
+		sameTypes := storedTypes && lastTypes == version
+		if sameState && sameTypes && len(types) == 0 {
+			continue
+		}
+		if err := s.putTypes(state, types, sameTypes); err != nil {
+			errs = append(errs, fmt.Errorf("token %v: %w", state.Category, err))
+			continue
+		}
+		// Types are only written apart from their state when it's as stored.
+		if !sameState {
+			puts = append(puts, put{state.Category, value.Bytes(), digest, version})
+		}
 	}
-	digest := sha256.Sum256(value.Bytes())
-	version := typesVersion(state)
-	last, stored := s.last[state.Category]
-	lastTypes, storedTypes := s.lastTypes[state.Category]
-	sameState := stored && last == digest
-	sameTypes := storedTypes && lastTypes == version
-	if sameState && sameTypes && len(types) == 0 {
+	if len(puts) == 0 {
+		return errors.Join(errs...)
+	}
+	err := walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
+		bucket := tx.ReadWriteBucket(bcmrBucket)
+		for _, put := range puts {
+			if err := bucket.Put(put.category[:], put.value); err != nil {
+				return err
+			}
+		}
 		return nil
+	})
+	if err != nil {
+		return errors.Join(append(errs, err)...)
 	}
-	// Types are only held once read from a registry, until they're stored,
-	// and are written even when they're as before, as their file may have
-	// been evicted.  Types that aren't held are as their file has them,
-	// which goes when there are none.
+	for _, put := range puts {
+		s.last[put.category], s.lastTypes[put.category] = put.digest, put.version
+	}
+	return errors.Join(errs...)
+}
+
+// putTypes stores a state's NFT types.  Types are only held once read from a
+// registry, until they're stored, and are written even when they're as before,
+// as their file may have been evicted.  Types that aren't held are as their file
+// has them, which goes when there are none.
+func (s *Store) putTypes(state *State, types map[string]NFTType, sameTypes bool) error {
 	switch {
 	case len(types) != 0:
-		var typesValue bytes.Buffer
-		if err := gob.NewEncoder(&typesValue).Encode(types); err != nil {
+		var encoded bytes.Buffer
+		if err := gob.NewEncoder(&encoded).Encode(types); err != nil {
 			return err
 		}
-		if err := s.changeTypes(state.Category, typesValue.Bytes()); err != nil {
-			return err
-		}
+		return s.changeTypes(state.Category, encoded.Bytes())
 
 	case !sameTypes && (state.Metadata == nil || state.Metadata.NFTTypeCount == 0):
-		if err := s.changeTypes(state.Category, nil); err != nil {
-			return err
-		}
+		return s.changeTypes(state.Category, nil)
 	}
-	if !sameState {
-		err := walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
-			return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], value.Bytes())
-		})
-		if err != nil {
-			return err
-		}
-	}
-	s.last[state.Category], s.lastTypes[state.Category] = digest, version
 	return nil
 }
 

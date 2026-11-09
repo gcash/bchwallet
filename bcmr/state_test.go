@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -631,5 +632,80 @@ func TestStoreRemembersEveryState(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("%d states", len(all))
+	}
+}
+
+// countingDB counts the write transactions on a database.
+type countingDB struct {
+	walletdb.DB
+	writes atomic.Int32
+}
+
+func (db *countingDB) BeginReadWriteTx() (walletdb.ReadWriteTx, error) {
+	db.writes.Add(1)
+	return db.DB.BeginReadWriteTx()
+}
+
+// TestStorePutAll ensures the states that changed are written in one
+// transaction, and that one whose NFT types can't be stored keeps none of the
+// others from being stored.
+func TestStorePutAll(t *testing.T) {
+	db, dir := &countingDB{DB: testDB(t)}, t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := []*State{
+		{Category: chainhash.Hash{0x70, 1}, ScannedTo: 1},
+		{Category: chainhash.Hash{0x70, 2}, ScannedTo: 2},
+		{Category: chainhash.Hash{0x70, 3}, ScannedTo: 3},
+	}
+	db.writes.Store(0)
+	if err := store.PutAll(states); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.writes.Load(); got != 1 {
+		t.Fatalf("%d write transactions", got)
+	}
+	if err := store.PutAll(states); err != nil || db.writes.Load() != 1 {
+		t.Fatalf("unchanged states were written: %v", err)
+	}
+
+	// Types read again for a state that's as stored are written by
+	// themselves.
+	typed := typesState()
+	typed.Category = chainhash.Hash{0x70, 4}
+	types := typed.Metadata.NFTTypes
+	if err := store.PutAll([]*State{typed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, typed.Category.String()+".gob"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db.writes.Store(0)
+	typed.Metadata.NFTTypes = types
+	if err := store.PutAll([]*State{typed}); err != nil || db.writes.Load() != 0 ||
+		len(store.NFTTypes(typed.Category)) != 50 {
+
+		t.Fatalf("%d write transactions: %v", db.writes.Load(), err)
+	}
+
+	// Types that can't be written keep their state out, and the rest in.
+	typed = typesState()
+	typed.Category = chainhash.Hash{0x70, 5}
+	states[0].ScannedTo = 10
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0700) }()
+	if err := store.PutAll([]*State{typed, states[0]}); err == nil {
+		t.Fatal("no error for types that couldn't be written")
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := all[typed.Category]; ok || all[states[0].Category].ScannedTo != 10 {
+		t.Fatalf("%+v", all)
 	}
 }
