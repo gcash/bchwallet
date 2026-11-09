@@ -452,6 +452,11 @@ func (s *Store) PutAll(states []*State) error {
 			errs = append(errs, fmt.Errorf("token %v: %w", state.Category, err))
 			continue
 		}
+		// The store has the types now, and reads them when they're asked for,
+		// as for a state whose types were stored when another's weren't.
+		if types != nil {
+			state.Metadata.NFTTypes = nil
+		}
 		// Types are only written apart from their state when it's as stored.
 		if !sameState {
 			puts = append(puts, put{state.Category, value.Bytes(), digest, version})

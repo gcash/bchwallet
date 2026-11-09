@@ -104,15 +104,15 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 	}
 	state := typesState()
 	state.Category = chainhash.Hash{1}
+	// Put lets go of them once stored.
+	types := state.Metadata.NFTTypes
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
 	first := storedTypes(t, dir, state.Category)
-	if len(first) == 0 {
-		t.Fatal("no types stored")
+	if len(first) == 0 || state.Metadata.NFTTypes != nil {
+		t.Fatal("no types stored, or kept")
 	}
-	types := state.Metadata.NFTTypes
-	state.Metadata.NFTTypes = nil
 
 	// Writing other bytes under the key shows whether the next save writes them.
 	mark := []byte("unchanged")
@@ -147,7 +147,7 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 	}
 	got := all[state.Category]
 	if got == nil || got.ScannedTo != 100 || got.Metadata.NFTTypes != nil ||
-		!reflect.DeepEqual(store.NFTTypes(state.Category), state.Metadata.NFTTypes) {
+		!reflect.DeepEqual(store.NFTTypes(state.Category), types) {
 
 		t.Fatalf("%+v", got)
 	}
@@ -292,13 +292,14 @@ func TestStoreSnapshotTakesOver(t *testing.T) {
 	state := typesState()
 	state.Category = chainhash.Hash{3}
 	state.Metadata.NextSnapshot = time.Unix(1000, 0)
+	names := state.Metadata.NFTTypes
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
 	revealed := *state.Metadata
 	revealed.NextSnapshot = time.Time{}
 	revealed.NFTTypes = make(map[string]NFTType)
-	for name := range state.Metadata.NFTTypes {
+	for name := range names {
 		revealed.NFTTypes[name] = NFTType{Name: "Revealed"}
 	}
 	state.Metadata = &revealed
@@ -733,4 +734,29 @@ func (s *Store) forgetRecent(category chainhash.Hash) {
 	s.recent = slices.DeleteFunc(s.recent, func(recent recentTypes) bool {
 		return recent.category == category
 	})
+}
+
+// TestStorePutAllLetsGoOfStoredTypes ensures a state whose types were stored lets
+// go of them, though another's couldn't be, which keeps them for the next save.
+func TestStorePutAllLetsGoOfStoredTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, kept := typesState(), typesState()
+	stored.Category, kept.Category = chainhash.Hash{0x71, 1}, chainhash.Hash{0x71, 2}
+	// A directory where the file would go keeps it from being written.
+	if err := os.Mkdir(filepath.Join(dir, kept.Category.String()+".gob"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutAll([]*State{stored, kept}); err == nil {
+		t.Fatal("no error for types that couldn't be stored")
+	}
+	if stored.Metadata.NFTTypes != nil || kept.Metadata.NFTTypes == nil {
+		t.Fatalf("stored %d, kept %d", len(stored.Metadata.NFTTypes), len(kept.Metadata.NFTTypes))
+	}
+	if len(store.NFTTypes(stored.Category)) != 50 {
+		t.Fatal("the types weren't stored")
+	}
 }

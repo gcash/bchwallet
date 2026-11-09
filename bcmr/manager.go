@@ -850,14 +850,11 @@ func (m *Manager) saveAll(states []*State) {
 	if err != nil {
 		log.Warnf("Unable to save tokens: %v", err)
 	}
+	// PutAll let go of the types it stored, before the views are shared, as
+	// any goroutine reads them.
 	views := make([]TokenInfo, len(states))
 	pubs := make([]*Publication, len(states))
 	for i, state := range states {
-		// The store has the types now, and reads them when they're asked
-		// for.  They go before the view is shared, as any goroutine reads it.
-		if err == nil && state.Metadata != nil {
-			state.Metadata.NFTTypes = nil
-		}
 		views[i], pubs[i] = m.viewOf(state), state.CurrentPublication()
 	}
 	m.mu.Lock()
