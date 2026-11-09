@@ -382,14 +382,44 @@ func TestPassBlocksLetGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocks := &passBlocks{source: c, uses: map[int32]int{10: 2}, blocks: make(map[chainhash.Hash]*wire.MsgBlock)}
+	blocks := newPassBlocks(c, []*chainbcmr.Hint{{HeadHeight: 10}, {HeadHeight: 10}})
 	for i, tx := range []*wire.MsgTx{first, second} {
 		if _, err := blocks.readLink(context.Background(), tx.TxHash(), 10, hash); err != nil {
 			t.Fatal(err)
 		}
+		blocks.release(10)
 		if kept := len(blocks.blocks); kept != 1-i {
 			t.Fatalf("%d blocks kept after %d uses", kept, i+1)
 		}
+	}
+	if c.reads[*hash] != 1 {
+		t.Fatalf("the block was read %d times", c.reads[*hash])
+	}
+}
+
+// TestPassBlocksFailedStartLetsGo ensures a start that fails gives back the
+// uses it was counted for, so that the block it didn't get goes with the last
+// start that reads it, rather than staying until the pass ends.
+func TestPassBlocksFailedStartLetsGo(t *testing.T) {
+	c := newFakeChain(100)
+	first, second := spendOf(1, chainhash.Hash{2}), spendOf(2, chainhash.Hash{3})
+	c.put(10, first, second)
+	failing := chainbcmr.Hint{Category: chainhash.Hash{1}, Head: first.TxHash(), HeadHeight: 10}
+	starting := chainbcmr.Hint{Category: chainhash.Hash{6}, Head: second.TxHash(), HeadHeight: 10}
+	b := NewSPVBackend(c, hintsFor(t, 50, failing, starting))
+	blocks := newPassBlocks(c, []*chainbcmr.Hint{&failing, &starting})
+
+	c.failBlock = true
+	if err := b.startFromHint(context.Background(), blocks, &State{Category: failing.Category}, &failing); err == nil {
+		t.Fatal("a start whose block couldn't be read started")
+	}
+	c.failBlock = false
+	state := &State{Category: starting.Category}
+	if err := b.startFromHint(context.Background(), blocks, state, &starting); err != nil {
+		t.Fatal(err)
+	}
+	if state.Head() == nil || len(blocks.blocks) != 0 || len(blocks.uses) != 0 {
+		t.Fatalf("after the last start: %d blocks kept, uses %v", len(blocks.blocks), blocks.uses)
 	}
 }
 

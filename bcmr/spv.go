@@ -145,14 +145,11 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 	// Tokens whose links share a block read it once, and in the order of
 	// their heights, so that each block can go after its last use.
 	slices.SortFunc(starts, func(a, b start) int { return cmp.Compare(a.hint.HeadHeight, b.hint.HeadHeight) })
-	blocks := &passBlocks{source: b.source, uses: make(map[int32]int),
-		blocks: make(map[chainhash.Hash]*wire.MsgBlock)}
-	for _, start := range starts {
-		blocks.uses[start.hint.HeadHeight]++
-		if start.hint.Publication != nil {
-			blocks.uses[start.hint.Publication.Height]++
-		}
+	hints := make([]*chainbcmr.Hint, len(starts))
+	for i := range starts {
+		hints[i] = &starts[i].hint
 	}
+	blocks := newPassBlocks(b.source, hints)
 	for _, start := range starts {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -187,9 +184,16 @@ func (b *SPVBackend) Prepare(ctx context.Context, states []*State) error {
 
 // startFromHint sets a state from the table.  Everything is read first, so that
 // a block that can't be read leaves the state to try again rather than start
-// without its publication.
+// without its publication.  It gives back the uses of the blocks that the pass
+// counted for it, whether it starts or not, as one that fails partway would
+// otherwise keep the blocks it didn't get to until the pass ends.
 func (b *SPVBackend) startFromHint(ctx context.Context, blocks *passBlocks, state *State,
 	hint *chainbcmr.Hint) error {
+
+	defer blocks.release(hint.HeadHeight)
+	if hint.Publication != nil {
+		defer blocks.release(hint.Publication.Height)
+	}
 
 	hash, err := b.source.GetBlockHash(int64(hint.HeadHeight))
 	if err != nil {
@@ -225,30 +229,57 @@ func (b *SPVBackend) startFromHint(ctx context.Context, blocks *passBlocks, stat
 	return nil
 }
 
-// passBlocks reads the blocks of a pass's links, keeping each until its last use
-// of those counted.
+// passBlocks reads the blocks of a pass's links, keeping each until the last of
+// the starts that the pass counted it for, by height, is over.
 type passBlocks struct {
 	source spvSource
 	uses   map[int32]int
-	blocks map[chainhash.Hash]*wire.MsgBlock
+	blocks map[int32]passBlock
 }
 
-// readLink reads a transaction from its block, with its publication.
+// passBlock is a block a pass read, with its hash, as a block at a height that
+// a reorganization replaced isn't the one read.
+type passBlock struct {
+	hash  chainhash.Hash
+	block *wire.MsgBlock
+}
+
+// newPassBlocks returns the blocks of a pass over the hints, with a use counted
+// for each block of a hint's head and of its older publication.
+func newPassBlocks(source spvSource, hints []*chainbcmr.Hint) *passBlocks {
+	p := &passBlocks{source: source, uses: make(map[int32]int), blocks: make(map[int32]passBlock)}
+	for _, hint := range hints {
+		p.uses[hint.HeadHeight]++
+		if hint.Publication != nil {
+			p.uses[hint.Publication.Height]++
+		}
+	}
+	return p
+}
+
+// release gives back a use of the block at the height, which goes with its last.
+func (p *passBlocks) release(height int32) {
+	if p.uses[height]--; p.uses[height] <= 0 {
+		delete(p.uses, height)
+		delete(p.blocks, height)
+	}
+}
+
+// readLink reads a transaction from its block, with its publication, keeping the
+// block while starts that were counted for it are left.
 func (p *passBlocks) readLink(ctx context.Context, txid chainhash.Hash, height int32,
 	hash *chainhash.Hash) (*Link, error) {
 
-	block, ok := p.blocks[*hash]
-	if !ok {
+	kept, ok := p.blocks[height]
+	block := kept.block
+	if !ok || kept.hash != *hash {
 		var err error
 		if block, err = p.source.GetBlock(hash, ctx.Done()); err != nil {
 			return nil, err
 		}
-	}
-	p.uses[height]--
-	if p.uses[height] > 0 {
-		p.blocks[*hash] = block
-	} else {
-		delete(p.blocks, *hash)
+		if p.uses[height] > 0 {
+			p.blocks[height] = passBlock{*hash, block}
+		}
 	}
 	for _, tx := range block.Transactions {
 		if tx.TxHash() == txid {
