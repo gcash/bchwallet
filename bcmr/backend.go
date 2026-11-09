@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"time"
 
 	"github.com/gcash/bchd/btcjson"
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -31,16 +32,28 @@ type bcmrNode interface {
 // already trusts for everything else, so it needs no scanning of its own.
 type FullNodeBackend struct {
 	node bcmrNode
+
+	// waiting holds when the node's answer for a token was an error it
+	// didn't expect, for the run goroutine.
+	waiting map[chainhash.Hash]time.Time
 }
 
 // NewFullNodeBackend returns a backend on the node.
 func NewFullNodeBackend(node bcmrNode) *FullNodeBackend {
-	return &FullNodeBackend{node: node}
+	return &FullNodeBackend{node: node, waiting: make(map[chainhash.Hash]time.Time)}
+}
+
+// Forget has a token that waits try again at the next cycle, as asking for it
+// does.
+func (b *FullNodeBackend) Forget(category chainhash.Hash) {
+	delete(b.waiting, category)
 }
 
 // Prepare reads each identity.  The answer is the whole of it, so it's Verified
 // at once.  A node without the index leaves the states Unavailable, and an
-// identity it doesn't know Failed.
+// identity it doesn't know Failed.  Any other error the node answers for a
+// token, or an answer that can't be used, has that token wait as a registry
+// read does, and the others go on.
 func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 	hash, height, err := b.node.GetBestBlock()
 	if err != nil {
@@ -49,6 +62,9 @@ func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 	for _, state := range states {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if last, ok := b.waiting[state.Category]; ok && time.Since(last) < retryInterval {
+			continue
 		}
 		result, err := b.node.GetBcmrIdentity(&state.Category, false, nil, 0)
 		var rpcErr *btcjson.RPCError
@@ -61,16 +77,27 @@ func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 		case errors.As(err, &rpcErr) && rpcErr.Code == btcjson.ErrRPCInvalidAddressOrKey:
 			state.Status = StatusFailed
 			continue
+		case errors.As(err, &rpcErr):
+			b.wait(state.Category, err)
+			continue
 		case err != nil:
 			return err
 		}
 		if err := applyIdentity(state, result); err != nil {
-			return err
+			b.wait(state.Category, err)
+			continue
 		}
+		delete(b.waiting, state.Category)
 		state.ScannedTo, state.ScannedHash = height, *hash
 		state.Status = StatusVerified
 	}
 	return nil
+}
+
+// wait has a token whose answer was an error wait before it's asked for again.
+func (b *FullNodeBackend) wait(category chainhash.Hash, err error) {
+	log.Debugf("Unable to read the identity of token %v: %v", category, err)
+	b.waiting[category] = time.Now()
 }
 
 // Advance has nothing to do, as Prepare reads the node's whole answer.
@@ -78,8 +105,9 @@ func (b *FullNodeBackend) Advance(context.Context, []*State, func(*State)) error
 	return nil
 }
 
-// applyIdentity sets a state from the node's answer.  A head in the node's
-// mempool has no height, which is fine here, as the node handles reorgs.
+// applyIdentity sets a state from the node's answer, or leaves it as it was if
+// the answer can't be used.  A head in the node's mempool has no height, which
+// is fine here, as the node handles reorgs.
 func applyIdentity(state *State, result *btcjson.GetBcmrIdentityResult) error {
 	head, err := chainhash.NewHashFromStr(result.Head.Txid)
 	if err != nil {
@@ -93,19 +121,22 @@ func applyIdentity(state *State, result *btcjson.GetBcmrIdentityResult) error {
 		}
 		link.BlockHash = *blockHash
 	}
+	var pub *Publication
+	if result.Publication != nil {
+		raw, err := hex.DecodeString(result.Publication.Hash)
+		if err != nil || len(raw) != 32 {
+			return errors.New("invalid publication hash")
+		}
+		pub = &Publication{URIs: result.Publication.URIs}
+		copy(pub.Hash[:], raw)
+	}
 
 	state.Links = []Link{link}
 	state.Older = nil
 	state.Burned = result.Status == "burned"
-	if result.Publication == nil {
+	if pub == nil {
 		return nil
 	}
-	raw, err := hex.DecodeString(result.Publication.Hash)
-	if err != nil || len(raw) != 32 {
-		return errors.New("invalid publication hash")
-	}
-	pub := &Publication{URIs: result.Publication.URIs}
-	copy(pub.Hash[:], raw)
 	if result.Publication.Txid == result.Head.Txid {
 		state.Links[0].Publication = pub
 	} else {

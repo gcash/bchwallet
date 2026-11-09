@@ -10,10 +10,13 @@ import (
 	"github.com/gcash/bchd/chaincfg/chainhash"
 )
 
-// fakeNode answers from a map of identities.
+// fakeNode answers from a map of identities, or with an error, for all or for
+// one, and counts what it's asked.
 type fakeNode struct {
 	identities map[chainhash.Hash]*btcjson.GetBcmrIdentityResult
 	err        error
+	errs       map[chainhash.Hash]error
+	asked      map[chainhash.Hash]int
 }
 
 func (n *fakeNode) GetBestBlock() (*chainhash.Hash, int32, error) {
@@ -23,8 +26,14 @@ func (n *fakeNode) GetBestBlock() (*chainhash.Hash, int32, error) {
 func (n *fakeNode) GetBcmrIdentity(authbase *chainhash.Hash, _ bool, _ *chainhash.Hash,
 	_ int) (*btcjson.GetBcmrIdentityResult, error) {
 
+	if n.asked != nil {
+		n.asked[*authbase]++
+	}
 	if n.err != nil {
 		return nil, n.err
+	}
+	if err := n.errs[*authbase]; err != nil {
+		return nil, err
 	}
 	result, ok := n.identities[*authbase]
 	if !ok {
@@ -97,5 +106,45 @@ func TestFullNodeBackendErrors(t *testing.T) {
 	node = &fakeNode{err: errors.New("connection lost")}
 	if err := NewFullNodeBackend(node).Prepare(context.Background(), []*State{state}); err == nil {
 		t.Fatal("a lost connection was taken for an answer")
+	}
+}
+
+// TestFullNodeBackendTokenErrors ensures an error the node answers for one token,
+// or an answer that can't be used, has that token wait, as it was, while the
+// others go on, and that asking for it again ends the wait.
+func TestFullNodeBackendTokenErrors(t *testing.T) {
+	good, failing, broken := chainhash.Hash{1}, chainhash.Hash{2}, chainhash.Hash{3}
+	head := btcjson.BcmrLinkResult{Txid: (chainhash.Hash{4}).String(), Height: 50}
+	node := &fakeNode{
+		identities: map[chainhash.Hash]*btcjson.GetBcmrIdentityResult{
+			good:   {Status: "active", Head: head},
+			broken: {Status: "active", Head: head, Publication: &btcjson.BcmrPublicationResult{Hash: "zz"}},
+		},
+		errs:  map[chainhash.Hash]error{failing: &btcjson.RPCError{Code: btcjson.ErrRPCInternal.Code, Message: "oops"}},
+		asked: make(map[chainhash.Hash]int),
+	}
+	b := NewFullNodeBackend(node)
+	states := []*State{{Category: failing}, {Category: broken}, {Category: good}}
+	if err := b.Prepare(context.Background(), states); err != nil {
+		t.Fatal(err)
+	}
+	if states[0].Status != StatusSearching || states[1].Status != StatusSearching || states[1].Links != nil ||
+		states[2].Status != StatusVerified {
+
+		t.Fatalf("%+v", states)
+	}
+	if err := b.Prepare(context.Background(), states); err != nil {
+		t.Fatal(err)
+	}
+	if node.asked[failing] != 1 || node.asked[broken] != 1 || node.asked[good] != 2 {
+		t.Fatalf("asked %v", node.asked)
+	}
+	b.waiting[failing] = b.waiting[failing].Add(-retryInterval)
+	b.Forget(broken)
+	if err := b.Prepare(context.Background(), states); err != nil {
+		t.Fatal(err)
+	}
+	if node.asked[failing] != 2 || node.asked[broken] != 2 {
+		t.Fatalf("asked %v", node.asked)
 	}
 }
