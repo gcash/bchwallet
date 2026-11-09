@@ -318,7 +318,7 @@ func (b *SPVBackend) genesisFinder(ctx context.Context, states []*State,
 	}
 	return outpoints, func(spend SpendFound) []wire.OutPoint {
 		state := byOutPoint[spend.OutPoint]
-		if !createsCategory(spend.Tx, state.Category) {
+		if _, ok := chainbcmr.FindGenesis(spend.Tx, state.Category); !ok {
 			return nil
 		}
 		// The next link can be in the same block, so the scan up starts
@@ -460,16 +460,6 @@ func (b *SPVBackend) searchNewBlocks(ctx context.Context, states []*State, tip i
 		tip, tipHash = now, nowHash
 	}
 	return tip, tipHash, false, nil
-}
-
-// createsCategory returns whether tx is the genesis of the category.
-func createsCategory(tx *wire.MsgTx, category chainhash.Hash) bool {
-	for _, genesis := range chainbcmr.Geneses(tx) {
-		if genesis.Category == category {
-			return true
-		}
-	}
-	return false
 }
 
 // Forget has a token that waits try again at the next cycle, as asking for it
