@@ -319,9 +319,10 @@ func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
 	state := typesState()
 	state.Category = chainhash.Hash{4}
+	// A state of then has no count of its types.
 	light := *state
 	metadata := *state.Metadata
-	metadata.NFTTypes = nil
+	metadata.NFTTypes, metadata.NFTTypeCount = nil, 0
 	light.Metadata = &metadata
 	var value, types bytes.Buffer
 	if err := gob.NewEncoder(&value).Encode(&light); err != nil {
@@ -365,8 +366,24 @@ func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := all[state.Category]; got == nil || len(store.NFTTypes(state.Category)) != 50 {
+	got := all[state.Category]
+	if got == nil || got.Metadata.NFTTypeCount != 50 || len(store.NFTTypes(state.Category)) != 50 {
 		t.Fatalf("%+v", got)
+	}
+
+	// It's written with its count, which the next start reads.
+	if err := store.Put(got); err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all, err = store.All(); err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category]; got.Metadata.NFTTypeCount != 50 || len(store.NFTTypes(state.Category)) != 50 {
+		t.Fatalf("%+v", got.Metadata)
 	}
 }
 

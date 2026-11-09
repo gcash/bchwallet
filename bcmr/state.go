@@ -545,6 +545,17 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 				}
 				return nil
 			}
+			// A state from when the types were in a bucket of their own has
+			// no count of them, though their file, which NewStore wrote, has
+			// them: it's counted from the file, once, and written anew.
+			if state.Metadata != nil && state.Metadata.NFTTypeCount == 0 {
+				if _, err := os.Stat(s.typesFile(state.Category)); err == nil {
+					if types, ok := s.readTypes(state.Category); ok && len(types) != 0 {
+						state.Metadata.NFTTypeCount = len(types)
+						return nil
+					}
+				}
+			}
 			// Any other is as was last written, so a save that changes
 			// nothing writes nothing.
 			s.last[state.Category] = sha256.Sum256(value)
