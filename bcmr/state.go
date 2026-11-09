@@ -395,6 +395,23 @@ func (s *Store) Put(state *State) error {
 	return nil
 }
 
+// Delete removes a state and its NFT types.  The types go first, so that one
+// that's left has the registry read again.
+func (s *Store) Delete(category chainhash.Hash) error {
+	if err := s.changeTypes(category, nil); err != nil {
+		return err
+	}
+	err := walletdb.Update(s.db, func(tx walletdb.ReadWriteTx) error {
+		return tx.ReadWriteBucket(bcmrBucket).Delete(category[:])
+	})
+	if err != nil {
+		return err
+	}
+	delete(s.last, category)
+	delete(s.lastTypes, category)
+	return nil
+}
+
 // All returns every state.  A state that can't be read is left out, and is
 // found again, and NFT types that can't be read are read from the registry
 // again.

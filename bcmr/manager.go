@@ -131,7 +131,7 @@ type registryRead struct {
 type Manager struct {
 	cfg Config
 
-	// mu guards views, wanted and asked.
+	// mu guards views, wanted, asked, pubURIs and forgotten.
 	mu     sync.Mutex
 	views  map[chainhash.Hash]TokenInfo
 	wanted map[chainhash.Hash]bool // true if asked for by Refresh.
@@ -144,6 +144,10 @@ type Manager struct {
 	// pubURIs are the URIs of each token's current publication, for a
 	// Refresh to tell whether any of them can be read now.
 	pubURIs map[chainhash.Hash][]string
+
+	// forgotten holds the tokens Forget was asked about, which the run
+	// goroutine has yet to drop.
+	forgotten map[chainhash.Hash]struct{}
 
 	// known are the Known tokens' names and symbols, by their skeletons, as
 	// every view is checked against them.
@@ -195,6 +199,8 @@ func NewManager(cfg Config) (*Manager, error) {
 		flights: make(map[flightKey][]*registryRead),
 		reading: make(map[chainhash.Hash]struct{}),
 		results: make(chan *registryRead),
+
+		forgotten: make(map[chainhash.Hash]struct{}),
 	}
 	for _, state := range states {
 		m.views[state.Category] = m.viewOf(state)
@@ -305,6 +311,50 @@ func (m *Manager) Refresh(category chainhash.Hash) error {
 	return nil
 }
 
+// Forget drops all that's kept of a token, as for one the user hid, so that one
+// asked about again starts as if never seen.  It's gone from what shows at
+// once, and the run goroutine drops its state, its NFT types and its tries at
+// its next turn.
+func (m *Manager) Forget(category chainhash.Hash) {
+	m.mu.Lock()
+	delete(m.views, category)
+	delete(m.wanted, category)
+	delete(m.asked, category)
+	delete(m.pubURIs, category)
+	m.forgotten[category] = struct{}{}
+	m.mu.Unlock()
+	m.signal()
+}
+
+// takeForgotten drops the tokens Forget was asked about.  A read under way for
+// one counts for nothing when it comes back, as its state is gone.
+func (m *Manager) takeForgotten() {
+	m.mu.Lock()
+	forgotten := m.forgotten
+	m.forgotten = make(map[chainhash.Hash]struct{})
+	m.mu.Unlock()
+	for category := range forgotten {
+		delete(m.states, category)
+		delete(m.reread, category)
+		for key := range m.tried {
+			if key.category == category {
+				delete(m.tried, key)
+			}
+		}
+		m.forgetWaiting(category)
+		if err := m.cfg.Store.Delete(category); err != nil {
+			log.Warnf("Unable to forget token %v: %v", category, err)
+		}
+	}
+}
+
+// forgetWaiting has the backend try a token that waits again at once.
+func (m *Manager) forgetWaiting(category chainhash.Hash) {
+	if backend, ok := m.cfg.Backend.(interface{ Forget(chainhash.Hash) }); ok {
+		backend.Forget(category)
+	}
+}
+
 func (m *Manager) signal() {
 	select {
 	case m.wake <- struct{}{}:
@@ -339,6 +389,7 @@ func (m *Manager) run(ctx context.Context) {
 // by a cycle that reaches its end.  It doesn't wait for registries, which come
 // in as their downloads end, so that a slow host holds up no chain.
 func (m *Manager) cycle(ctx context.Context) error {
+	m.takeForgotten()
 	if m.cfg.Ready != nil && !m.cfg.Ready() {
 		return nil
 	}
@@ -370,10 +421,12 @@ func (m *Manager) cycle(ctx context.Context) error {
 	}
 	m.startReads(ctx, states)
 
-	// A read that comes back during a long scan shows at its next save.
+	// A read that comes back during a long scan shows at its next save, and
+	// a token forgotten during it is dropped then.
 	save := func(state *State) {
 		m.save(state)
 		m.takeReads(ctx)
+		m.takeForgotten()
 	}
 	if err := m.cfg.Backend.Advance(ctx, states, save); err != nil {
 		return err
@@ -412,15 +465,16 @@ func (m *Manager) takeWanted() bool {
 	for category, refresh := range wanted {
 		state, ok := m.states[category]
 		if !ok {
+			// What a scan of one forgotten during it left with the
+			// backend is dropped too.
 			state = &State{Category: category}
 			m.states[category] = state
+			m.forgetWaiting(category)
 			m.save(state)
 		}
 		if refresh {
 			m.reread[category] = struct{}{}
-			if backend, ok := m.cfg.Backend.(interface{ Forget(chainhash.Hash) }); ok {
-				backend.Forget(category)
-			}
+			m.forgetWaiting(category)
 			state.RegistryFailed = false
 			if state.Status == StatusFailed || state.Status == StatusUnavailable {
 				state.Status = StatusSearching
@@ -458,7 +512,8 @@ func (m *Manager) startReads(ctx context.Context, states []*State) {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, ok := m.reading[state.Category]; ok {
+		// One forgotten during a scan isn't read.
+		if _, ok := m.reading[state.Category]; ok || m.states[state.Category] != state {
 			continue
 		}
 		read := m.registryDue(state)
@@ -536,6 +591,9 @@ func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
 	for _, waiting := range reads {
 		delete(m.reading, waiting.state.Category)
 		waiting.data, waiting.err = read.data, read.err
+		if m.states[waiting.state.Category] != waiting.state {
+			continue
+		}
 		if pub := waiting.state.CurrentPublication(); pub == nil || pub.Hash != waiting.pub.Hash ||
 			!slices.Equal(pub.URIs, waiting.pub.URIs) {
 
@@ -694,6 +752,10 @@ func retryWait(tries uint) time.Duration {
 
 // save stores a state and updates what the app sees.
 func (m *Manager) save(state *State) {
+	// A state Forget dropped is kept no more, as a scan can go on with it.
+	if m.states[state.Category] != state {
+		return
+	}
 	if err := m.cfg.Store.Put(state); err != nil {
 		log.Warnf("Unable to save token %v: %v", state.Category, err)
 	} else if state.Metadata != nil {
@@ -704,13 +766,18 @@ func (m *Manager) save(state *State) {
 	view := m.viewOf(state)
 	pub := state.CurrentPublication()
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	// One Forget was asked about shows no more, and is dropped at the next
+	// turn.
+	if _, forgotten := m.forgotten[state.Category]; forgotten {
+		return
+	}
 	m.views[state.Category] = view
 	if pub != nil {
 		m.pubURIs[state.Category] = pub.URIs
 	} else {
 		delete(m.pubURIs, state.Category)
 	}
-	m.mu.Unlock()
 }
 
 // viewOf returns what the app sees of a state.

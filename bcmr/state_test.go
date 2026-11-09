@@ -438,3 +438,46 @@ func TestStoreRemovesTypes(t *testing.T) {
 		t.Fatalf("%+v", got.Metadata)
 	}
 }
+
+// TestStoreDelete ensures a deleted state and its types are gone, and that the
+// same state stored again is written in full.
+func TestStoreDelete(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := typesState()
+	state.Category = chainhash.Hash{8}
+	types := state.Metadata.NFTTypes
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.NFTTypes(state.Category)) != 50 {
+		t.Fatal("the types weren't stored")
+	}
+	if err := store.Delete(state.Category); err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := all[state.Category]; ok || store.NFTTypes(state.Category) != nil ||
+		len(storedTypes(t, dir, state.Category)) != 0 {
+
+		t.Fatal("the state or its types are still there")
+	}
+
+	state.Metadata.NFTTypes = types
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	all, err = store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := all[state.Category]; !ok || len(store.NFTTypes(state.Category)) != 50 {
+		t.Fatal("the state stored again wasn't written")
+	}
+}

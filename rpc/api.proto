@@ -26,6 +26,7 @@ service WalletService {
 	rpc TokenBalances (TokenBalancesRequest) returns (TokenBalancesResponse);
 	rpc TokenMetadata (TokenMetadataRequest) returns (TokenMetadataResponse);
 	rpc RefreshTokenMetadata (RefreshTokenMetadataRequest) returns (RefreshTokenMetadataResponse);
+	rpc ForgetToken (ForgetTokenRequest) returns (ForgetTokenResponse);
 	rpc TokenIcon (TokenIconRequest) returns (TokenIconResponse);
 	rpc CurrentAddress (CurrentAddressRequest) returns (CurrentAddressResponse);
 	rpc GetTransactions (GetTransactionsRequest) returns (GetTransactionsResponse);
@@ -258,6 +259,14 @@ message RefreshTokenMetadataRequest {
 	string category = 1; // Hex, in the byte order of transaction IDs.
 }
 message RefreshTokenMetadataResponse {
+}
+
+// ForgetToken drops all the wallet keeps of a token, as for one the user hid,
+// so that one asked about again starts as if never seen.
+message ForgetTokenRequest {
+	string category = 1; // Hex, in the byte order of transaction IDs.
+}
+message ForgetTokenResponse {
 }
 
 message TokenIconRequest {

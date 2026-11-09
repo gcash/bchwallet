@@ -582,6 +582,21 @@ func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.Refresh
 	return &pb.RefreshTokenMetadataResponse{}, nil
 }
 
+func (s *walletServer) ForgetToken(ctx context.Context, req *pb.ForgetTokenRequest) (
+	*pb.ForgetTokenResponse, error) {
+
+	category, err := chainhash.NewHashFromStr(req.Category)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "category: %v", err)
+	}
+	manager := s.wallet.Load().TokenMetadata()
+	if manager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "the wallet has no chain client")
+	}
+	manager.Forget(*category)
+	return &pb.ForgetTokenResponse{}, nil
+}
+
 func (s *walletServer) TokenIcon(ctx context.Context, req *pb.TokenIconRequest) (
 	*pb.TokenIconResponse, error) {
 

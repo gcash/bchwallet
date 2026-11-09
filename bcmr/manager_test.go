@@ -5,8 +5,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,10 +22,17 @@ import (
 
 // fakeBackend gives states the publication of a token by its category.
 type fakeBackend struct {
-	mu       sync.Mutex
-	pubs     map[chainhash.Hash]*Publication
-	prepared []chainhash.Hash
-	advance  func(states []*State, save func(*State)) error
+	mu        sync.Mutex
+	pubs      map[chainhash.Hash]*Publication
+	prepared  []chainhash.Hash
+	forgotten []chainhash.Hash
+	advance   func(states []*State, save func(*State)) error
+}
+
+func (b *fakeBackend) Forget(category chainhash.Hash) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.forgotten = append(b.forgotten, category)
 }
 
 func (b *fakeBackend) Prepare(_ context.Context, states []*State) error {
@@ -128,6 +139,10 @@ func cycleAndRead(m *Manager) error {
 // waits for them.
 func readRegistries(t *testing.T, m *Manager, states []*State) {
 	t.Helper()
+	// The Manager reads only for the states it holds.
+	for _, state := range states {
+		m.states[state.Category] = state
+	}
 	m.startReads(context.Background(), states)
 	if err := waitReads(m); err != nil {
 		t.Fatal(err)
@@ -1641,5 +1656,177 @@ func TestManagerHidesAmountNames(t *testing.T) {
 		if types["02"].Name != "Gift 2" {
 			t.Errorf("known %v: another name is %q", known, types["02"].Name)
 		}
+	}
+}
+
+// TestManagerForget ensures a forgotten token is gone at once from what shows,
+// that nothing of it is kept after the next cycle, and that asked about again
+// it comes back as if never seen.
+func TestManagerForget(t *testing.T) {
+	category := chainhash.Hash{0x50}
+	f := newManagerFixture(t, category, collectionFor(category, "Set"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	first := f.m.Tokens([]chainhash.Hash{category})[0]
+	stored := *f.m.states[category]
+	if first.Metadata == nil || len(f.m.NFTTypes(category)) != 1 {
+		t.Fatalf("%+v", first)
+	}
+	f.m.tried[retryKey{category, [32]byte{9}}] = retry{time.Now(), 1}
+	f.m.reread[category] = struct{}{}
+	unseen := f.m.viewOf(&State{Category: category})
+
+	// It's gone at once, and neither a Refresh asked for before nor a save
+	// before the next cycle brings it back.
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
+	f.backend.forgotten = nil
+	f.m.Forget(category)
+	f.m.save(f.m.states[category])
+	if info := f.m.Peek([]chainhash.Hash{category})[0]; !reflect.DeepEqual(info, unseen) {
+		t.Fatalf("still shows %+v", info)
+	}
+	if _, ok := f.m.pubURIs[category]; ok {
+		t.Fatal("its URIs are still there")
+	}
+
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	all, err := f.m.cfg.Store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, held := f.m.states[category]
+	_, stillStored := all[category]
+	_, reread := f.m.reread[category]
+	if held || stillStored || reread || len(f.m.tried) != 0 || f.m.NFTTypes(category) != nil {
+		t.Fatalf("kept: state %v, stored %v, reread %v, tried %v", held, stillStored, reread, f.m.tried)
+	}
+	if _, err := os.Stat(f.m.cfg.Store.typesFile(category)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the types file: %v", err)
+	}
+	if !slices.Contains(f.backend.forgotten, category) {
+		t.Fatal("the backend wasn't told")
+	}
+
+	// Asked about again, it's read again, and is as it was the first time.
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	again := f.m.Tokens([]chainhash.Hash{category})[0]
+	if f.hits.Load() != 2 || !reflect.DeepEqual(again, first) || !reflect.DeepEqual(*f.m.states[category], stored) ||
+		len(f.m.NFTTypes(category)) != 1 {
+
+		t.Fatalf("%d reads, %+v, %+v", f.hits.Load(), again, f.m.states[category])
+	}
+}
+
+// TestManagerForgetDuringRead ensures a registry read that comes back for a token
+// forgotten meanwhile counts for nothing, and holds up no read of it asked
+// about again, which the Fetcher's cache serves.
+func TestManagerForgetDuringRead(t *testing.T) {
+	category := chainhash.Hash{0x51}
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{category: registryFor(category, "Token", "TOK")},
+		func(chainhash.Hash) {
+			arrived <- struct{}{}
+			<-release
+		})
+	m.Tokens([]chainhash.Hash{category})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-arrived
+	m.Forget(category)
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	all, err := m.cfg.Store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, stored := all[category]; stored || len(m.states) != 0 || len(m.tried) != 0 {
+		t.Fatalf("kept %+v, %v", all[category], m.tried)
+	}
+
+	m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Tokens([]chainhash.Hash{category})[0]; info.Metadata == nil {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// TestManagerForgottenReadFails ensures a read that fails for a token forgotten
+// meanwhile leaves no wait for the token asked about again.
+func TestManagerForgottenReadFails(t *testing.T) {
+	category := chainhash.Hash{0x55}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	state := &State{Category: category}
+	f.m.states[category] = state
+	read := &registryRead{state: state, pub: f.backend.pubs[category], err: ErrRegistryUnavailable}
+	state.Links = []Link{{Height: 1, Publication: read.pub}}
+	f.m.flights[keyOf(read)] = []*registryRead{read}
+	f.m.reading[category] = struct{}{}
+	f.m.Forget(category)
+	f.m.takeForgotten()
+	f.m.finishRead(context.Background(), read)
+	if len(f.m.tried) != 0 || len(f.m.reading) != 0 {
+		t.Fatalf("tried %v, reading %v", f.m.tried, f.m.reading)
+	}
+}
+
+// TestManagerForgetDuringScan ensures a token forgotten during a scan is dropped
+// at the scan's next save, which keeps it no more, and that the publication the
+// scan found starts no read.
+func TestManagerForgetDuringScan(t *testing.T) {
+	category := chainhash.Hash{0x52}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	pub := f.backend.pubs[category]
+	delete(f.backend.pubs, category)
+	f.backend.advance = func(states []*State, save func(*State)) error {
+		for _, state := range states {
+			f.m.Forget(state.Category)
+			state.Links = []Link{{Height: 1, Publication: pub}}
+			state.Status = StatusVerified
+			save(state)
+			save(state)
+		}
+		return nil
+	}
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	all, err := f.m.cfg.Store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := f.m.Peek([]chainhash.Hash{category})[0]
+	if _, stored := all[category]; stored || len(f.m.states) != 0 || len(f.m.flights) != 0 || info.Status != 0 {
+		t.Fatalf("kept %+v, %d reads, %+v", all[category], len(f.m.flights), info)
+	}
+
+	// What the scan left with the backend for it is dropped when it's asked
+	// about again.
+	f.backend.forgotten = nil
+	f.backend.advance = nil
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.backend.forgotten, category) {
+		t.Fatal("the backend wasn't told")
 	}
 }
