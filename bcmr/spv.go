@@ -581,8 +581,12 @@ func (b *SPVBackend) Advance(ctx context.Context, states []*State, save func(*St
 		}
 		reached, err := b.source.SearchSpends(outpoints, from, tip, follow, progress, ctx.Done())
 		if err != nil {
+			// What was scanned stays scanned, and a failure to keep it
+			// only costs scanning it again.
 			if reached >= from {
-				_ = b.markScanned(active, reached, tip, tipHash, save)
+				if err := b.markScanned(active, reached, tip, tipHash, save); err != nil {
+					log.Warnf("Unable to save a token search: %v", err)
+				}
 			}
 			return err
 		}
