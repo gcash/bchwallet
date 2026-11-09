@@ -255,6 +255,8 @@ message TokenMetadataResponse {
 	}
 	repeated Token tokens = 1; // In the order of the request.
 }
+// RefreshTokenMetadata answers ResourceExhausted when every location of the
+// token's registry is paused or resting, though it's read once one is back.
 message RefreshTokenMetadataRequest {
 	string category = 1; // Hex, in the byte order of transaction IDs.
 }
@@ -269,6 +271,8 @@ message ForgetTokenRequest {
 message ForgetTokenResponse {
 }
 
+// TokenIcon answers ResourceExhausted when every location of the icon is paused
+// or resting, and Unavailable when none gave it.
 message TokenIconRequest {
 	string uri = 1; // An icon_uri of TokenMetadata.
 	bool user_action = 2; // Asked for by the user, which goes before what loads by itself.

@@ -1989,6 +1989,8 @@ func (m *TokenMetadataResponse_Token) GetKnownSymbol() bool {
 	return false
 }
 
+// RefreshTokenMetadata answers ResourceExhausted when every location of the
+// token's registry is paused or resting, though it's read once one is back.
 type RefreshTokenMetadataRequest struct {
 	Category             string   `protobuf:"bytes,1,opt,name=category,proto3" json:"category,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
@@ -2131,6 +2133,8 @@ func (m *ForgetTokenResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_ForgetTokenResponse proto.InternalMessageInfo
 
+// TokenIcon answers ResourceExhausted when every location of the icon is paused
+// or resting, and Unavailable when none gave it.
 type TokenIconRequest struct {
 	Uri                  string   `protobuf:"bytes,1,opt,name=uri,proto3" json:"uri,omitempty"`
 	UserAction           bool     `protobuf:"varint,2,opt,name=user_action,json=userAction,proto3" json:"user_action,omitempty"`
