@@ -16,8 +16,8 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1/go.mod h1:ZXNYxsqcloTdSy/rNShjYzMhyjf0LaoftYK0p+A3h40=
-github.com/gcash/bchd v0.22.5-0.20261105074815-17b53fb21205 h1://9Hntf8UApk3vKOR0i0OGL9S4saAYhCjaRueGmyCow=
-github.com/gcash/bchd v0.22.5-0.20261105074815-17b53fb21205/go.mod h1:YX6X9xM89gexmUckgFPcnXlR8PLFMmhssCdswDh6VXk=
+github.com/gcash/bchd v0.22.5-0.20261109025102-38d11412c3d2 h1:z3g5UToxZlYcvZ6b68jEv059ZwM1u+PzTMU6LZZV7iI=
+github.com/gcash/bchd v0.22.5-0.20261109025102-38d11412c3d2/go.mod h1:YX6X9xM89gexmUckgFPcnXlR8PLFMmhssCdswDh6VXk=
 github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f h1:0SX+ItkFDQDEIAmrukIjt0yU1fImY2abRrWtYyAKov8=
 github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f/go.mod h1:PpfmXTLfjRp7Tf6v/DCGTRXHz+VFbiRcsoUxi7HvwlQ=
 github.com/gcash/bchutil v0.0.0-20261028060706-e320ade87427 h1:yn3A7reRZjmCsNOg0oWPFQIBPNOPqBLvz/DLy3DkE4s=

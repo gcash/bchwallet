@@ -6,7 +6,7 @@ require (
 	github.com/btcsuite/golangcrypto v0.0.0-20150304025918-53f62d9b43e8
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/davecgh/go-spew v1.1.1
-	github.com/gcash/bchd v0.22.5-0.20261105074815-17b53fb21205
+	github.com/gcash/bchd v0.22.5-0.20261109025102-38d11412c3d2
 	github.com/gcash/bchlog v0.0.0-20261027020323-7b5704c0a60f
 	github.com/gcash/bchutil v0.0.0-20261028060706-e320ade87427
 	github.com/gcash/bchwallet/walletdb v1.0.0
