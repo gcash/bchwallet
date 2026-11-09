@@ -414,6 +414,11 @@ func TestManagerLookAlike(t *testing.T) {
 		{"real token", "FAKE", true},
 		{"Other", "REAL", true},
 		{"Other", "OTHER", false},
+		{"Rеal  Tokеn", "FAKE", true},         // Cyrillic letters, and a space more.
+		{"Real Token Official", "FAKE", true}, // Holding the Known name.
+		{"Real Tokens", "FAKE", true},         // One character from it.
+		{"Bitcoin Cash", "FAKE", true},        // The coin's own name.
+		{"BCH Guru", "GURU", false},           // A name that only has the coin's in it.
 	} {
 		f := newManagerFixture(t, category, registryFor(category, test.name, test.symbol), known, always)
 		f.backend.advance = func([]*State, func(*State)) error { return nil }
@@ -700,7 +705,8 @@ func TestManagerReadAgainKeepsWhatShows(t *testing.T) {
 // a look-alike, also with no Known list, and that a class of a Known token's
 // symbol is too.
 func TestManagerReservedSymbol(t *testing.T) {
-	m := &Manager{cfg: Config{Known: map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}, {2}: {Name: "Listed", Symbol: "USDT"}}}}
+	known := map[chainhash.Hash]*Metadata{{1}: {Name: "Known", Symbol: "MUSD"}, {2}: {Name: "Listed", Symbol: "USDT"}}
+	m := &Manager{cfg: Config{Known: known}, known: knownNames(known)}
 	for symbol, want := range map[string][2]bool{"BCH": {true, true}, "BCH-X": {true, true}, "USD": {true, true},
 		"DOGE": {true, true}, "MUSD-A": {true, false}, "OTHER": {false, false}, "TOP": {false, false}} {
 
@@ -1534,5 +1540,29 @@ func TestManagerFilterRollback(t *testing.T) {
 	}
 	if stored[category].ScannedTo != 77 {
 		t.Fatalf("saved scanned to %d", stored[category].ScannedTo)
+	}
+}
+
+// TestManagerReservedName ensures a token named as the coin is a look-alike for
+// its name, and that the Known list's own tokens are no look-alikes of anything.
+func TestManagerReservedName(t *testing.T) {
+	category := chainhash.Hash{1}
+	f := newManagerFixture(t, category, registryFor(category, "Bitcoin  Cash", "FAKE"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; !info.LookAlike || !info.ReservedName {
+		t.Fatalf("%+v", info)
+	}
+
+	known := map[chainhash.Hash]*Metadata{category: {Name: "Bitcoin Cash", Symbol: "FAKE"}}
+	f = newManagerFixture(t, category, registryFor(category, "Bitcoin Cash", "FAKE"), known, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; info.LookAlike || info.ReservedName {
+		t.Fatalf("a Known token: %+v", info)
 	}
 }
