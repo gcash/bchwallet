@@ -740,6 +740,38 @@ func TestStoreTouchesTypesHourly(t *testing.T) {
 	}
 }
 
+// TestStoreKeepsNoMissingTypes ensures asking for a token whose types file isn't
+// there keeps nothing of it, so that the types read last stay.
+func TestStoreKeepsNoMissingTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown []chainhash.Hash
+	for b := range byte(maxRecentTypes) {
+		state := typesState()
+		state.Category = chainhash.Hash{0x63, b}
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+		store.NFTTypes(state.Category)
+		shown = append(shown, state.Category)
+	}
+	for b := range byte(3) {
+		if types := store.NFTTypes(chainhash.Hash{0x64, b}); types != nil {
+			t.Fatal("a token with no file has types")
+		}
+	}
+	for _, category := range shown {
+		if !slices.ContainsFunc(store.recent, func(recent recentTypes) bool {
+			return recent.category == category
+		}) {
+			t.Errorf("asking for tokens with no file pushed out %v", category)
+		}
+	}
+}
+
 // TestStoreRemembersEveryState ensures a state that comes back unchanged isn't
 // written again, whether it has metadata or not.
 func TestStoreRemembersEveryState(t *testing.T) {

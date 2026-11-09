@@ -293,6 +293,11 @@ func (s *Store) NFTTypes(category chainhash.Hash) map[string]NFTType {
 		_ = s.removeTypes(category)
 		return nil
 	}
+	// No file, as for a token with none or evicted, isn't kept, as it would
+	// take the place of types that are there.
+	if types == nil {
+		return nil
+	}
 	s.recent = slices.Insert(s.recent, 0, recentTypes{category, types})
 	if len(s.recent) > maxRecentTypes {
 		s.recent = s.recent[:maxRecentTypes]
