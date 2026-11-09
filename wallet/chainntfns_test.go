@@ -988,6 +988,36 @@ func TestRecoveryKeepsEachFind(t *testing.T) {
 	}
 }
 
+// TestRecoveryMarksEachBatchSynced checks that a scan for used addresses
+// that finds nothing marks the blocks synced batch by batch, so that the
+// synced height a phone shows moves on as it goes. Its batches were 2000
+// blocks, which a slow scan took long to finish, and a stopped one started
+// again.
+func TestRecoveryMarksEachBatchSynced(t *testing.T) {
+	w := newSyncedWallet(t, 1000)
+	client := &resyncChainClient{bestHeight: 1250}
+	birthday := waddrmgr.BlockStamp{}
+	if err := w.recovery(client, &birthday); err != nil {
+		t.Fatal(err)
+	}
+
+	requests, _ := client.scans()
+	var firsts, sizes []int32
+	for _, heights := range requests {
+		firsts = append(firsts, heights[0])
+		sizes = append(sizes, int32(len(heights)))
+	}
+	if want := []int32{1001, 1101, 1201}; !reflect.DeepEqual(firsts, want) {
+		t.Errorf("the batches started at %v, want %v", firsts, want)
+	}
+	if want := []int32{100, 100, 50}; !reflect.DeepEqual(sizes, want) {
+		t.Errorf("the batches had %v blocks, want %v", sizes, want)
+	}
+	if synced := w.Manager.SyncedTo(); synced.Height != 1250 {
+		t.Errorf("the wallet is synced to %d, want 1250", synced.Height)
+	}
+}
+
 // resyncChainClient is a mock SPV client whose chain has distinct blocks up to
 // bestHeight, whose filter headers are synced, and that records the blocks its
 // filter requests ask to scan and the heights its rescans start from.

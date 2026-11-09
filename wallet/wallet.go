@@ -56,8 +56,11 @@ const (
 
 	// recoveryBatchSize is the default number of blocks that will be
 	// scanned successively by the recovery manager, in the event that the
-	// wallet is started in recovery mode.
-	recoveryBatchSize = 2000
+	// wallet is started in recovery mode. The blocks of a batch without
+	// finds are marked synced when it ends, so it's small enough that the
+	// synced height moves on often, and a scan stopped part way loses
+	// little, but large enough that its requests cost little each.
+	recoveryBatchSize = 100
 )
 
 var (
@@ -767,7 +770,7 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		"window %d)", startHeight, bestHeight, w.recoveryWindow)
 
 	// We'll initialize the recovery manager with a default batch size of
-	// 2000.
+	// recoveryBatchSize.
 	recoveryMgr := NewRecoveryManager(
 		w.recoveryWindow, recoveryBatchSize, w.chainParams,
 	)
@@ -831,10 +834,10 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 			)
 		}
 
-		// We'll perform our recovery in batches of 2000 blocks.  It's
-		// possible for us to reach our best height without exceeding
-		// the recovery batch size, so we can proceed to commit our
-		// state to disk.
+		// We'll perform our recovery in batches of recoveryBatchSize
+		// blocks.  It's possible for us to reach our best height
+		// without exceeding the recovery batch size, so we can proceed
+		// to commit our state to disk.
 		//
 		// Also note that if there is a recovery interrupt we will need
 		// to restart the recovery from the next block.
