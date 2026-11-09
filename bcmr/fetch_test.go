@@ -279,6 +279,32 @@ func TestFetchTrim(t *testing.T) {
 	}
 }
 
+// TestFetchTrimKeepsRead ensures a kept file that's read again goes after those
+// read longer ago, however long ago it was stored.
+func TestFetchTrimKeepsRead(t *testing.T) {
+	f := newFetcher(nil, t.TempDir(), nil)
+	chunk := make([]byte, maxCacheSize/3+1)
+	var hashes [3][32]byte
+	for i := range hashes {
+		chunk[0] = byte(i)
+		hashes[i] = sha256.Sum256(chunk)
+	}
+	for i := range 2 {
+		chunk[0] = byte(i)
+		f.keep(hashes[i], chunk)
+		old := time.Now().Add(time.Duration(i-10) * time.Hour)
+		_ = os.Chtimes(f.cachePath(hashes[i]), old, old)
+	}
+	if f.cached(hashes[0]) == nil {
+		t.Fatal("the first wasn't kept")
+	}
+	chunk[0] = 2
+	f.keep(hashes[2], chunk)
+	if f.cached(hashes[0]) == nil || f.cached(hashes[1]) != nil || f.cached(hashes[2]) == nil {
+		t.Fatal("the one read longest ago wasn't the one dropped")
+	}
+}
+
 // TestFetchCancel ensures a cancelled fetch stops at once rather than trying
 // the other URIs.
 func TestFetchCancel(t *testing.T) {

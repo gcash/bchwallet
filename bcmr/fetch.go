@@ -58,8 +58,9 @@ const (
 	// maxRedirects bounds the redirects a download follows.
 	maxRedirects = 3
 
-	// maxCacheSize is what the registries kept on disk can take up.
-	maxCacheSize = 32 << 20
+	// maxCacheSize is what the registries kept on disk can take up, room
+	// for a few of the largest.
+	maxCacheSize = 64 << 20
 
 	// wellKnownPath is the CHIP's path for a URI that gives only a domain.
 	wellKnownPath = "/.well-known/bitcoin-cash-metadata-registry.json"
@@ -1164,7 +1165,8 @@ func (f *Fetcher) cachePath(hash [32]byte) string {
 	return filepath.Join(f.CacheDir, hex.EncodeToString(hash[:]))
 }
 
-// cached returns the kept file of a hash, if it's there and intact.
+// cached returns the kept file of a hash, if it's there and intact, and marks
+// it as read now, so that the cache drops those read longest ago first.
 func (f *Fetcher) cached(hash [32]byte) []byte {
 	if f.CacheDir == "" {
 		return nil
@@ -1173,6 +1175,8 @@ func (f *Fetcher) cached(hash [32]byte) []byte {
 	if err != nil || sha256.Sum256(data) != hash {
 		return nil
 	}
+	now := time.Now()
+	_ = os.Chtimes(f.cachePath(hash), now, now)
 	return data
 }
 
@@ -1193,8 +1197,8 @@ func (f *Fetcher) keep(hash [32]byte, data []byte) {
 	f.trim(hash)
 }
 
-// trim removes the oldest files until the cache fits, keeping the one just
-// stored.
+// trim removes the files read longest ago until the cache fits, keeping the one
+// just stored.
 func (f *Fetcher) trim(keep [32]byte) {
 	entries, err := os.ReadDir(f.CacheDir)
 	if err != nil {
