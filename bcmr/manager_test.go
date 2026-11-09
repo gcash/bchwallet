@@ -918,56 +918,55 @@ func TestManagerSlowHostHoldsNoOthers(t *testing.T) {
 	}
 }
 
-// TestManagerLimitsReads ensures only so many registries are read at once, and
-// that all of them are.
-func TestManagerLimitsReads(t *testing.T) {
+// TestManagerReadsAllAtOnce ensures registries are read at once with no limit
+// but the Fetcher's at each host: as many at once from two hosts as each allows.
+func TestManagerReadsAllAtOnce(t *testing.T) {
 	registries := make(map[chainhash.Hash][]byte)
 	var categories []chainhash.Hash
-	for i := range maxRegistryReads * 3 {
+	for i := range 2 * maxPerHost {
 		category := chainhash.Hash{byte(i + 1)}
 		registries[category] = registryFor(category, "Token", "TOK")
 		categories = append(categories, category)
 	}
 	arrived := make(chan struct{}, len(categories))
 	release := make(chan struct{})
-	var reading, most atomic.Int32
-	m, _ := readsFixture(t, registries, func(chainhash.Hash) {
-		now := reading.Add(1)
-		for {
-			seen := most.Load()
-			if now <= seen || most.CompareAndSwap(seen, now) {
-				break
-			}
-		}
+	hold := func(chainhash.Hash) {
 		arrived <- struct{}{}
 		<-release
-		reading.Add(-1)
-	})
-	m.Tokens(categories)
-	done := make(chan error)
-	go func() { done <- cycleAndRead(m) }()
+	}
+	m, _ := readsFixture(t, registries, hold)
 
-	for range maxRegistryReads {
-		select {
-		case <-arrived:
-		case <-time.After(30 * time.Second):
-			close(release)
-			<-done
-			t.Fatal("fewer reads at once than the limit")
+	// Half the tokens are at a second host.
+	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		category, err := chainhash.NewHashFromStr(strings.TrimPrefix(r.URL.Path, "/"))
+		if err != nil {
+			t.Error(err)
+			return
 		}
+		hold(*category)
+		_, _ = w.Write(registries[*category])
+	}))
+	t.Cleanup(second.Close)
+	pubs := m.cfg.Backend.(*fakeBackend).pubs
+	for _, category := range categories[maxPerHost:] {
+		pubs[category].URIs = []string{second.URL + "/" + category.String()}
 	}
 
-	// A wait that can only give reads over the limit time to show themselves.
-	time.Sleep(50 * time.Millisecond)
-	if most.Load() != maxRegistryReads {
-		t.Errorf("%d reads at once", most.Load())
-	}
-	close(release)
-	if err := <-done; err != nil {
+	m.Tokens(categories)
+	if err := m.cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if most.Load() != maxRegistryReads {
-		t.Errorf("%d reads at once", most.Load())
+	for range categories {
+		select {
+		case <-arrived:
+		case <-time.After(time.Minute):
+			close(release)
+			t.Fatal("fewer registries read at once than the hosts allow")
+		}
+	}
+	close(release)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
 	}
 	for i, info := range m.Peek(categories) {
 		if info.Metadata == nil {

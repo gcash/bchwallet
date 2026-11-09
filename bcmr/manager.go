@@ -102,9 +102,6 @@ type retry struct {
 	tries uint
 }
 
-// maxRegistryReads is how many registries are read at once.
-const maxRegistryReads = 4
-
 // registryRead is the read of a token's registry, and what it found.
 type registryRead struct {
 	state *State
@@ -399,7 +396,8 @@ func keyOf(read *registryRead) flightKey {
 }
 
 // startReads starts reading the registry of each state whose publication
-// changed, a few at once, unless one is under way.  Each read comes back to the
+// changed, unless one is under way.  The Fetcher limits the downloads at each
+// host.  Each read comes back to the
 // run goroutine, which the states and what's tried belong to, as finishRead.
 // Tokens can share a registry, so a read joins a download under way of the
 // same file from the same URIs.  One from other URIs reads them, as a stranger
@@ -421,9 +419,6 @@ func (m *Manager) startReads(ctx context.Context, states []*State) {
 		if sharers, ok := m.flights[key]; ok {
 			m.flights[key] = append(sharers, read)
 			m.reading[state.Category] = struct{}{}
-			continue
-		}
-		if len(m.flights) >= maxRegistryReads {
 			continue
 		}
 		m.flights[key] = []*registryRead{read}
