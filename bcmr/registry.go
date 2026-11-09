@@ -132,7 +132,13 @@ func ParseRegistry(data []byte, category chainhash.Hash, now time.Time) (*Metada
 	if err != nil {
 		return nil, err
 	}
-	history, ok := registry.Identities[category.String()]
+	return registry.metadata(category, now)
+}
+
+// metadata returns what a registry that was read says of a token as of now, as
+// ParseRegistry does.
+func (r *registryJSON) metadata(category chainhash.Hash, now time.Time) (*Metadata, error) {
+	history, ok := r.Identities[category.String()]
 	if !ok {
 		return nil, ErrNoMetadata
 	}

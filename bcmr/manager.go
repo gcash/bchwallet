@@ -125,6 +125,11 @@ type registryRead struct {
 
 	data []byte
 	err  error
+
+	// registry is the file read, parsed once for every read that used the
+	// download, or parseErr why it couldn't be.
+	registry *registryJSON
+	parseErr error
 }
 
 // Manager keeps the metadata of the tokens the app asks about.  The app asks
@@ -618,9 +623,11 @@ func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
 	key := keyOf(read)
 	reads := m.flights[key]
 	delete(m.flights, key)
+	// The file is parsed once, for all the reads that use it.
+	parse := sync.OnceValues(func() (*registryJSON, error) { return readRegistry(read.data) })
 	for _, waiting := range reads {
 		delete(m.reading, waiting.state.Category)
-		waiting.data, waiting.err = read.data, read.err
+		waiting.err = read.err
 		if m.states[waiting.state.Category] != waiting.state {
 			continue
 		}
@@ -628,6 +635,9 @@ func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
 			!slices.Equal(pub.URIs, waiting.pub.URIs) {
 
 			continue
+		}
+		if read.err == nil || errors.Is(read.err, ErrRegistryChanged) {
+			waiting.registry, waiting.parseErr = parse()
 		}
 		m.useRegistry(ctx, waiting)
 	}
@@ -681,13 +691,15 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 	if ctx.Err() != nil {
 		return
 	}
-	state, pub, same, data, err := read.state, read.pub, read.same, read.data, read.err
+	state, pub, same, err := read.state, read.pub, read.same, read.err
 	key := retryKey{state.Category, pub.Hash}
 	changed := errors.Is(err, ErrRegistryChanged)
 	var metadata *Metadata
 	if err == nil || changed {
-		var parseErr error
-		metadata, parseErr = ParseRegistry(data, state.Category, time.Now())
+		parseErr := read.parseErr
+		if parseErr == nil {
+			metadata, parseErr = read.registry.metadata(state.Category, time.Now())
+		}
 		if parseErr != nil {
 			log.Debugf("Registry of token %v: %v", state.Category, parseErr)
 			metadata = nil

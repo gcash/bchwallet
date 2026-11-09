@@ -2032,3 +2032,44 @@ type rollingBackend struct {
 func (rollingBackend) RolledBack(*State, int32) (bool, error) {
 	return false, nil
 }
+
+// TestManagerParsesOnce ensures tokens that share a download share its parsing,
+// and each gets its own metadata from it.
+func TestManagerParsesOnce(t *testing.T) {
+	first, second := chainhash.Hash{0x5a}, chainhash.Hash{0x5b}
+	file := []byte(fmt.Sprintf(`{"identities":{
+		"%s":{"2024-01-01T00:00:00.000Z":{"name":"First","token":{"category":"%s","symbol":"ONE"}}},
+		"%s":{"2024-01-01T00:00:00.000Z":{"name":"Second","token":{"category":"%s","symbol":"TWO"}}}}}`,
+		first, first, second, second))
+	f := newManagerFixture(t, first, file, nil, always)
+	pub := f.backend.pubs[first]
+	var reads []*registryRead
+	for _, category := range []chainhash.Hash{first, second} {
+		state := &State{Category: category, Links: []Link{{Height: 1, Publication: pub}}}
+		f.m.states[category] = state
+		reads = append(reads, &registryRead{state: state, pub: pub})
+	}
+	f.m.flights[keyOf(reads[0])] = reads
+	reads[0].data = file
+	f.m.finishRead(context.Background(), reads[0])
+	if reads[0].registry == nil || reads[0].registry != reads[1].registry {
+		t.Fatal("the file was parsed for each")
+	}
+	if f.m.states[first].Metadata.Name != "First" || f.m.states[second].Metadata.Name != "Second" {
+		t.Fatalf("%+v, %+v", f.m.states[first].Metadata, f.m.states[second].Metadata)
+	}
+}
+
+// TestManagerUnreadableFile ensures a registry that isn't one leaves the token
+// with nothing to show, marked as failed.
+func TestManagerUnreadableFile(t *testing.T) {
+	category := chainhash.Hash{0x5c}
+	f := newManagerFixture(t, category, []byte("not a registry"), nil, always)
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if info := f.m.Tokens([]chainhash.Hash{category})[0]; info.Metadata != nil || !info.RegistryFailed {
+		t.Fatalf("%+v", info)
+	}
+}
