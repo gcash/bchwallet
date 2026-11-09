@@ -148,11 +148,11 @@ type Manager struct {
 	// lastAsked is how many tokens had been asked about at the last cycle.
 	lastAsked int
 
-	// flights are the registry downloads under way, by the published hash,
-	// each with the reads that wait for it, reading the categories with a
-	// read among them, and results where each download's read comes back
-	// to the run goroutine.
-	flights map[[32]byte][]*registryRead
+	// flights are the registry downloads under way, by the published hash
+	// and the URIs, each with the reads that wait for it, reading the
+	// categories with a read among them, and results where each download's
+	// read comes back to the run goroutine.
+	flights map[flightKey][]*registryRead
 	reading map[chainhash.Hash]struct{}
 	results chan *registryRead
 
@@ -176,7 +176,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		tried:   make(map[retryKey]retry),
 		reread:  make(map[chainhash.Hash]struct{}),
 		wake:    make(chan struct{}, 1),
-		flights: make(map[[32]byte][]*registryRead),
+		flights: make(map[flightKey][]*registryRead),
 		reading: make(map[chainhash.Hash]struct{}),
 		results: make(chan *registryRead),
 	}
@@ -387,12 +387,24 @@ func (m *Manager) takeWanted() bool {
 	return asked || len(wanted) != 0
 }
 
+// flightKey is a download: a registry's hash and the URIs it's read from.
+type flightKey struct {
+	hash [32]byte
+	uris string
+}
+
+// keyOf returns the download of a read.
+func keyOf(read *registryRead) flightKey {
+	return flightKey{read.pub.Hash, strings.Join(read.pub.URIs, "\x00")}
+}
+
 // startReads starts reading the registry of each state whose publication
 // changed, a few at once, unless one is under way.  Each read comes back to the
 // run goroutine, which the states and what's tried belong to, as finishRead.
-// Tokens can share a registry, so a read joins a download of the same file
-// under way, which a file that matches the hash serves too, while anything else
-// only says something of the URIs that were tried.
+// Tokens can share a registry, so a read joins a download under way of the
+// same file from the same URIs.  One from other URIs reads them, as a stranger
+// can publish a token's hash with URIs that keep it waiting, and the Fetcher
+// has the first file that matches the hash serve both.
 func (m *Manager) startReads(ctx context.Context, states []*State) {
 	for _, state := range states {
 		if ctx.Err() != nil {
@@ -405,15 +417,16 @@ func (m *Manager) startReads(ctx context.Context, states []*State) {
 		if read == nil {
 			continue
 		}
-		if sharers, ok := m.flights[read.pub.Hash]; ok {
-			m.flights[read.pub.Hash] = append(sharers, read)
+		key := keyOf(read)
+		if sharers, ok := m.flights[key]; ok {
+			m.flights[key] = append(sharers, read)
 			m.reading[state.Category] = struct{}{}
 			continue
 		}
 		if len(m.flights) >= maxRegistryReads {
 			continue
 		}
-		m.flights[read.pub.Hash] = []*registryRead{read}
+		m.flights[key] = []*registryRead{read}
 		m.reading[state.Category] = struct{}{}
 
 		// A token the user refreshed goes ahead of those that load by
@@ -449,16 +462,12 @@ func (m *Manager) takeReads(ctx context.Context) {
 // and starts the reads that were left waiting for room.  A read whose token
 // published again meanwhile counts for nothing.
 func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
-	reads := m.flights[read.pub.Hash]
-	delete(m.flights, read.pub.Hash)
+	key := keyOf(read)
+	reads := m.flights[key]
+	delete(m.flights, key)
 	for _, waiting := range reads {
 		delete(m.reading, waiting.state.Category)
-		if waiting != read {
-			if read.err != nil && !slices.Equal(waiting.pub.URIs, read.pub.URIs) {
-				continue
-			}
-			waiting.data, waiting.err = read.data, read.err
-		}
+		waiting.data, waiting.err = read.data, read.err
 		if pub := waiting.state.CurrentPublication(); pub == nil || pub.Hash != waiting.pub.Hash ||
 			!slices.Equal(pub.URIs, waiting.pub.URIs) {
 

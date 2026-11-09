@@ -984,14 +984,17 @@ func sharedRegistry(first, second chainhash.Hash) []byte {
 		first, second))
 }
 
-// TestManagerSharedRegistryReadOnce ensures tokens with one registry don't each
-// download it, with no cache to find it in, and that it serves them all.
+// TestManagerSharedRegistryReadOnce ensures tokens with one registry at the same
+// URIs don't each download it, with no cache to find it in, and that it serves
+// them all.
 func TestManagerSharedRegistryReadOnce(t *testing.T) {
 	first, second := chainhash.Hash{1}, chainhash.Hash{2}
 	shared := sharedRegistry(first, second)
 	m, hits := readsFixture(t, map[chainhash.Hash][]byte{first: shared, second: shared},
 		func(chainhash.Hash) {})
 	m.cfg.Fetcher.CacheDir = ""
+	pubs := m.cfg.Backend.(*fakeBackend).pubs
+	pubs[second].URIs = pubs[first].URIs
 	m.Tokens([]chainhash.Hash{first, second})
 	if err := cycleAndRead(m); err != nil {
 		t.Fatal(err)
@@ -1311,8 +1314,13 @@ func TestManagerOneReadPerToken(t *testing.T) {
 		}
 	}
 	<-arrived
-	if reads := m.flights[sha256.Sum256(registry)]; len(reads) != 1 {
-		t.Fatalf("%d reads of the token under way", len(reads))
+	if len(m.flights) != 1 {
+		t.Fatalf("%d downloads under way", len(m.flights))
+	}
+	for _, reads := range m.flights {
+		if len(reads) != 1 {
+			t.Fatalf("%d reads of the token under way", len(reads))
+		}
 	}
 
 	// The read ends before the test, which would remove the cache under it.
@@ -1360,5 +1368,42 @@ func TestManagerRetryOutlastsRestart(t *testing.T) {
 	}
 	if m.tried[retryKey{category, [32]byte{1}}].tries != 1 {
 		t.Fatalf("a refresh didn't start the count again: %+v", m.tried)
+	}
+}
+
+// TestManagerStrangerSharesNoWait ensures a token whose registry hash another
+// publishes with URIs of its own, which keep their reader waiting, reads its own
+// URIs meanwhile, and that the file it gets serves the other too.
+func TestManagerStrangerSharesNoWait(t *testing.T) {
+	stranger, victim := chainhash.Hash{1}, chainhash.Hash{2}
+	shared := sharedRegistry(stranger, victim)
+	release := make(chan struct{})
+	defer close(release)
+	m, _ := readsFixture(t, map[chainhash.Hash][]byte{stranger: shared, victim: shared},
+		func(category chainhash.Hash) {
+			if category == stranger {
+				<-release
+			}
+		})
+	m.Tokens([]chainhash.Hash{stranger, victim})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Minute)
+	for m.Peek([]chainhash.Hash{victim})[0].Metadata == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the stranger's URIs held up the token")
+		}
+		select {
+		case read := <-m.results:
+			m.finishRead(context.Background(), read)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Peek([]chainhash.Hash{stranger})[0]; info.Metadata == nil || info.Metadata.Name != "One" {
+		t.Fatalf("the file didn't serve the stranger: %+v", info.Metadata)
 	}
 }
