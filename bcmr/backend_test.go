@@ -17,10 +17,11 @@ type fakeNode struct {
 	err        error
 	errs       map[chainhash.Hash]error
 	asked      map[chainhash.Hash]int
+	tip        byte
 }
 
 func (n *fakeNode) GetBestBlock() (*chainhash.Hash, int32, error) {
-	return &chainhash.Hash{0xaa}, 100, nil
+	return &chainhash.Hash{0xaa, n.tip}, 100 + int32(n.tip), nil
 }
 
 func (n *fakeNode) GetBcmrIdentity(authbase *chainhash.Hash, _ bool, _ *chainhash.Hash,
@@ -136,7 +137,7 @@ func TestFullNodeBackendTokenErrors(t *testing.T) {
 	if err := b.Prepare(context.Background(), states); err != nil {
 		t.Fatal(err)
 	}
-	if node.asked[failing] != 1 || node.asked[broken] != 1 || node.asked[good] != 2 {
+	if node.asked[failing] != 1 || node.asked[broken] != 1 || node.asked[good] != 1 {
 		t.Fatalf("asked %v", node.asked)
 	}
 	b.waiting[failing] = b.waiting[failing].Add(-retryInterval)
@@ -146,5 +147,44 @@ func TestFullNodeBackendTokenErrors(t *testing.T) {
 	}
 	if node.asked[failing] != 2 || node.asked[broken] != 2 {
 		t.Fatalf("asked %v", node.asked)
+	}
+}
+
+// TestFullNodeBackendReadAtTip ensures a token read at the tip isn't read again
+// until the next block, unless it's asked for again.
+func TestFullNodeBackendReadAtTip(t *testing.T) {
+	category := chainhash.Hash{1}
+	node := &fakeNode{
+		identities: map[chainhash.Hash]*btcjson.GetBcmrIdentityResult{
+			category: {Status: "active", Head: btcjson.BcmrLinkResult{Txid: (chainhash.Hash{4}).String(), Height: 50}},
+		},
+		asked: make(map[chainhash.Hash]int),
+	}
+	b := NewFullNodeBackend(node)
+	state := &State{Category: category}
+	prepare := func() int {
+		t.Helper()
+		before := node.asked[category]
+		if err := b.Prepare(context.Background(), []*State{state}); err != nil {
+			t.Fatal(err)
+		}
+		return node.asked[category] - before
+	}
+	if n := prepare(); n != 1 || state.Status != StatusVerified {
+		t.Fatalf("%d reads, %+v", n, state)
+	}
+	if n := prepare(); n != 0 {
+		t.Fatalf("%d reads at the same tip", n)
+	}
+	b.Forget(category)
+	if n := prepare(); n != 1 {
+		t.Fatalf("%d reads when asked for again", n)
+	}
+	if n := prepare(); n != 0 {
+		t.Fatalf("%d reads at the same tip after it was asked for again", n)
+	}
+	node.tip = 1
+	if n := prepare(); n != 1 {
+		t.Fatalf("%d reads at a new tip", n)
 	}
 }

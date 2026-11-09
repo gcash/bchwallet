@@ -34,26 +34,31 @@ type FullNodeBackend struct {
 	node bcmrNode
 
 	// waiting holds when the node's answer for a token was an error it
-	// didn't expect, for the run goroutine.
+	// didn't expect, and again the tokens asked for again, for the run
+	// goroutine.
 	waiting map[chainhash.Hash]time.Time
+	again   map[chainhash.Hash]struct{}
 }
 
 // NewFullNodeBackend returns a backend on the node.
 func NewFullNodeBackend(node bcmrNode) *FullNodeBackend {
-	return &FullNodeBackend{node: node, waiting: make(map[chainhash.Hash]time.Time)}
+	return &FullNodeBackend{node: node, waiting: make(map[chainhash.Hash]time.Time),
+		again: make(map[chainhash.Hash]struct{})}
 }
 
 // Forget has a token that waits try again at the next cycle, as asking for it
-// does.
+// does, and one read at the tip read again.
 func (b *FullNodeBackend) Forget(category chainhash.Hash) {
 	delete(b.waiting, category)
+	b.again[category] = struct{}{}
 }
 
 // Prepare reads each identity.  The answer is the whole of it, so it's Verified
 // at once.  A node without the index leaves the states Unavailable, and an
 // identity it doesn't know Failed.  Any other error the node answers for a
 // token, or an answer that can't be used, has that token wait as a registry
-// read does, and the others go on.
+// read does, and the others go on.  A token read at the tip isn't read again
+// until the next block, unless it's asked for again.
 func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 	hash, height, err := b.node.GetBestBlock()
 	if err != nil {
@@ -64,6 +69,11 @@ func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 			return err
 		}
 		if last, ok := b.waiting[state.Category]; ok && time.Since(last) < retryInterval {
+			continue
+		}
+		if _, again := b.again[state.Category]; !again && state.Status == StatusVerified &&
+			state.ScannedHash == *hash {
+
 			continue
 		}
 		result, err := b.node.GetBcmrIdentity(&state.Category, false, nil, 0)
@@ -91,6 +101,8 @@ func (b *FullNodeBackend) Prepare(ctx context.Context, states []*State) error {
 		state.ScannedTo, state.ScannedHash = height, *hash
 		state.Status = StatusVerified
 	}
+	// Every token asked for again was in this pass.
+	clear(b.again)
 	return nil
 }
 
