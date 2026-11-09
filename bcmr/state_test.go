@@ -31,7 +31,7 @@ func testDB(t *testing.T) walletdb.DB {
 // opening the store again keeps it.
 func TestStoreRoundTrip(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := store.Put(want); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db, dir)
+	store, err = NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +94,12 @@ func storedTypes(t *testing.T, dir string, category chainhash.Hash) []byte {
 	return stored
 }
 
-// TestStoreKeepsTypesApart ensures a state's NFT types come back, and that a save
-// for a new block doesn't write them.
+// TestStoreKeepsTypesApart ensures a state's NFT types come back, that a save for
+// a new block doesn't write them, and that types read again are written, though
+// they're as before, as their file may have been evicted.
 func TestStoreKeepsTypesApart(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +112,8 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 	if len(first) == 0 {
 		t.Fatal("no types stored")
 	}
+	types := state.Metadata.NFTTypes
+	state.Metadata.NFTTypes = nil
 
 	// Writing other bytes under the key shows whether the next save writes them.
 	mark := []byte("unchanged")
@@ -124,11 +127,18 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 	if !bytes.Equal(storedTypes(t, dir, state.Category), mark) {
 		t.Fatal("a new block wrote the types")
 	}
+	state.Metadata.NFTTypes = types
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(storedTypes(t, dir, state.Category), mark) {
+		t.Fatal("types read again weren't written")
+	}
 
 	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), first, 0600); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db, dir)
+	store, err = NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +158,7 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 // kept apart keeps them, and moves them at its next save.
 func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +182,7 @@ func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
 // their file have the registry read again.
 func TestStoreTypesThatCantMove(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +225,7 @@ func oldTypesState(t *testing.T, db walletdb.DB, category chainhash.Hash) *State
 // first, up to maxRecentTypes, and that types that change are read anew.
 func TestStoreKeepsRecentTypes(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +286,7 @@ func typesState() *State {
 // written, though the registry and the number of types are the same.
 func TestStoreSnapshotTakesOver(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +306,7 @@ func TestStoreSnapshotTakesOver(t *testing.T) {
 	if err := store.Put(state); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db, dir)
+	store, err = NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +350,7 @@ func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,11 +372,12 @@ func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
 	}
 }
 
-// TestStoreUnreadableTypes ensures a types file that can't be read has the
-// registry read again.
+// TestStoreUnreadableTypes ensures a types file that can't be read is removed,
+// so that the registry is read again when they're asked for, as for evicted
+// ones.
 func TestStoreUnreadableTypes(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,19 +390,15 @@ func TestStoreUnreadableTypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), []byte("torn"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	store, err = NewStore(db, dir)
+	store, err = NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if types := store.NFTTypes(state.Category); types != nil {
 		t.Fatalf("read a torn file: %v", types)
 	}
-	all, err := store.All()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := all[state.Category]; got.RegistryParser != 0 {
-		t.Fatalf("%+v", got)
+	if len(storedTypes(t, dir, state.Category)) != 0 {
+		t.Fatal("the torn file is still there")
 	}
 }
 
@@ -399,7 +406,7 @@ func TestStoreUnreadableTypes(t *testing.T) {
 // leaves no types file, and comes back without them.
 func TestStoreRemovesTypes(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +450,7 @@ func TestStoreRemovesTypes(t *testing.T) {
 // same state stored again is written in full.
 func TestStoreDelete(t *testing.T) {
 	db, dir := testDB(t), t.TempDir()
-	store, err := NewStore(db, dir)
+	store, err := NewStore(db, dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,5 +486,92 @@ func TestStoreDelete(t *testing.T) {
 	}
 	if _, ok := all[state.Category]; !ok || len(store.NFTTypes(state.Category)) != 50 {
 		t.Fatal("the state stored again wasn't written")
+	}
+}
+
+// TestStoreEvictsTypes ensures that past the limit the types asked for longest
+// ago are evicted first, but never those being stored or read last, and that
+// with no limit none are.
+func TestStoreEvictsTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(store *Store, b byte) chainhash.Hash {
+		t.Helper()
+		state := typesState()
+		state.Category = chainhash.Hash{0x60, b}
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+		return state.Category
+	}
+	age := func(category chainhash.Hash, hours int) {
+		t.Helper()
+		then := time.Now().Add(-time.Duration(hours) * time.Hour)
+		if err := os.Chtimes(filepath.Join(dir, category.String()+".gob"), then, then); err != nil {
+			t.Fatal(err)
+		}
+	}
+	there := func(categories ...chainhash.Hash) []bool {
+		t.Helper()
+		got := make([]bool, len(categories))
+		for i, category := range categories {
+			got[i] = len(storedTypes(t, dir, category)) != 0
+		}
+		return got
+	}
+	a, b, c := put(store, 1), put(store, 2), put(store, 3)
+	if got := there(a, b, c); !reflect.DeepEqual(got, []bool{true, true, true}) {
+		t.Fatalf("with no limit: %v", got)
+	}
+	size := int64(len(storedTypes(t, dir, a)))
+	age(a, 3)
+	age(b, 2)
+	age(c, 1)
+	limit := size*5/2 + 1
+
+	// Asking for a marks it as looked at now, so b and c, older, go.
+	store, err = NewStore(db, dir, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.NFTTypes(a)
+	store, err = NewStore(db, dir, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := put(store, 4)
+	if got := there(a, b, c, d); !reflect.DeepEqual(got, []bool{true, false, false, true}) {
+		t.Fatalf("after d: %v", got)
+	}
+
+	// The types read last stay, however long ago their file was asked for.
+	store.NFTTypes(a)
+	age(a, 5)
+	e := put(store, 5)
+	if got := there(a, d, e); !reflect.DeepEqual(got, []bool{true, false, true}) {
+		t.Fatalf("after e: %v", got)
+	}
+
+	// Types that fill the limit exactly are kept, and the ones stored are
+	// kept even when they're over it by themselves.
+	dir = t.TempDir()
+	store, err = NewStore(db, dir, 2*size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, g := put(store, 6), put(store, 7)
+	if got := there(f, g); !reflect.DeepEqual(got, []bool{true, true}) {
+		t.Fatalf("at the limit: %v", got)
+	}
+	store, err = NewStore(db, dir, size/2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := put(store, 8)
+	if got := there(f, g, h); !reflect.DeepEqual(got, []bool{false, false, true}) {
+		t.Fatalf("over the limit by itself: %v", got)
 	}
 }

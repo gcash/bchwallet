@@ -131,7 +131,7 @@ type registryRead struct {
 type Manager struct {
 	cfg Config
 
-	// mu guards views, wanted, asked, pubURIs and forgotten.
+	// mu guards views, wanted, asked, pubURIs, forgotten and evicted.
 	mu     sync.Mutex
 	views  map[chainhash.Hash]TokenInfo
 	wanted map[chainhash.Hash]bool // true if asked for by Refresh.
@@ -148,6 +148,10 @@ type Manager struct {
 	// forgotten holds the tokens Forget was asked about, which the run
 	// goroutine has yet to drop.
 	forgotten map[chainhash.Hash]struct{}
+
+	// evicted holds the tokens whose NFT types the app asked for and found
+	// gone, as evicted, which the run goroutine has yet to read again.
+	evicted map[chainhash.Hash]struct{}
 
 	// known are the Known tokens' names and symbols, by their skeletons, as
 	// every view is checked against them.
@@ -201,6 +205,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		results: make(chan *registryRead),
 
 		forgotten: make(map[chainhash.Hash]struct{}),
+		evicted:   make(map[chainhash.Hash]struct{}),
 	}
 	for _, state := range states {
 		m.views[state.Category] = m.viewOf(state)
@@ -457,11 +462,23 @@ func (m *Manager) askedStates() []*State {
 // It returns whether there was anything to take.
 func (m *Manager) takeWanted() bool {
 	m.mu.Lock()
-	wanted := m.wanted
-	m.wanted = make(map[chainhash.Hash]bool)
+	wanted, evicted := m.wanted, m.evicted
+	m.wanted, m.evicted = make(map[chainhash.Hash]bool), make(map[chainhash.Hash]struct{})
 	asked := len(m.asked) != m.lastAsked
 	m.lastAsked = len(m.asked)
 	m.mu.Unlock()
+
+	// Types that are still gone are read again, as the user's, as the user
+	// is looking at them.
+	for category := range evicted {
+		state, ok := m.states[category]
+		if ok && state.Metadata != nil && state.Metadata.NFTTypeCount != 0 &&
+			m.cfg.Store.NFTTypes(category) == nil {
+
+			m.reread[category] = struct{}{}
+			asked = true
+		}
+	}
 	for category, refresh := range wanted {
 		state, ok := m.states[category]
 		if !ok {
@@ -720,20 +737,26 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 }
 
 // NFTTypes returns the NFT types of a token's metadata, which are read when
-// asked for, or nil if it has none.
+// asked for, or nil if it has none.  Types that are gone, as evicted, are read
+// from the registry again, and show at the next ask.
 //
 // This function is safe for concurrent access.
 func (m *Manager) NFTTypes(category chainhash.Hash) map[string]NFTType {
+	m.mu.Lock()
+	info, tracked := m.views[category]
+	m.mu.Unlock()
 	// A Known token with nothing read of its own shows the Known list's.
-	if known, ok := m.cfg.Known[category]; ok {
-		m.mu.Lock()
-		info, tracked := m.views[category]
-		m.mu.Unlock()
-		if !tracked || info.Metadata == known {
-			return known.NFTTypes
-		}
+	if known, ok := m.cfg.Known[category]; ok && (!tracked || info.Metadata == known) {
+		return known.NFTTypes
 	}
-	return m.cfg.Store.NFTTypes(category)
+	types := m.cfg.Store.NFTTypes(category)
+	if types == nil && tracked && info.Metadata != nil && info.Metadata.NFTTypeCount != 0 {
+		m.mu.Lock()
+		m.evicted[category] = struct{}{}
+		m.mu.Unlock()
+		m.signal()
+	}
+	return types
 }
 
 // snapshotDue returns whether a snapshot that was still to come has taken over.

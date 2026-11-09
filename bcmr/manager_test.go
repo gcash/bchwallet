@@ -91,7 +91,7 @@ func newManagerFixture(t *testing.T, category chainhash.Hash, registry []byte,
 		_, _ = w.Write(registry)
 	}))
 	t.Cleanup(server.Close)
-	store, err := NewStore(testDB(t), t.TempDir())
+	store, err := NewStore(testDB(t), t.TempDir(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -926,7 +926,7 @@ func readsFixture(t *testing.T, registries map[chainhash.Hash][]byte,
 		_, _ = w.Write(registries[*category])
 	}))
 	t.Cleanup(server.Close)
-	store, err := NewStore(testDB(t), t.TempDir())
+	store, err := NewStore(testDB(t), t.TempDir(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1828,5 +1828,41 @@ func TestManagerForgetDuringScan(t *testing.T) {
 	}
 	if !slices.Contains(f.backend.forgotten, category) {
 		t.Fatal("the backend wasn't told")
+	}
+}
+
+// TestManagerReadsEvictedTypes ensures NFT types the app asks for and finds gone
+// are read from the registry again, and that none are read for a token without
+// any.
+func TestManagerReadsEvictedTypes(t *testing.T) {
+	category := chainhash.Hash{0x56}
+	f := newManagerFixture(t, category, collectionFor(category, "Set"), nil, always)
+	// With the tip unchanged, only the read wakes the next cycle.
+	f.m.cfg.Tip = func() (*chainhash.Hash, error) { return &chainhash.Hash{1}, nil }
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(f.m.cfg.Store.typesFile(category)); err != nil {
+		t.Fatal(err)
+	}
+	if f.m.NFTTypes(category) != nil {
+		t.Fatal("types with no file")
+	}
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.m.NFTTypes(category)["01"].Name; got != "One" || f.hits.Load() != 2 {
+		t.Fatalf("%d reads, %q", f.hits.Load(), got)
+	}
+
+	plain := chainhash.Hash{0x57}
+	g := newManagerFixture(t, plain, registryFor(plain, "Coin", "COIN"), nil, always)
+	g.m.Tokens([]chainhash.Hash{plain})
+	if err := cycleAndRead(g.m); err != nil {
+		t.Fatal(err)
+	}
+	if g.m.NFTTypes(plain) != nil || len(g.m.evicted) != 0 {
+		t.Fatalf("types of a token without any: %v", g.m.evicted)
 	}
 }

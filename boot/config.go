@@ -33,6 +33,7 @@ const (
 	defaultLogFilename      = "bchwallet.log"
 	defaultRPCMaxClients    = 10
 	defaultRPCMaxWebsockets = 25
+	defaultBcmrNFTLimit     = 1024 // MB
 
 	walletDbName = "wallet.db"
 )
@@ -59,6 +60,7 @@ type config struct {
 	BcmrKnown     string                  `long:"bcmrknown" description:"The BCMR registry of the tokens to mark as Known"`
 	BcmrManual    bool                    `long:"bcmrnoautoload" description:"Load no token's metadata until asked to, as reading a registry shows its host who asks"`
 	BcmrGateways  []string                `long:"bcmrgateway" description:"An HTTP gateway for ipfs:// registries, as https://host; can be given more than once"`
+	BcmrNFTLimit  uint                    `long:"bcmrnftlimit" description:"The most disk space the NFT types of token collections take, in MB, past which those looked at longest ago are deleted until looked at again; 0 for no limit"`
 	ChipNet       bool                    `long:"chipnet" description:"Use chipnet, the test network that activates upgrades early (default mainnet)"`
 	Regtest       bool                    `long:"regtest" description:"Use the regression test network (default mainnet)"`
 	SimNet        bool                    `long:"simnet" description:"Use the simulation test network (default mainnet)"`
@@ -342,6 +344,7 @@ func loadConfig(optionalConfigPath *string) (*config, []string, error) {
 		MaxPeers:               neutrino.MaxPeers,
 		BanDuration:            neutrino.BanDuration,
 		BanThreshold:           neutrino.BanThreshold,
+		BcmrNFTLimit:           defaultBcmrNFTLimit,
 	}
 
 	// Pre-parse the command line options to see if an alternative config

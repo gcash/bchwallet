@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,12 +181,15 @@ var (
 
 // Store keeps states in the wallet's database, and the NFT types of each in a
 // file of its own in typesDir, which are read when asked for, the last few kept.
+// The files take no more than typesLimit bytes, if it's above 0: past it, those
+// asked for longest ago are evicted.
 type Store struct {
-	db       walletdb.DB
-	typesDir string
+	db         walletdb.DB
+	typesDir   string
+	typesLimit int64
 
-	// typesMu guards recent, the types read last, newest first, as any
-	// goroutine can ask for them.
+	// typesMu guards the types files and recent, the types read last, newest
+	// first, as any goroutine can ask for them.
 	typesMu sync.Mutex
 	recent  []recentTypes
 
@@ -196,18 +200,20 @@ type Store struct {
 	lastTypes map[chainhash.Hash][sha256.Size]byte
 }
 
-// NewStore returns a store in the database, with the NFT types in typesDir,
-// adding its bucket to a wallet that doesn't have it yet, and moving the types
-// that were kept in the database to their files.
-func NewStore(db walletdb.DB, typesDir string) (*Store, error) {
+// NewStore returns a store in the database, with the NFT types in typesDir, up
+// to typesLimit bytes of them or with no limit if it's 0, adding its bucket to a
+// wallet that doesn't have it yet, and moving the types that were kept in the
+// database to their files.
+func NewStore(db walletdb.DB, typesDir string, typesLimit int64) (*Store, error) {
 	if err := os.MkdirAll(typesDir, 0700); err != nil {
 		return nil, err
 	}
 	s := &Store{
-		db:        db,
-		typesDir:  typesDir,
-		last:      make(map[chainhash.Hash][sha256.Size]byte),
-		lastTypes: make(map[chainhash.Hash][sha256.Size]byte),
+		db:         db,
+		typesDir:   typesDir,
+		typesLimit: typesLimit,
+		last:       make(map[chainhash.Hash][sha256.Size]byte),
+		lastTypes:  make(map[chainhash.Hash][sha256.Size]byte),
 	}
 	err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
 		_, err := tx.CreateTopLevelBucket(bcmrBucket)
@@ -247,11 +253,13 @@ type recentTypes struct {
 const maxRecentTypes = 4
 
 // NFTTypes returns a token's NFT types, which only its file holds, or nil if
-// there are none, or they can't be read: a file that can't be read is removed,
-// so that the next start reads the registry again.
+// there are none, or they can't be read, or were evicted: a file that can't be
+// read is removed.  The file is marked as asked for now, which keeps it longest.
 func (s *Store) NFTTypes(category chainhash.Hash) map[string]NFTType {
 	s.typesMu.Lock()
 	defer s.typesMu.Unlock()
+	now := time.Now()
+	_ = os.Chtimes(s.typesFile(category), now, now)
 	for i, recent := range s.recent {
 		if recent.category == category {
 			s.recent = slices.Insert(slices.Delete(s.recent, i, i+1), 0, recent)
@@ -281,13 +289,68 @@ func (s *Store) changeTypes(category chainhash.Hash, encoded []byte) error {
 		return recent.category == category
 	})
 	if len(encoded) != 0 {
-		return s.writeTypes(category, encoded)
+		if err := s.writeTypes(category, encoded); err != nil {
+			return err
+		}
+		s.evictTypes(category)
+		return nil
 	}
 	err := os.Remove(s.typesFile(category))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+// evictTypes removes the types files asked for longest ago until they take no
+// more room than the limit, but for the one just stored and those of the types
+// read last, which show.  An evicted token's types are read from its registry
+// again when they're asked for.  typesMu must be held.
+func (s *Store) evictTypes(stored chainhash.Hash) {
+	if s.typesLimit <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(s.typesDir)
+	if err != nil {
+		log.Warnf("Unable to read the NFT types: %v", err)
+		return
+	}
+	type typesFile struct {
+		category chainhash.Hash
+		size     int64
+		asked    time.Time
+	}
+	var files []typesFile
+	var total int64
+	for _, entry := range entries {
+		hex, ok := strings.CutSuffix(entry.Name(), ".gob")
+		category, err := chainhash.NewHashFromStr(hex)
+		if !ok || err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		total += info.Size()
+		files = append(files, typesFile{*category, info.Size(), info.ModTime()})
+	}
+	slices.SortFunc(files, func(a, b typesFile) int { return a.asked.Compare(b.asked) })
+	for _, file := range files {
+		if total <= s.typesLimit {
+			return
+		}
+		shown := slices.ContainsFunc(s.recent, func(recent recentTypes) bool {
+			return recent.category == file.category
+		})
+		if file.category == stored || shown {
+			continue
+		}
+		if err := os.Remove(s.typesFile(file.category)); err != nil {
+			continue
+		}
+		total -= file.size
+	}
 }
 
 // typesFile returns the file of a token's NFT types.
@@ -368,18 +431,25 @@ func (s *Store) Put(state *State) error {
 	lastTypes, storedTypes := s.lastTypes[state.Category]
 	sameState := stored && last == digest
 	sameTypes := storedTypes && lastTypes == version
-	if sameState && sameTypes {
+	if sameState && sameTypes && len(types) == 0 {
 		return nil
 	}
-	var typesValue bytes.Buffer
-	if !sameTypes && len(types) != 0 {
+	// Types are only held once read from a registry, until they're stored,
+	// and are written even when they're as before, as their file may have
+	// been evicted.  Types that aren't held are as their file has them,
+	// which goes when there are none.
+	switch {
+	case len(types) != 0:
+		var typesValue bytes.Buffer
 		if err := gob.NewEncoder(&typesValue).Encode(types); err != nil {
 			return err
 		}
-	}
-	// Types that weren't read, as after a start, are as the file has them.
-	if !sameTypes && (types != nil || state.Metadata == nil || state.Metadata.NFTTypeCount == 0) {
 		if err := s.changeTypes(state.Category, typesValue.Bytes()); err != nil {
+			return err
+		}
+
+	case !sameTypes && (state.Metadata == nil || state.Metadata.NFTTypeCount == 0):
+		if err := s.changeTypes(state.Category, nil); err != nil {
 			return err
 		}
 	}
@@ -429,8 +499,8 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 
 			// The types stay in their file until they're asked for.  A state
 			// from before they were kept apart has them with it, and they
-			// go to their file now.  Types whose file is gone are read from
-			// the registry again.
+			// go to their file now.  Types whose file is gone, as evicted,
+			// are read from the registry again when they're asked for.
 			if state.Metadata == nil {
 				return nil
 			}
@@ -442,13 +512,6 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 
 					state.RegistryParser = 0
 				}
-				return nil
-			}
-			if state.Metadata.NFTTypeCount == 0 {
-				return nil
-			}
-			if _, err := os.Stat(s.typesFile(state.Category)); err != nil {
-				state.RegistryParser = 0
 				return nil
 			}
 			s.last[state.Category] = sha256.Sum256(value)
