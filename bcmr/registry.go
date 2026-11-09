@@ -210,7 +210,7 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 		return nil, ErrNoMetadata
 	}
 	name := firstLine(snapshot.Name)
-	if !displayable(name, maxNameRunes) || name == "" {
+	if !displayable(name, maxNameRunes) || !nameable(name) {
 		return nil, ErrNoMetadata
 	}
 	if !symbolPattern.MatchString(token.Symbol) || len(token.Symbol) > maxNameRunes {
@@ -245,7 +245,7 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 		for _, commitment := range commitments {
 			nft := nfts.Parse.Types[commitment]
 			nftName := firstLine(nft.Name)
-			if !displayable(nftName, maxNameRunes) || nftName == "" {
+			if !displayable(nftName, maxNameRunes) || !nameable(nftName) {
 				continue
 			}
 			if metadata.NFTTypes == nil {
@@ -285,8 +285,9 @@ func attributesOf(extensions json.RawMessage) map[string]string {
 	var attributes map[string]string
 	for name, rawValue := range values {
 		var value string
-		if json.Unmarshal(rawValue, &value) != nil || name == "" || value == "" ||
-			!displayable(name, maxNameRunes) || !displayable(value, maxNameRunes) {
+		if json.Unmarshal(rawValue, &value) != nil ||
+			!displayable(name, maxNameRunes) || !displayable(value, maxNameRunes) ||
+			!nameable(name) || !nameable(value) {
 
 			continue
 		}
@@ -322,6 +323,45 @@ func displayable(text string, maxRunes int) bool {
 		}
 	}
 	return true
+}
+
+// maxMarks is the most combining marks a letter of a name can carry, as stacks
+// of them run over the text around.
+const maxMarks = 2
+
+// nameable returns whether text reads as a name, an NFT's name or an attribute,
+// which show on a line of their own: with no line or paragraph separator,
+// something to see, and no letter with more than maxMarks combining marks.
+func nameable(text string) bool {
+	visible := false
+	marks := 0
+	for _, r := range text {
+		switch {
+		case r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029':
+			return false
+		case unicode.In(r, unicode.Mn, unicode.Me):
+			if marks++; marks > maxMarks {
+				return false
+			}
+			continue
+		}
+		marks = 0
+		if !blank(r) {
+			visible = true
+		}
+	}
+	return visible
+}
+
+// blank returns whether a character shows nothing: a space, or a letter that
+// fills a place without a mark, as the Hangul fillers and the blank Braille
+// pattern do.
+func blank(r rune) bool {
+	switch r {
+	case '\u115f', '\u1160', '\u3164', '\uffa0', '\u2800':
+		return true
+	}
+	return unicode.IsSpace(r)
 }
 
 // usableURI returns uri if it's one a client can read, by the CHIP's https and

@@ -277,3 +277,46 @@ func TestParseRegistryNFTImage(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// TestNameable ensures a name with a line or paragraph separator, nothing to
+// see, or a letter with more than two combining marks isn't one, and that names
+// in any script are.
+func TestNameable(t *testing.T) {
+	for _, name := range []string{"Moria USD", "Дракон", "東京", "Café", "e\u0301\u0302", "a\u0301\u0302e\u0301\u0302"} {
+		if !nameable(name) {
+			t.Errorf("%q isn't a name", name)
+		}
+	}
+	for _, name := range []string{"", "   ", "\u3164\u3164", "\u2800", "\uffa0 \u115f\u1160",
+		"Moria\u2028USD", "Moria\u2029", "Moria\u0085", "Moria\r", "e\u0301\u0302\u0303"} {
+		if nameable(name) {
+			t.Errorf("%q is a name", name)
+		}
+	}
+}
+
+// TestParseRegistryRefusesBlankNames ensures a token with a name that shows
+// nothing has no metadata, and that an NFT's or an attribute's is left out.
+func TestParseRegistryRefusesBlankNames(t *testing.T) {
+	category := chainhash.Hash{1}
+	blankToken := []byte(fmt.Sprintf(`{"identities":{"%[1]s":{"2024-01-01T00:00:00.000Z":
+		{"name":"\u3164","token":{"category":"%[1]s","symbol":"TOK"}}}}}`, category))
+	if _, err := ParseRegistry(blankToken, category, time.Now()); err == nil {
+		t.Fatal("a blank name was taken")
+	}
+	collection := []byte(fmt.Sprintf(`{"identities":{"%[1]s":{"2024-01-01T00:00:00.000Z":
+		{"name":"Token","token":{"category":"%[1]s","symbol":"TOK","nfts":{"parse":{"bytecode":"",
+		"types":{"01":{"name":"\u2800"},"02":{"name":"Two","extensions":{"attributes":
+		{"Eyes":"Blue\u2028Fake","Hat":"Red"}}}}}}}}}}}`, category))
+	metadata, err := ParseRegistry(collection, category, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := metadata.NFTTypes["01"]; ok {
+		t.Fatal("a blank NFT name was taken")
+	}
+	attributes := metadata.NFTTypes["02"].Attributes
+	if _, ok := attributes["Eyes"]; ok || attributes["Hat"] != "Red" {
+		t.Fatalf("attributes %v", attributes)
+	}
+}
