@@ -56,6 +56,12 @@ func (s spvSource) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 	}, progress, quit)
 }
 
+// proxyConnectTimeout bounds connecting through a proxy: to the proxy, its
+// handshake, and its connection to the host, which includes the proxy's own name
+// lookup, and over Tor a circuit, so it's longer than a direct connection's 10 s.
+// A variable for the tests.
+var proxyConnectTimeout = 30 * time.Second
+
 // proxiedDial returns the connection for registries when the wallet goes through
 // a proxy, or nil for a direct one.
 func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn, error), error) {
@@ -74,6 +80,8 @@ func proxiedDial() (func(ctx context.Context, network, address string) (net.Conn
 		if err := bcmr.RefuseLocal(address); err != nil {
 			return nil, err
 		}
+		ctx, cancel := context.WithTimeout(ctx, proxyConnectTimeout)
+		defer cancel()
 		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
 			return contextDialer.DialContext(ctx, network, address)
 		}
