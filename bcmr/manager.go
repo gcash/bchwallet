@@ -686,8 +686,9 @@ func (m *Manager) registryDue(state *State) *registryRead {
 		state.clearRegistry()
 		m.save(state)
 	}
+	// A Refresh reads at once, though a read that was under way failed since.
 	key := retryKey{state.Category, pub.Hash}
-	if failed, ok := m.tried[key]; ok && time.Since(failed.last) < retryWait(failed.tries) {
+	if failed, ok := m.tried[key]; ok && !reread && time.Since(failed.last) < retryWait(failed.tries) {
 		return nil
 	}
 	return &registryRead{state: state, pub: pub, same: same, user: reread}
@@ -742,8 +743,12 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 			err = nil
 		}
 	}
-	// A Refresh's read is over, so later ones are the token's own.
-	delete(m.reread, state.Category)
+	// A Refresh's read is over, so later ones are the token's own.  One that
+	// came while a read of the token's own was under way has a read of its
+	// own once that's over.
+	if read.user {
+		delete(m.reread, state.Category)
+	}
 	if err != nil {
 		failed := m.tried[key]
 		failed = retry{time.Now(), failed.tries + 1}

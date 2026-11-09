@@ -2110,3 +2110,43 @@ func TestManagerDropsChangedOfUnknown(t *testing.T) {
 		t.Fatalf("stored %+v, %+v", all[unlisted], all[listed])
 	}
 }
+
+// TestManagerRefreshDuringOwnRead ensures a Refresh asked while the token's own
+// registry was being read reads it again once that read is over, though it
+// failed.
+func TestManagerRefreshDuringOwnRead(t *testing.T) {
+	category := chainhash.Hash{0x5f}
+	registry := registryFor(category, "Token", "TOK")
+	registries := map[chainhash.Hash][]byte{category: registry}
+	arrived := make(chan struct{}, 4)
+	release := make(chan struct{})
+	m, hits := readsFixture(t, registries, func(chainhash.Hash) {
+		arrived <- struct{}{}
+		<-release
+	})
+	skipRests(m.cfg.Fetcher)
+	m.Tokens([]chainhash.Hash{category})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-arrived
+	if err := m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The read under way gets another file, and fails.
+	registries[category] = []byte("not the published registry")
+	close(release)
+	read := <-m.results
+	registries[category] = registry
+	m.finishRead(context.Background(), read)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Peek([]chainhash.Hash{category})[0]; info.Metadata == nil || hits.Load() < 2 {
+		t.Fatalf("%d reads, %+v", hits.Load(), info)
+	}
+}
