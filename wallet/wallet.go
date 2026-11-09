@@ -841,37 +841,49 @@ func (w *Wallet) recovery(chainClient chain.Interface,
 		recoveryBatch := recoveryMgr.BlockBatch()
 		var syncedToBlock *waddrmgr.BlockStamp
 		if len(recoveryBatch) == recoveryBatchSize || height == bestHeight {
+			// markSynced marks the batch's blocks synced through the
+			// height, those before the wallet's birthday too, in the
+			// write that keeps what the scan found up to it, so that a
+			// restart resumes after the last block whose findings are
+			// kept.
+			marked := blocks[0].Height - 1
+			markSynced := func(ns walletdb.ReadWriteBucket, through int32) error {
+				for _, block := range blocks {
+					if block.Height <= marked || block.Height > through {
+						continue
+					}
+					if err := w.Manager.SetSyncedTo(ns, block); err != nil {
+						return err
+					}
+					marked = block.Height
+				}
+				return nil
+			}
+
 			// Blocks before the wallet's birthday have nothing to
 			// recover, so a batch without any is done.
 			syncedTo := blocks[len(blocks)-1].Height
+			if len(recoveryBatch) > 0 {
+				var err error
+				syncedTo, err = w.recoverDefaultScopes(
+					chainClient, recoveryBatch,
+					recoveryMgr.State(), markSynced,
+				)
+				if err != nil {
+					return err
+				}
+			}
 			err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 				ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-
-				if len(recoveryBatch) > 0 {
-					var err error
-					syncedTo, err = w.recoverDefaultScopes(
-						chainClient, tx, ns, recoveryBatch,
-						recoveryMgr.State(),
-					)
-					if err != nil {
-						return err
-					}
-				}
-				for _, block := range blocks {
-					if block.Height <= syncedTo {
-						err := w.Manager.SetSyncedTo(ns, block)
-						if err != nil {
-							return err
-						}
-					}
-					if block.Height == syncedTo {
-						syncedToBlock = block
-					}
-				}
-				return nil
+				return markSynced(ns, syncedTo)
 			})
 			if err != nil {
 				return err
+			}
+			for _, block := range blocks {
+				if block.Height == syncedTo {
+					syncedToBlock = block
+				}
 			}
 
 			// An interrupted scan may have finished none of the
@@ -922,13 +934,14 @@ func (w *Wallet) defaultScopeManagers() (
 // recoverDefaultScopes attempts to recover any addresses belonging to any
 // active scoped key managers known to the wallet. Recovery of each scope's
 // default account will be done iteratively against the same batch of blocks.
+// markSynced marks the blocks synced through a height, in the write that keeps
+// what was found up to it.
 // TODO(conner): parallelize/pipeline/cache intermediate network requests
 func (w *Wallet) recoverDefaultScopes(
 	chainClient chain.Interface,
-	tx walletdb.ReadWriteTx,
-	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
-	recoveryState *RecoveryState) (int32, error) {
+	recoveryState *RecoveryState,
+	markSynced func(walletdb.ReadWriteBucket, int32) error) (int32, error) {
 
 	scopedMgrs, err := w.defaultScopeManagers()
 	if err != nil {
@@ -936,7 +949,7 @@ func (w *Wallet) recoverDefaultScopes(
 	}
 
 	return w.recoverScopedAddresses(
-		chainClient, tx, ns, batch, recoveryState, scopedMgrs,
+		chainClient, batch, recoveryState, scopedMgrs, markSynced,
 	)
 }
 
@@ -950,13 +963,18 @@ func (w *Wallet) recoverDefaultScopes(
 //  4. Record any outpoints found in the block that should be watched for spends
 //  5. Trim the range of blocks up to and including the one reporting the addrs.
 //  6. Repeat from (1) if there are still more blocks in the range.
+//
+// What a block reports is kept, with the blocks marked synced through it, in a
+// write of its own, and the filters and blocks are fetched outside of any. A
+// write held across the range kept everything found in memory until its end,
+// which a wallet with many large transactions, as CashFusion makes, ran out of
+// before it got there, and so started the range again each time.
 func (w *Wallet) recoverScopedAddresses(
 	chainClient chain.Interface,
-	tx walletdb.ReadWriteTx,
-	ns walletdb.ReadWriteBucket,
 	batch []wtxmgr.BlockMeta,
 	recoveryState *RecoveryState,
-	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager) (int32, error) {
+	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager,
+	markSynced func(walletdb.ReadWriteBucket, int32) error) (int32, error) {
 
 	// If there are no blocks in the batch, we are done.
 	if len(batch) == 0 {
@@ -965,15 +983,21 @@ func (w *Wallet) recoverScopedAddresses(
 
 	log.Infof("Scanning %d blocks for recoverable addresses", len(batch))
 
-	var err error
-
 expandHorizons:
-	for scope, scopedMgr := range scopedMgrs {
-		scopeState := recoveryState.StateForScope(scope)
-		err := expandScopeHorizons(ns, scopedMgr, scopeState)
-		if err != nil {
-			return 0, err
+	// Deriving the addresses ahead only reads, so it costs no write.
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		ns := tx.ReadBucket(waddrmgrNamespaceKey)
+		for scope, scopedMgr := range scopedMgrs {
+			scopeState := recoveryState.StateForScope(scope)
+			err := expandScopeHorizons(ns, scopedMgr, scopeState)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 
 	// With the internal and external horizons properly expanded, we now
@@ -1017,12 +1041,41 @@ expandHorizons:
 	// Log any non-trivial findings of addresses or outpoints.
 	logFilterBlocksResp(block, filterResp)
 
-	// Report any external or internal addresses found as a result of the
-	// appropriate branch recovery state. Adding indexes above the
-	// last-found index of either will result in the horizons being expanded
-	// upon the next iteration. Any found addresses are also marked used
-	// using the scoped key manager.
-	err = extendFoundAddresses(ns, filterResp, scopedMgrs, recoveryState)
+	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+
+		// Report any external or internal addresses found as a result
+		// of the appropriate branch recovery state. Adding indexes
+		// above the last-found index of either will result in the
+		// horizons being expanded upon the next iteration. Any found
+		// addresses are also marked used using the scoped key manager.
+		err := extendFoundAddresses(ns, filterResp, scopedMgrs, recoveryState)
+		if err != nil {
+			return err
+		}
+
+		// Record all of the relevant transactions that were returned
+		// in the filter blocks response. This ensures that these
+		// transactions and their outputs are tracked when the final
+		// rescan is performed.
+		for _, txn := range filterResp.RelevantTxns {
+			txRecord, err := wtxmgr.NewTxRecordFromMsgTx(
+				txn, filterResp.BlockMeta.Time,
+			)
+			if err != nil {
+				return err
+			}
+
+			err = w.addRelevantTx(tx, txRecord, &filterResp.BlockMeta)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Finally, mark the blocks synced through this one, as what
+		// they hold is kept.
+		return markSynced(ns, block.Height)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -1031,23 +1084,6 @@ expandHorizons:
 	// in the block.
 	for outPoint, addr := range filterResp.FoundOutPoints {
 		recoveryState.AddWatchedOutPoint(&outPoint, addr)
-	}
-
-	// Finally, record all of the relevant transactions that were returned
-	// in the filter blocks response. This ensures that these transactions
-	// and their outputs are tracked when the final rescan is performed.
-	for _, txn := range filterResp.RelevantTxns {
-		txRecord, err := wtxmgr.NewTxRecordFromMsgTx(
-			txn, filterResp.BlockMeta.Time,
-		)
-		if err != nil {
-			return 0, err
-		}
-
-		err = w.addRelevantTx(tx, txRecord, &filterResp.BlockMeta)
-		if err != nil {
-			return 0, err
-		}
 	}
 
 	// Update the batch to indicate that we've processed all block through
@@ -1089,7 +1125,7 @@ func (w *Wallet) removeRecoveryInterruptChan(c chan struct{}) {
 // persistent state of the wallet. If any invalid child keys are detected, the
 // horizon will be properly extended such that our lookahead always includes the
 // proper number of valid child keys.
-func expandScopeHorizons(ns walletdb.ReadWriteBucket,
+func expandScopeHorizons(ns walletdb.ReadBucket,
 	scopedMgr *waddrmgr.ScopedKeyManager,
 	scopeState *ScopeRecoveryState) error {
 

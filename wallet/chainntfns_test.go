@@ -918,6 +918,76 @@ func TestRecoveryResumesAfterInterrupt(t *testing.T) {
 	}
 }
 
+// findingChainClient is a mock chain client with a chain of distinct blocks
+// whose first filter request finds a transaction paying the wallet in the
+// request's third block, and whose next request fails, as when the wallet is
+// stopped part way through a batch.
+type findingChainClient struct {
+	interruptingChainClient
+	found *wire.MsgTx
+}
+
+var errFilterFailed = fmt.Errorf("the filter request failed")
+
+func (c *findingChainClient) FilterBlocks(
+	req *chain.FilterBlocksRequest) (*chain.FilterBlocksResponse, error) {
+
+	c.requests = append(c.requests, nil)
+	if len(c.requests) > 1 {
+		return nil, errFilterFailed
+	}
+	return &chain.FilterBlocksResponse{
+		BatchIndex:   2,
+		BlockMeta:    req.Blocks[2],
+		RelevantTxns: []*wire.MsgTx{c.found},
+	}, nil
+}
+
+// TestRecoveryKeepsEachFind checks that the scan for used addresses keeps what
+// it finds in a block, and marks the blocks synced through it, before it goes
+// on, so that a scan that fails later in its batch, as one the phone stops
+// for its memory does, resumes after that block. It kept them in one write for
+// the batch, which held all it found in memory, and which a failure dropped.
+func TestRecoveryKeepsEachFind(t *testing.T) {
+	w := newSyncedWallet(t, 1000)
+	found := &wire.MsgTx{
+		Version: wire.TxVersion,
+		TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{
+			Hash: chainhash.Hash{7},
+		}}},
+		TxOut: []*wire.TxOut{{Value: 10000, PkScript: walletScript(t, w)}},
+	}
+	client := &findingChainClient{
+		interruptingChainClient: interruptingChainClient{bestHeight: 1006},
+		found:                   found,
+	}
+	birthday := waddrmgr.BlockStamp{}
+	if err := w.recovery(client, &birthday); err != errFilterFailed {
+		t.Fatalf("the scan returned %v, want the failed request's error", err)
+	}
+
+	synced := w.Manager.SyncedTo()
+	if synced.Height != 1003 || synced.Hash != *recoveryBlockHash(1003) {
+		t.Fatalf("the wallet is synced to %d (%v), want 1003, the block "+
+			"of the find", synced.Height, synced.Hash)
+	}
+	err := walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		ns := tx.ReadBucket(wtxmgrNamespaceKey)
+		hash := found.TxHash()
+		details, err := w.TxStore.TxDetails(ns, &hash)
+		if err != nil {
+			return err
+		}
+		if details == nil {
+			t.Error("the transaction the scan found isn't kept")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // resyncChainClient is a mock SPV client whose chain has distinct blocks up to
 // bestHeight, whose filter headers are synced, and that records the blocks its
 // filter requests ask to scan and the heights its rescans start from.
