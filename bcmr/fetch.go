@@ -152,7 +152,7 @@ func NewFetcher(gateways []string, cacheDir string,
 }
 
 func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper) *Fetcher {
-	return &Fetcher{
+	f := &Fetcher{
 		Gateways:   gateways,
 		CacheDir:   cacheDir,
 		registries: newHostSlots(maxPerHost),
@@ -173,6 +173,9 @@ func newFetcher(gateways []string, cacheDir string, transport http.RoundTripper)
 			},
 		},
 	}
+	f.registries.usable = f.available
+	f.icons.usable = f.available
+	return f
 }
 
 // refusePrivate refuses a connection to an address that isn't public.  It runs
@@ -472,26 +475,33 @@ func (f *Fetcher) downloadAny(ctx context.Context, slots *hostSlots, locations [
 	}
 	// With every gateway paused or out, what loads by itself, and any registry,
 	// waits for one to come back, while an icon the user asked for is told so.
-	var in []string
+	// A wait for a slot whose hosts all left rotation meanwhile starts over.
+	var host string
+	var release func()
 	for {
-		var back time.Duration
-		if in, back = f.inRotation(hosts); len(in) > 0 {
-			break
+		in, back := f.inRotation(hosts)
+		if len(in) == 0 {
+			if slots == f.icons && isUserAction(ctx) {
+				return nil, nil, "", ErrNoGateway
+			}
+			timer := time.NewTimer(back)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, nil, "", ctx.Err()
+			}
+			continue
 		}
-		if slots == f.icons && isUserAction(ctx) {
-			return nil, nil, "", ErrNoGateway
+		var err error
+		host, release, err = slots.takeAny(ctx, f.avoidOthers(ctx, in))
+		if errors.Is(err, errLeftRotation) {
+			continue
 		}
-		timer := time.NewTimer(back)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, nil, "", ctx.Err()
+		if err != nil {
+			return nil, nil, "", err
 		}
-	}
-	host, release, err := slots.takeAny(ctx, f.avoidOthers(ctx, in))
-	if err != nil {
-		return nil, nil, "", err
+		break
 	}
 	defer release()
 	defer f.using(ctx, host)()
@@ -640,6 +650,20 @@ func (f *Fetcher) Unavailable(uris []string) bool {
 	return len(in) == 0
 }
 
+// available returns whether a host is in rotation.
+func (f *Fetcher) available(host string) bool {
+	in, _ := f.inRotation([]string{host})
+	return len(in) == 1
+}
+
+// leftRotation has the waits for slots whose hosts all left rotation go back to
+// waiting for one to come back.  It's called with healthMu free, as the slots
+// ask whether a host is in rotation while holding their own lock.
+func (f *Fetcher) leftRotation() {
+	f.registries.recheck()
+	f.icons.recheck()
+}
+
 // failed takes a gateway that failed out of rotation, for longer the more times
 // in a row it has.  A host that isn't a gateway has no rotation to leave.
 func (f *Fetcher) failed(host string) {
@@ -647,7 +671,6 @@ func (f *Fetcher) failed(host string) {
 		return
 	}
 	f.healthMu.Lock()
-	defer f.healthMu.Unlock()
 	out := f.out[host]
 	out.failures++
 	rest := gatewayRestMost
@@ -656,6 +679,8 @@ func (f *Fetcher) failed(host string) {
 	}
 	out.until = f.now().Add(rest)
 	f.out[host] = out
+	f.healthMu.Unlock()
+	f.leftRotation()
 }
 
 // worked puts a gateway back in rotation, with no failures counted.
@@ -734,12 +759,13 @@ func (f *Fetcher) pause(host string, wait time.Duration) {
 		return
 	}
 	f.healthMu.Lock()
-	defer f.healthMu.Unlock()
 	out := f.out[host]
 	if until := f.now().Add(wait); until.After(out.until) {
 		out.until = until
 	}
 	f.out[host] = out
+	f.healthMu.Unlock()
+	f.leftRotation()
 }
 
 // read reads a URL, up to limit bytes, and wraps errGatewayFault in what's the
@@ -796,13 +822,19 @@ func hostOf(location string) string {
 // hostSlots lets so many downloads at once at each host, and has the others wait
 // in one line, in the order they came.  A download that can use any of several
 // hosts, as a file on IPFS can through any gateway, takes the first of them that
-// has room, and in line, the first of them that comes free.
+// has room, and in line, the first of them that comes free.  A slot that comes
+// free at a host out of rotation, which usable tells, isn't handed on, and a
+// wait for hosts that all left rotation ends with errLeftRotation.
 type hostSlots struct {
 	limit   int
+	usable  func(host string) bool
 	mu      sync.Mutex
 	busy    map[string]int
 	waiting []*slotWaiter
 }
+
+// errLeftRotation ends a wait for a slot whose hosts all left rotation.
+var errLeftRotation = errors.New("every host of the wait left rotation")
 
 // slotWaiter is a download in line, and the hosts it can use.
 type slotWaiter struct {
@@ -862,6 +894,9 @@ func (s *hostSlots) takeAny(ctx context.Context, hosts []string) (string, func()
 
 	select {
 	case host := <-w.turn:
+		if host == "" {
+			return "", nil, errLeftRotation
+		}
 		return host, s.giver(host), nil
 	case <-ctx.Done():
 		s.mu.Lock()
@@ -873,9 +908,31 @@ func (s *hostSlots) takeAny(ctx context.Context, hosts []string) (string, func()
 			}
 		}
 		// A slot came as the wait ended, so it goes to the next in line.
-		s.handOn(<-w.turn)
+		if host := <-w.turn; host != "" {
+			s.handOn(host)
+		}
 		return "", nil, ctx.Err()
 	}
+}
+
+// recheck ends the waits whose hosts all left rotation, which go back to
+// waiting for one to come back.
+func (s *hostSlots) recheck() {
+	if s.usable == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.waiting[:0]
+	for _, w := range s.waiting {
+		if slices.ContainsFunc(w.hosts, s.usable) {
+			kept = append(kept, w)
+			continue
+		}
+		w.turn <- ""
+	}
+	clear(s.waiting[len(kept):])
+	s.waiting = kept
 }
 
 // giver returns what gives a slot at the host back.
@@ -888,13 +945,15 @@ func (s *hostSlots) giver(host string) func() {
 }
 
 // handOn passes a slot at the host that's free to the first in line that can use
-// the host, or frees it.
+// the host, if it's in rotation, or frees it.
 func (s *hostSlots) handOn(host string) {
-	for i, w := range s.waiting {
-		if slices.Contains(w.hosts, host) {
-			s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
-			w.turn <- host
-			return
+	if s.usable == nil || s.usable(host) {
+		for i, w := range s.waiting {
+			if slices.Contains(w.hosts, host) {
+				s.waiting = append(s.waiting[:i], s.waiting[i+1:]...)
+				w.turn <- host
+				return
+			}
 		}
 	}
 	if s.busy[host]--; s.busy[host] <= 0 {

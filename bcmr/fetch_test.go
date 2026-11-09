@@ -1406,3 +1406,155 @@ func TestFetcherUnavailable(t *testing.T) {
 		t.Fatal("unavailable with no location")
 	}
 }
+
+// slotsWithRotation returns slots of one at each host, and what takes a host out
+// of rotation.
+func slotsWithRotation() (*hostSlots, func(host string)) {
+	s := newHostSlots(1)
+	var mu sync.Mutex
+	out := make(map[string]bool)
+	s.usable = func(host string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return !out[host]
+	}
+	return s, func(host string) {
+		mu.Lock()
+		out[host] = true
+		mu.Unlock()
+	}
+}
+
+// waitInLine waits for the slots to have n waiting.
+func waitInLine(t *testing.T, s *hostSlots, n int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		s.mu.Lock()
+		in := len(s.waiting)
+		s.mu.Unlock()
+		if in == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d waiting, want %d", in, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestSlotsSkipHostOutOfRotation ensures a slot freed at a host out of rotation
+// isn't handed on, while one at a host in rotation is.
+func TestSlotsSkipHostOutOfRotation(t *testing.T) {
+	s, takeOut := slotsWithRotation()
+	_, releaseA, _ := s.takeAny(context.Background(), []string{"a"})
+	_, releaseB, _ := s.takeAny(context.Background(), []string{"b"})
+	got := make(chan string, 1)
+	go func() {
+		host, release, err := s.takeAny(context.Background(), []string{"a", "b"})
+		if err == nil {
+			release()
+		}
+		got <- host
+	}()
+	waitInLine(t, s, 1)
+	takeOut("a")
+	releaseA()
+	s.mu.Lock()
+	busy, waiting := s.busy["a"], len(s.waiting)
+	s.mu.Unlock()
+	if busy != 0 || waiting != 1 {
+		t.Fatalf("a slot at a host out of rotation went on: %d busy, %d waiting", busy, waiting)
+	}
+	releaseB()
+	select {
+	case host := <-got:
+		if host != "b" {
+			t.Fatalf("took %q", host)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a slot at a host in rotation didn't go on")
+	}
+}
+
+// TestSlotsRecheck ensures a wait whose hosts all left rotation ends, so that it
+// goes back to waiting for one to come back, and that a wait with a host left in
+// rotation goes on.
+func TestSlotsRecheck(t *testing.T) {
+	s, takeOut := slotsWithRotation()
+	_, releaseA, _ := s.takeAny(context.Background(), []string{"a"})
+	defer releaseA()
+	_, releaseB, _ := s.takeAny(context.Background(), []string{"b"})
+	defer releaseB()
+	onlyA := make(chan error, 1)
+	go func() {
+		_, _, err := s.takeAny(context.Background(), []string{"a"})
+		onlyA <- err
+	}()
+	waitInLine(t, s, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	either := make(chan error, 1)
+	go func() {
+		_, _, err := s.takeAny(ctx, []string{"a", "b"})
+		either <- err
+	}()
+	waitInLine(t, s, 2)
+	takeOut("a")
+	s.recheck()
+	select {
+	case err := <-onlyA:
+		if !errors.Is(err, errLeftRotation) {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a wait whose hosts all left rotation went on")
+	}
+	waitInLine(t, s, 1)
+	cancel()
+	if err := <-either; !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestFetchWaiterSeesGatewayLeave ensures an icon the user asked for, waiting for
+// a slot at a gateway that then leaves rotation, as one that fails or is rate
+// limited does, is told at once that every gateway is out, rather than wait for
+// a slot there.
+func TestFetchWaiterSeesGatewayLeave(t *testing.T) {
+	leave := map[string]func(f *Fetcher, host string){
+		"failed": func(f *Fetcher, host string) { f.failed(host) },
+		"paused": func(f *Fetcher, host string) { f.pause(host, time.Hour) },
+	}
+	for name, leave := range leave {
+		arrived := make(chan struct{}, maxPerHost)
+		release := make(chan struct{})
+		server, f := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "held") {
+				arrived <- struct{}{}
+				<-release
+			}
+			_, _ = w.Write([]byte("icon"))
+		})
+		f.Gateways = []string{server.URL}
+		for i := range maxPerHost {
+			go func() { _, _ = f.FetchIcon(context.Background(), fmt.Sprintf("ipfs://held%d", i)) }()
+			<-arrived
+		}
+		got := make(chan error, 1)
+		go func() {
+			_, err := f.FetchIcon(UserAction(context.Background()), "ipfs://wanted")
+			got <- err
+		}()
+		waitInLine(t, f.icons, 1)
+		leave(f, hostOf(server.URL))
+		select {
+		case err := <-got:
+			if !errors.Is(err, ErrNoGateway) {
+				t.Fatalf("%s: got %v", name, err)
+			}
+		case <-time.After(time.Minute):
+			t.Fatalf("%s: the waiter wasn't told its gateway left", name)
+		}
+		close(release)
+	}
+}
