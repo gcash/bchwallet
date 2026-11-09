@@ -58,8 +58,9 @@ const maxNewBlockSearches = 5
 
 // SPVBackend finds and follows identities over the P2P layer alone, with block
 // filters.  The hints table says where each token stood at its height, so no
-// scan ever goes below that height: a token in the table starts from its entry,
-// and one that isn't was minted after it.
+// walk or search for a genesis goes below that height: a token in the table
+// starts from its entry, and one that isn't was minted after it.  Only the
+// search for an authbase, in the week before a genesis, can.
 type SPVBackend struct {
 	source spvSource
 	hints  *chainbcmr.Hints
@@ -77,7 +78,7 @@ func NewSPVBackend(source spvSource, hints *chainbcmr.Hints) *SPVBackend {
 		searchTried: make(map[chainhash.Hash]retry)}
 }
 
-// floor returns the height no scan goes below or to.
+// floor returns the height no walk or search for a genesis goes below or to.
 func (b *SPVBackend) floor() int32 {
 	if b.hints == nil {
 		return 0

@@ -132,8 +132,9 @@ func iconURIs(uri string) []string {
 	return []string{uri}
 }
 
-// Icon returns the file of an icon's URI.  It's only for icons the user chose
-// to load, as a host sees who asks.
+// Icon returns the file of an icon's URI.  A host sees who asks, so it's for the
+// icons the user chose to load, or let load by themselves, and those the user
+// asked for, as UserAction marks them, go first.
 func (m *Manager) Icon(ctx context.Context, uri string) ([]byte, error) {
 	return m.cfg.Fetcher.FetchIcon(ctx, uri)
 }

@@ -95,8 +95,9 @@ var (
 // and keeps them by hash.  A hash that matches means the source didn't matter,
 // so it can be any host or gateway.
 type Fetcher struct {
-	// Gateways are the HTTP gateways for ipfs URIs, tried in order, as
-	// https://host with no path.
+	// Gateways are the HTTP gateways for ipfs URIs, as https://host with no
+	// path, in the order they're preferred: an item goes to the first with
+	// a free slot that's in rotation.
 	Gateways []string
 
 	// CacheDir is the directory for the registries that are kept.  A
@@ -1093,10 +1094,11 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// watchRate ends a download that's slower than minDownloadRate, so that a host that
-// stalls or barely drips a file doesn't use up the time of a download that other
-// tokens wait behind.  A slow connection is far faster than that.  A host that keeps
-// to the rate still has the download's whole time.
+// watchRate ends a download that's slower than minDownloadRate for two windows
+// in a row, so that a host that stalls or barely drips a file doesn't hold its
+// slot for good, as a download has no limit on its whole time.  A slow
+// connection is far faster than that, and a host that keeps to the rate takes
+// as long as it needs.
 func watchRate(ctx context.Context, body *countingReader, cancel func(), window time.Duration) func() {
 	done := make(chan struct{})
 	go func() {
