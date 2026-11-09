@@ -554,8 +554,10 @@ func (s *walletServer) TokenMetadata(ctx context.Context, req *pb.TokenMetadataR
 	if manager == nil {
 		return &pb.TokenMetadataResponse{}, nil
 	}
-	infos := manager.Peek(categories)
-	if !req.Peek {
+	var infos []bcmr.TokenInfo
+	if req.Peek {
+		infos = manager.Peek(categories)
+	} else {
 		infos = manager.Tokens(categories)
 	}
 	var nftTypes func(chainhash.Hash) map[string]bcmr.NFTType
