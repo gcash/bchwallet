@@ -2162,3 +2162,37 @@ func TestManagerRefreshDuringOwnRead(t *testing.T) {
 		t.Fatalf("%d reads, %+v", hits.Load(), info)
 	}
 }
+
+// TestManagerForgottenAskedAgainDuringRead ensures a token forgotten while its
+// registry was being read, and asked about again before the read is over, joins
+// that download rather than waiting for it.
+func TestManagerForgottenAskedAgainDuringRead(t *testing.T) {
+	category := chainhash.Hash{0x60}
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	m, hits := readsFixture(t, map[chainhash.Hash][]byte{category: registryFor(category, "Token", "TOK")},
+		func(chainhash.Hash) {
+			arrived <- struct{}{}
+			<-release
+		})
+	m.Tokens([]chainhash.Hash{category})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-arrived
+	m.Forget(category)
+	m.Tokens([]chainhash.Hash{category})
+	if err := m.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, reading := m.reading[category]; !reading {
+		t.Fatal("the token asked about again waits for the old read")
+	}
+	close(release)
+	if err := waitReads(m); err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Tokens([]chainhash.Hash{category})[0]; info.Metadata == nil || hits.Load() != 1 {
+		t.Fatalf("%d downloads, %+v", hits.Load(), info)
+	}
+}

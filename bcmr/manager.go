@@ -357,6 +357,9 @@ func (m *Manager) takeForgotten() {
 	for category := range forgotten {
 		delete(m.states, category)
 		delete(m.reread, category)
+		// A read under way is no longer the token's, so one asked about
+		// again doesn't wait for it, and joins its download.
+		delete(m.reading, category)
 		for key := range m.tried {
 			if key.category == category {
 				delete(m.tried, key)
@@ -646,11 +649,11 @@ func (m *Manager) finishRead(ctx context.Context, read *registryRead) {
 	// The file is parsed once, for all the reads that use it.
 	parse := sync.OnceValues(func() (*registryJSON, error) { return readRegistry(read.data) })
 	for _, waiting := range reads {
-		delete(m.reading, waiting.state.Category)
 		waiting.err = read.err
 		if m.states[waiting.state.Category] != waiting.state {
 			continue
 		}
+		delete(m.reading, waiting.state.Category)
 		if pub := waiting.state.CurrentPublication(); pub == nil || pub.Hash != waiting.pub.Hash ||
 			!slices.Equal(pub.URIs, waiting.pub.URIs) {
 
