@@ -1459,3 +1459,24 @@ func TestManagerRefreshWhileOut(t *testing.T) {
 		t.Fatal("the token isn't read later")
 	}
 }
+
+// TestManagerFailedRefreshEnds ensures a Refresh whose read failed is over, so
+// that the token's later tries aren't the user's.
+func TestManagerFailedRefreshEnds(t *testing.T) {
+	category := chainhash.Hash{1}
+	f := newManagerFixture(t, category, registryFor(category, "Token", "TOK"), nil, always)
+	f.backend.pubs[category].Hash = [32]byte{1} // Nothing will match it.
+	f.m.Tokens([]chainhash.Hash{category})
+	if err := f.m.Refresh(category); err != nil {
+		t.Fatal(err)
+	}
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if f.hits.Load() != 1 {
+		t.Fatalf("%d downloads", f.hits.Load())
+	}
+	if _, ok := f.m.reread[category]; ok {
+		t.Fatal("the failed refresh still counts")
+	}
+}

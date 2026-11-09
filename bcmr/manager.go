@@ -572,6 +572,8 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 			metadata.Decimals = 0
 		}
 	}
+	// A Refresh's read is over, so later ones are the token's own.
+	delete(m.reread, state.Category)
 	if err != nil {
 		failed := m.tried[key]
 		failed = retry{time.Now(), failed.tries + 1}
@@ -586,7 +588,6 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 	}
 	delete(m.tried, key)
 	state.RetryHash, state.RetryTries, state.RetryLast = [32]byte{}, 0, time.Time{}
-	delete(m.reread, state.Category)
 	state.RegistryHash, state.Metadata = pub.Hash, metadata
 	state.RegistryChanged, state.RegistryFailed = changed, metadata == nil
 	state.RegistryParser = registryParser
