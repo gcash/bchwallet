@@ -949,7 +949,7 @@ func TestAllGatewaysOut(t *testing.T) {
 // TestOnlyGatewaysRest ensures a host that isn't a gateway has no rotation to leave.
 func TestOnlyGatewaysRest(t *testing.T) {
 	p := newGatewayPair(t)
-	p.f.failed("stranger.example")
+	p.f.failed("stranger.example", "test")
 	if len(p.f.out) != 0 {
 		t.Fatal("a stranger's host was counted")
 	}
@@ -1027,6 +1027,65 @@ func TestFaultOnFileAnotherGivesRests(t *testing.T) {
 	}
 }
 
+// TestGatewayLeavingRotationLogsWhy ensures the log says why a gateway left
+// rotation and for how long: a fault that counted as another gateway gave the
+// item, a 429's pause, and the state of every gateway when the user is told that
+// all are out.
+func TestGatewayLeavingRotationLogsWhy(t *testing.T) {
+	first, f := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	})
+	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "900")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(second.Close)
+	third := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("icon"))
+	}))
+	t.Cleanup(third.Close)
+	f.Gateways = []string{first.URL, second.URL, third.URL}
+	f.roundPause = 0
+	logged.take()
+
+	data, err := f.FetchIcon(context.Background(), "ipfs://bafy1/icon.png")
+	if err != nil || string(data) != "icon" {
+		t.Fatalf("%q, %v", data, err)
+	}
+	got := logged.take()
+	firstHost, secondHost, thirdHost := hostOf(first.URL), hostOf(second.URL), hostOf(third.URL)
+	for _, want := range []string{
+		"Gateway " + firstHost + " out of rotation for 30s, after 1 failures in a row: ",
+		"504", ", while " + thirdHost + " gave the item",
+		"Gateway " + secondHost + " paused for 15m0s, as it asked: ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the log has no %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Gateway "+thirdHost) {
+		t.Fatalf("the gateway that gave the item left rotation:\n%s", got)
+	}
+
+	// With the last one out too, an icon the user asks for says how each is.
+	f.failed(thirdHost, "test")
+	logged.take()
+	if _, err := f.FetchIcon(UserAction(context.Background()), "ipfs://bafy2/icon.png"); !errors.Is(err, ErrNoGateway) {
+		t.Fatal(err)
+	}
+	got = logged.take()
+	for _, want := range []string{
+		"Every gateway of an icon the user asked for is paused or out: ",
+		firstHost + " out 30s more after 1 failures",
+		secondHost + " paused 15m0s more",
+		thirdHost + " out 30s more after 1 failures",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the log has no %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestFetchSkipsGatewayOut ensures a gateway out of rotation isn't asked until it's
 // back, while another is.
 func TestFetchSkipsGatewayOut(t *testing.T) {
@@ -1091,7 +1150,7 @@ func TestRateLimitPauses(t *testing.T) {
 // TestRateLimitOnlyForGateways ensures a stranger's 429 rests nothing.
 func TestRateLimitOnlyForGateways(t *testing.T) {
 	p := newGatewayPair(t)
-	p.f.pause("stranger.example", time.Hour)
+	p.f.pause("stranger.example", time.Hour, "test")
 	if len(p.f.out) != 0 {
 		t.Fatal("a stranger's host was paused")
 	}
@@ -1649,8 +1708,8 @@ func TestSlotsRecheck(t *testing.T) {
 // a slot there.
 func TestFetchWaiterSeesGatewayLeave(t *testing.T) {
 	leave := map[string]func(f *Fetcher, host string){
-		"failed": func(f *Fetcher, host string) { f.failed(host) },
-		"paused": func(f *Fetcher, host string) { f.pause(host, time.Hour) },
+		"failed": func(f *Fetcher, host string) { f.failed(host, "test") },
+		"paused": func(f *Fetcher, host string) { f.pause(host, time.Hour, "test") },
 	}
 	for name, leave := range leave {
 		arrived := make(chan struct{}, maxPerHost)
@@ -1706,14 +1765,14 @@ func TestFetchPassesOverOutLocations(t *testing.T) {
 	own := httptest.NewTLSServer(http.HandlerFunc(serve))
 	t.Cleanup(own.Close)
 	f.Gateways = []string{paused.URL, open.URL}
-	f.pause(hostOf(paused.URL), time.Hour)
+	f.pause(hostOf(paused.URL), time.Hour, "test")
 
 	data, err := f.FetchIcon(UserAction(context.Background()), paused.URL+"/ipfs/bafy1/icon.png")
 	if err != nil || string(data) != "icon" {
 		t.Fatalf("icon: %q, %v", data, err)
 	}
 
-	f.pause(hostOf(open.URL), time.Hour)
+	f.pause(hostOf(open.URL), time.Hour, "test")
 	data, err = f.Fetch(context.Background(), sha256.Sum256(registry),
 		[]string{"ipfs://bafy2", own.URL + "/registry.json"})
 	if err != nil || string(data) != string(registry) {
@@ -1808,7 +1867,7 @@ func TestFetchWrongFilesAddUp(t *testing.T) {
 	}
 
 	// A registry it serves right does too.
-	f.failed(host)
+	f.failed(host, "test")
 	registry := []byte(`{"r":1}`)
 	serve = registry
 	if _, err := f.Fetch(context.Background(), sha256.Sum256(registry), []string{rawCID(registry)}); err != nil {
@@ -1831,7 +1890,7 @@ func TestFetchWaitsOnlyWhenAllOut(t *testing.T) {
 	own := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(own.Close)
 	f.Gateways = []string{gateway.URL}
-	f.pause(hostOf(gateway.URL), time.Hour)
+	f.pause(hostOf(gateway.URL), time.Hour, "test")
 	done := make(chan error, 1)
 	go func() {
 		_, err := f.Fetch(context.Background(), sha256.Sum256([]byte("r")),
@@ -1854,8 +1913,8 @@ func TestFetchWaitsOnlyWhenAllOut(t *testing.T) {
 // the gateway back.
 func TestFetchSuccessLeavesPause(t *testing.T) {
 	f := newFetcher([]string{"https://gw.example"}, "", nil)
-	f.failed("gw.example")
-	f.pause("gw.example", time.Hour)
+	f.failed("gw.example", "test")
+	f.pause("gw.example", time.Hour, "test")
 	f.worked("gw.example")
 	if f.available("gw.example") {
 		t.Fatal("a success ended a pause")
@@ -1868,7 +1927,7 @@ func TestFetchSuccessLeavesPause(t *testing.T) {
 	}
 
 	f.out = make(map[string]gatewayOut)
-	f.failed("gw.example")
+	f.failed("gw.example", "test")
 	f.worked("gw.example")
 	if !f.available("gw.example") {
 		t.Fatal("a success didn't end a rest")

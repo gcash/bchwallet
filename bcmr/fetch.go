@@ -418,7 +418,7 @@ uris:
 					if err, blame = item.check(uri, location, final, data); err != nil {
 						wrongFile = true
 						if blame {
-							f.failed(hostOf(location))
+							f.failed(hostOf(location), err.Error())
 						}
 					}
 				}
@@ -602,6 +602,8 @@ func (f *Fetcher) waitBack(ctx context.Context, slots *hostSlots, hosts []string
 			return nil
 		}
 		if slots == f.icons && isUserAction(ctx) {
+			log.Infof("Every gateway of an icon the user asked for is paused or out: %s",
+				f.rotationState(hosts))
 			return ErrNoGateway
 		}
 		timer := time.NewTimer(back)
@@ -798,8 +800,38 @@ func (f *Fetcher) Unavailable(uris []string) bool {
 	if len(hosts) == 0 {
 		return false
 	}
-	in, _ := f.inRotation(hosts)
-	return len(in) == 0
+	if in, _ := f.inRotation(hosts); len(in) > 0 {
+		return false
+	}
+	log.Infof("Every gateway of a registry is paused or out: %s", f.rotationState(hosts))
+	return true
+}
+
+// rotationState says how long each of the hosts is paused or out for, as the log
+// shows when every one is.
+func (f *Fetcher) rotationState(hosts []string) string {
+	f.healthMu.Lock()
+	defer f.healthMu.Unlock()
+	now := f.now()
+	var state []string
+	seen := make(map[string]bool)
+	for _, host := range hosts {
+		if seen[host] {
+			continue
+		}
+		seen[host] = true
+		out, ok := f.out[host]
+		switch {
+		case !ok || !now.Before(out.back()):
+			state = append(state, host+" in rotation")
+		case out.paused.After(out.until):
+			state = append(state, fmt.Sprintf("%s paused %v more", host, out.paused.Sub(now).Round(time.Second)))
+		default:
+			state = append(state, fmt.Sprintf("%s out %v more after %d failures",
+				host, out.until.Sub(now).Round(time.Second), out.failures))
+		}
+	}
+	return strings.Join(state, ", ")
 }
 
 // available returns whether a host is in rotation.
@@ -819,8 +851,8 @@ func (f *Fetcher) leftRotation() {
 // failed takes a gateway that failed out of rotation, for longer the more times
 // in a row it has, as for a file that fails its own CID or a 429 that doesn't
 // say how long to wait, which are the gateway's whatever the file.  A host that
-// isn't a gateway has no rotation to leave.
-func (f *Fetcher) failed(host string) {
+// isn't a gateway has no rotation to leave.  The log says why, as cause does.
+func (f *Fetcher) failed(host, cause string) {
 	if !f.isGateway(host) {
 		return
 	}
@@ -834,17 +866,20 @@ func (f *Fetcher) failed(host string) {
 	out.until = f.now().Add(rest)
 	f.out[host] = out
 	f.healthMu.Unlock()
+	log.Infof("Gateway %s out of rotation for %v, after %d failures in a row: %s",
+		host, rest, out.failures, cause)
 	f.leftRotation()
 }
 
 // itemFaults is what an item's downloads found of the gateways: those that
-// faulted on it, by not connecting, a 5xx, no answer or a stall, and the one
-// that gave it, if one did.  A file that no gateway can find, as one nobody
-// pins, gets such faults from every gateway, which says nothing of them, so a
-// fault counts only once another gateway gave the item.
+// faulted on it, by not connecting, a 5xx, no answer or a stall, with the first
+// fault of each, and the one that gave it, if one did.  A file that no gateway
+// can find, as one nobody pins, gets such faults from every gateway, which says
+// nothing of them, so a fault counts only once another gateway gave the item.
 type itemFaults struct {
 	mu     sync.Mutex
 	hosts  []string
+	causes []error
 	served string
 }
 
@@ -859,16 +894,17 @@ func withFaults(ctx context.Context, faults *itemFaults) context.Context {
 // faulted takes a gateway's fault on what a download is for, which counts when
 // the item is done, if another gateway gave it.  A download that isn't for an
 // item counts it at once.
-func (f *Fetcher) faulted(ctx context.Context, host string) {
+func (f *Fetcher) faulted(ctx context.Context, host string, fault error) {
 	faults, ok := ctx.Value(faultsKey{}).(*itemFaults)
 	if !ok {
-		f.failed(host)
+		f.failed(host, fault.Error())
 		return
 	}
 	faults.mu.Lock()
 	defer faults.mu.Unlock()
 	if !slices.Contains(faults.hosts, host) {
 		faults.hosts = append(faults.hosts, host)
+		faults.causes = append(faults.causes, fault)
 	}
 }
 
@@ -888,14 +924,14 @@ func (f *Fetcher) gave(ctx context.Context, host string) {
 // file that's missing.
 func (f *Fetcher) settle(faults *itemFaults) {
 	faults.mu.Lock()
-	served, hosts := faults.served, faults.hosts
+	served, hosts, causes := faults.served, faults.hosts, faults.causes
 	faults.mu.Unlock()
 	if served == "" {
 		return
 	}
-	for _, host := range hosts {
+	for i, host := range hosts {
 		if host != served {
-			f.failed(host)
+			f.failed(host, fmt.Sprintf("%v, while %s gave the item", causes[i], served))
 		}
 	}
 }
@@ -937,13 +973,13 @@ func (f *Fetcher) get(ctx context.Context, location string, limit int64) ([]byte
 	case err == nil:
 	case ctx.Err() != nil:
 	case errors.Is(err, errGatewayFault):
-		f.faulted(ctx, host)
+		f.faulted(ctx, host, err)
 	case errors.Is(err, errRateLimited):
 		var limit *rateLimit
 		if errors.As(err, &limit) && limit.wait > 0 {
-			f.pause(host, limit.wait)
+			f.pause(host, limit.wait, err.Error())
 		} else {
-			f.failed(host)
+			f.failed(host, err.Error()+", with no Retry-After")
 		}
 	}
 	return data, final, err
@@ -979,8 +1015,8 @@ func retryAfter(header string, now time.Time) time.Duration {
 }
 
 // pause takes a gateway that asked us to wait out of rotation for exactly as long
-// as it asked, however long.
-func (f *Fetcher) pause(host string, wait time.Duration) {
+// as it asked, however long.  The log says why, as cause does.
+func (f *Fetcher) pause(host string, wait time.Duration, cause string) {
 	if !f.isGateway(host) {
 		return
 	}
@@ -991,6 +1027,7 @@ func (f *Fetcher) pause(host string, wait time.Duration) {
 	}
 	f.out[host] = out
 	f.healthMu.Unlock()
+	log.Infof("Gateway %s paused for %v, as it asked: %s", host, wait, cause)
 	f.leftRotation()
 }
 
