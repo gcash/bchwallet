@@ -217,6 +217,13 @@ func NewManager(cfg Config) (*Manager, error) {
 		evicted:   make(map[chainhash.Hash]struct{}),
 	}
 	for _, state := range states {
+		// What a file that isn't the published one gave a token that isn't
+		// Known counts for nothing, as for one saved before that was so, or
+		// one that left the Known list.
+		if _, known := cfg.Known[state.Category]; state.RegistryChanged && !known {
+			state.clearRegistry()
+			m.save(state)
+		}
 		m.views[state.Category] = m.viewOf(state)
 		if pub := state.CurrentPublication(); pub != nil {
 			m.pubURIs[state.Category] = pub.URIs

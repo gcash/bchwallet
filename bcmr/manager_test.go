@@ -2073,3 +2073,40 @@ func TestManagerUnreadableFile(t *testing.T) {
 		t.Fatalf("%+v", info)
 	}
 }
+
+// TestManagerDropsChangedOfUnknown ensures a token that isn't Known loses, at
+// start, what a file that isn't the published one gave it, and that a Known one
+// keeps it.
+func TestManagerDropsChangedOfUnknown(t *testing.T) {
+	listed, unlisted := chainhash.Hash{0x5d}, chainhash.Hash{0x5e}
+	store, err := NewStore(testDB(t), t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range []chainhash.Hash{listed, unlisted} {
+		state := &State{Category: category, RegistryHash: [32]byte{1}, RegistryChanged: true,
+			RegistryRead: time.Now(), Metadata: &Metadata{Name: "Changed", Symbol: "C"}}
+		if err := store.Put(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	known := map[chainhash.Hash]*Metadata{listed: {Name: "Listed", Symbol: "L"}}
+	m, err := NewManager(Config{Backend: &fakeBackend{}, Store: store, Known: known})
+	if err != nil {
+		t.Fatal(err)
+	}
+	infos := m.Peek([]chainhash.Hash{listed, unlisted})
+	if infos[0].Metadata == nil || infos[0].Metadata.Name != "Changed" {
+		t.Fatalf("the Known token lost its file: %+v", infos[0])
+	}
+	if infos[1].Metadata != nil || m.states[unlisted].RegistryChanged || m.states[unlisted].RegistryHash != [32]byte{} {
+		t.Fatalf("the token that isn't Known kept its file: %+v, %+v", infos[1], m.states[unlisted])
+	}
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all[unlisted].Metadata != nil || all[listed].Metadata == nil {
+		t.Fatalf("stored %+v, %+v", all[unlisted], all[listed])
+	}
+}
