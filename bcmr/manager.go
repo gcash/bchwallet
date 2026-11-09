@@ -67,7 +67,8 @@ type TokenInfo struct {
 	RegistryChanged bool
 
 	// RegistryFailed reports that the token published a registry, but there's
-	// nothing to show from it.
+	// nothing to show from it, or that what shows is from before, as what it
+	// has now can't be used.
 	RegistryFailed bool
 }
 
@@ -730,7 +731,12 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 		m.tried[key] = failed
 		log.Debugf("Unable to read the registry of token %v: %v", state.Category, err)
 		state.RetryHash, state.RetryTries, state.RetryLast = pub.Hash, failed.tries, failed.last
-		if state.Metadata == nil {
+		// A file that the same parser can't use any more, as when the
+		// snapshot that came due can't be, keeps what showed, marked, as
+		// the registry replaced it.  With a new parser, which could be at
+		// fault, it's left as it was.
+		replaced := errors.Is(err, ErrNoMetadata) && state.RegistryParser == registryParser
+		if state.Metadata == nil || replaced {
 			state.RegistryFailed = true
 		}
 		m.save(state)

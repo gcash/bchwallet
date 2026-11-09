@@ -100,7 +100,9 @@ type State struct {
 	RegistryParser int
 
 	// RegistryFailed reports that there's no metadata to show because the
-	// publication's registry couldn't be read or had nothing to use.
+	// publication's registry couldn't be read or had nothing to use, or that
+	// the metadata is from before, as the registry read again had nothing to
+	// use.
 	RegistryFailed bool
 
 	// RetryHash is the hash of a registry that couldn't be read, RetryTries

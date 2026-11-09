@@ -829,6 +829,49 @@ func TestManagerNextSnapshot(t *testing.T) {
 	}
 }
 
+// TestManagerUnusableSnapshot ensures a registry whose snapshot that came due
+// can't be used keeps what showed, marked as failed, and waits before it's read
+// again, and that one that can't be downloaded keeps what showed, unmarked.
+func TestManagerUnusableSnapshot(t *testing.T) {
+	category := chainhash.Hash{0x3c}
+	f := newManagerFixture(t, category, registryFor(category, "Coin", "coin"), nil, always)
+	pub := f.backend.pubs[category]
+	state := &State{
+		Category:       category,
+		Links:          []Link{{Height: 1, Publication: pub}},
+		RegistryHash:   pub.Hash,
+		RegistryParser: registryParser,
+		Metadata:       &Metadata{Name: "Coin", Symbol: "COIN", NextSnapshot: time.Now().Add(-time.Hour)},
+	}
+	f.m.asked[category] = struct{}{}
+	readRegistries(t, f.m, []*State{state})
+	info := f.m.Tokens([]chainhash.Hash{category})[0]
+	if f.hits.Load() != 1 || info.Metadata == nil || info.Metadata.Symbol != "COIN" || !info.RegistryFailed {
+		t.Fatalf("%d reads, %+v", f.hits.Load(), info)
+	}
+	readRegistries(t, f.m, []*State{state})
+	if f.hits.Load() != 1 {
+		t.Fatal("read again at once")
+	}
+
+	other := chainhash.Hash{0x3d}
+	g := newManagerFixture(t, other, registryFor(other, "Coin", "COIN"), nil, always)
+	pub = g.backend.pubs[other]
+	pub.Hash = [32]byte{1} // Nothing will match it.
+	state = &State{
+		Category:       other,
+		Links:          []Link{{Height: 1, Publication: pub}},
+		RegistryHash:   pub.Hash,
+		RegistryParser: registryParser,
+		Metadata:       &Metadata{Name: "Coin", Symbol: "COIN", NextSnapshot: time.Now().Add(-time.Hour)},
+	}
+	g.m.asked[other] = struct{}{}
+	readRegistries(t, g.m, []*State{state})
+	if state.Metadata == nil || state.RegistryFailed || state.RetryTries != 1 {
+		t.Fatalf("%+v", state)
+	}
+}
+
 // TestManagerZeroHash ensures a publication of a hash of zeros isn't read over and
 // over.
 func TestManagerZeroHash(t *testing.T) {
