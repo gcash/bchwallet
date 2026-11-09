@@ -20,15 +20,19 @@ func TestMarshalTokenInfos(t *testing.T) {
 			Burned:   true,
 			Metadata: &bcmr.Metadata{
 				Name: "Name", Description: "About", Symbol: "SYM", Decimals: 8,
-				IconURI: "ipfs://icon", WebURI: "https://web",
-				NFTTypes: map[string]bcmr.NFTType{
-					"02": {Name: "Two"},
-					"01": {Name: "One", Description: "First", IconURI: "ipfs://one"},
-				},
+				IconURI: "ipfs://icon", WebURI: "https://web", NFTTypeCount: 2,
 			},
 		},
 		{Category: chainhash.Hash{2}, LookAlike: true, Status: bcmr.StatusFailed},
-	}, true)
+	}, func(category chainhash.Hash) map[string]bcmr.NFTType {
+		if category != (chainhash.Hash{1}) {
+			return nil
+		}
+		return map[string]bcmr.NFTType{
+			"02": {Name: "Two"},
+			"01": {Name: "One", Description: "First", IconURI: "ipfs://one"},
+		}
+	})
 	if len(tokens) != 2 {
 		t.Fatalf("%d tokens", len(tokens))
 	}
@@ -74,8 +78,8 @@ func TestStatusNumbers(t *testing.T) {
 func TestMarshalLeavesOutNFTTypes(t *testing.T) {
 	tokens := marshalTokenInfos([]bcmr.TokenInfo{{
 		Stale:    true,
-		Metadata: &bcmr.Metadata{Name: "N", NFTTypes: map[string]bcmr.NFTType{"01": {Name: "One"}}},
-	}}, false)
+		Metadata: &bcmr.Metadata{Name: "N", NFTTypeCount: 1},
+	}}, nil)
 	if len(tokens[0].NftTypes) != 0 || tokens[0].Name != "N" || !tokens[0].PublicationStale {
 		t.Fatalf("got %+v", tokens[0])
 	}

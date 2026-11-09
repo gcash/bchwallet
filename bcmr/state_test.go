@@ -137,7 +137,9 @@ func TestStoreKeepsTypesApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := all[state.Category]
-	if got == nil || got.ScannedTo != 100 || !reflect.DeepEqual(got.Metadata.NFTTypes, state.Metadata.NFTTypes) {
+	if got == nil || got.ScannedTo != 100 || got.Metadata.NFTTypes != nil ||
+		!reflect.DeepEqual(store.NFTTypes(state.Category), state.Metadata.NFTTypes) {
+
 		t.Fatalf("%+v", got)
 	}
 }
@@ -150,31 +152,115 @@ func TestStoreReadsTypesKeptWithTheState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := typesState()
-	state.Category = chainhash.Hash{2}
-	var old bytes.Buffer
-	if err := gob.NewEncoder(&old).Encode(state); err != nil {
-		t.Fatal(err)
-	}
-	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
-		return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], old.Bytes())
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := oldTypesState(t, db, chainhash.Hash{2})
 	all, err := store.All()
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := all[state.Category]
-	if got == nil || len(got.Metadata.NFTTypes) != 50 {
+	if got == nil || got.Metadata.NFTTypes != nil || got.Metadata.NFTTypeCount != 50 ||
+		got.RegistryParser != registryParser || len(store.NFTTypes(state.Category)) != 50 {
+
 		t.Fatalf("%+v", got)
-	}
-	if err := store.Put(got); err != nil {
-		t.Fatal(err)
 	}
 	if len(storedTypes(t, dir, state.Category)) == 0 {
 		t.Fatal("the types weren't moved")
+	}
+}
+
+// TestStoreTypesThatCantMove ensures types kept with a state that can't go to
+// their file have the registry read again.
+func TestStoreTypesThatCantMove(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := oldTypesState(t, db, chainhash.Hash{7})
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0700) }()
+	all, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[state.Category]; got == nil || got.RegistryParser != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// oldTypesState stores a state as the store did before the types were kept
+// apart, with them and without their number.
+func oldTypesState(t *testing.T, db walletdb.DB, category chainhash.Hash) *State {
+	t.Helper()
+	state := typesState()
+	state.Category = category
+	state.RegistryParser = registryParser
+	state.Metadata.NFTTypeCount = 0
+	var old bytes.Buffer
+	if err := gob.NewEncoder(&old).Encode(state); err != nil {
+		t.Fatal(err)
+	}
+	err := walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		return tx.ReadWriteBucket(bcmrBucket).Put(state.Category[:], old.Bytes())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+// TestStoreKeepsRecentTypes ensures the types read last are kept, the newest
+// first, up to maxRecentTypes, and that types that change are read anew.
+func TestStoreKeepsRecentTypes(t *testing.T) {
+	db, dir := testDB(t), t.TempDir()
+	store, err := NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := make([]*State, maxRecentTypes+1)
+	for i := range states {
+		states[i] = typesState()
+		states[i].Category = chainhash.Hash{0x40, byte(i)}
+		if err := store.Put(states[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remove := func(state *State) {
+		t.Helper()
+		if err := os.Remove(filepath.Join(dir, state.Category.String()+".gob")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Reading the first again, after the others, keeps it the newest, so
+	// the second is the one that goes when the last is read.
+	for _, state := range states[:maxRecentTypes] {
+		store.NFTTypes(state.Category)
+	}
+	store.NFTTypes(states[0].Category)
+	store.NFTTypes(states[maxRecentTypes].Category)
+	remove(states[0])
+	remove(states[1])
+	remove(states[2])
+	if len(store.NFTTypes(states[0].Category)) != 50 || len(store.NFTTypes(states[2].Category)) != 50 {
+		t.Fatal("the types read last weren't kept")
+	}
+	if store.NFTTypes(states[1].Category) != nil {
+		t.Fatal("more types were kept than maxRecentTypes")
+	}
+
+	// Types that change are read anew.
+	state := states[3]
+	state.RegistryHash = [32]byte{1}
+	state.Metadata.NFTTypes = map[string]NFTType{"a": {Name: "New"}}
+	state.Metadata.NFTTypeCount = 1
+	if err := store.Put(state); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.NFTTypes(state.Category); len(got) != 1 || got["a"].Name != "New" {
+		t.Fatalf("%+v", got)
 	}
 }
 
@@ -183,7 +269,7 @@ func typesState() *State {
 	for i := range 50 {
 		types[string(rune('a'+i))] = NFTType{Name: "N"}
 	}
-	return &State{Metadata: &Metadata{Name: "T", NFTTypes: types}}
+	return &State{Metadata: &Metadata{Name: "T", NFTTypes: types, NFTTypeCount: len(types)}}
 }
 
 // TestStoreSnapshotTakesOver ensures the types of a snapshot that took over are
@@ -214,11 +300,7 @@ func TestStoreSnapshotTakesOver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, err := store.All()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := all[state.Category].Metadata.NFTTypes["a"]; got.Name != "Revealed" {
+	if got := store.NFTTypes(state.Category)["a"]; got.Name != "Revealed" {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -275,7 +357,7 @@ func TestStoreMovesTypesOutOfTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := all[state.Category]; got == nil || len(got.Metadata.NFTTypes) != 50 {
+	if got := all[state.Category]; got == nil || len(store.NFTTypes(state.Category)) != 50 {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -296,6 +378,13 @@ func TestStoreUnreadableTypes(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, state.Category.String()+".gob"), []byte("torn"), 0600); err != nil {
 		t.Fatal(err)
+	}
+	store, err = NewStore(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types := store.NFTTypes(state.Category); types != nil {
+		t.Fatalf("read a torn file: %v", types)
 	}
 	all, err := store.All()
 	if err != nil {
@@ -327,11 +416,25 @@ func TestStoreRemovesTypes(t *testing.T) {
 	if len(storedTypes(t, dir, state.Category)) != 0 {
 		t.Fatal("the types file is still there")
 	}
+
+	// Nor does metadata that has none, from the same registry.
+	other := typesState()
+	other.Category = chainhash.Hash{6, 1}
+	if err := store.Put(other); err != nil {
+		t.Fatal(err)
+	}
+	other.Metadata = &Metadata{Name: "T"}
+	if err := store.Put(other); err != nil {
+		t.Fatal(err)
+	}
+	if len(storedTypes(t, dir, other.Category)) != 0 {
+		t.Fatal("the types of metadata without any are still there")
+	}
 	all, err := store.All()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := all[state.Category]; len(got.Metadata.NFTTypes) != 0 {
+	if got := all[state.Category]; got.Metadata.NFTTypes != nil || store.NFTTypes(state.Category) != nil {
 		t.Fatalf("%+v", got.Metadata)
 	}
 }

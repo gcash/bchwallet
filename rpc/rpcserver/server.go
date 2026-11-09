@@ -558,7 +558,11 @@ func (s *walletServer) TokenMetadata(ctx context.Context, req *pb.TokenMetadataR
 	if !req.Peek {
 		infos = manager.Tokens(categories)
 	}
-	return &pb.TokenMetadataResponse{Tokens: marshalTokenInfos(infos, req.IncludeNftTypes)}, nil
+	var nftTypes func(chainhash.Hash) map[string]bcmr.NFTType
+	if req.IncludeNftTypes {
+		nftTypes = manager.NFTTypes
+	}
+	return &pb.TokenMetadataResponse{Tokens: marshalTokenInfos(infos, nftTypes)}, nil
 }
 
 func (s *walletServer) RefreshTokenMetadata(ctx context.Context, req *pb.RefreshTokenMetadataRequest) (
@@ -598,8 +602,11 @@ func (s *walletServer) TokenIcon(ctx context.Context, req *pb.TokenIconRequest) 
 	return &pb.TokenIconResponse{Data: data}, nil
 }
 
-// marshalTokenInfos returns the tokens as the API has them.
-func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadataResponse_Token {
+// marshalTokenInfos returns the tokens as the API has them, with their NFT types
+// if nftTypes is there to read them.
+func marshalTokenInfos(infos []bcmr.TokenInfo,
+	nftTypes func(chainhash.Hash) map[string]bcmr.NFTType) []*pb.TokenMetadataResponse_Token {
+
 	tokens := make([]*pb.TokenMetadataResponse_Token, len(infos))
 	for i := range infos {
 		info := &infos[i]
@@ -623,17 +630,18 @@ func marshalTokenInfos(infos []bcmr.TokenInfo, nftTypes bool) []*pb.TokenMetadat
 			token.Name, token.Description, token.Symbol = m.Name, m.Description, m.Symbol
 			token.Decimals = uint32(m.Decimals)
 			token.IconUri, token.WebUri = m.IconURI, m.WebURI
-			if !nftTypes {
+			if nftTypes == nil || m.NFTTypeCount == 0 {
 				tokens[i] = token
 				continue
 			}
-			commitments := make([]string, 0, len(m.NFTTypes))
-			for commitment := range m.NFTTypes {
+			types := nftTypes(info.Category)
+			commitments := make([]string, 0, len(types))
+			for commitment := range types {
 				commitments = append(commitments, commitment)
 			}
 			sort.Strings(commitments)
 			for _, commitment := range commitments {
-				nft := m.NFTTypes[commitment]
+				nft := types[commitment]
 				token.NftTypes = append(token.NftTypes, &pb.TokenMetadataResponse_NftType{
 					Commitment:  commitment,
 					Name:        nft.Name,

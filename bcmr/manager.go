@@ -661,6 +661,23 @@ func (m *Manager) useRegistry(ctx context.Context, read *registryRead) {
 	m.save(state)
 }
 
+// NFTTypes returns the NFT types of a token's metadata, which are read when
+// asked for, or nil if it has none.
+//
+// This function is safe for concurrent access.
+func (m *Manager) NFTTypes(category chainhash.Hash) map[string]NFTType {
+	// A Known token with nothing read of its own shows the Known list's.
+	if known, ok := m.cfg.Known[category]; ok {
+		m.mu.Lock()
+		info, tracked := m.views[category]
+		m.mu.Unlock()
+		if !tracked || info.Metadata == known {
+			return known.NFTTypes
+		}
+	}
+	return m.cfg.Store.NFTTypes(category)
+}
+
 // snapshotDue returns whether a snapshot that was still to come has taken over.
 func snapshotDue(state *State) bool {
 	return state.Metadata != nil && !state.Metadata.NextSnapshot.IsZero() &&
@@ -679,6 +696,10 @@ func retryWait(tries uint) time.Duration {
 func (m *Manager) save(state *State) {
 	if err := m.cfg.Store.Put(state); err != nil {
 		log.Warnf("Unable to save token %v: %v", state.Category, err)
+	} else if state.Metadata != nil {
+		// The store has the types now, and reads them when they're asked
+		// for.  They go before the view is shared, as any goroutine reads it.
+		state.Metadata.NFTTypes = nil
 	}
 	view := m.viewOf(state)
 	pub := state.CurrentPublication()

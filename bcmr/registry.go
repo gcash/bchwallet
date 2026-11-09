@@ -77,8 +77,11 @@ type Metadata struct {
 	NextSnapshot time.Time
 
 	// NFTTypes has the sequential NFTs the registry names, by the hex of
-	// their commitments.
-	NFTTypes map[string]NFTType
+	// their commitments, from when the registry is read until it's stored,
+	// after which the store has them, and NFTTypeCount says how many there
+	// are.
+	NFTTypes     map[string]NFTType
+	NFTTypeCount int
 }
 
 type registryJSON struct {
@@ -268,6 +271,7 @@ func metadataOf(snapshot *snapshotJSON, category chainhash.Hash) (*Metadata, err
 			metadata.NFTTypes[commitment] = nftType
 		}
 	}
+	metadata.NFTTypeCount = len(metadata.NFTTypes)
 	return metadata, nil
 }
 

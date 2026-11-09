@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -177,10 +179,15 @@ var (
 )
 
 // Store keeps states in the wallet's database, and the NFT types of each in a
-// file of its own in typesDir.
+// file of its own in typesDir, which are read when asked for, the last few kept.
 type Store struct {
 	db       walletdb.DB
 	typesDir string
+
+	// typesMu guards recent, the types read last, newest first, as any
+	// goroutine can ask for them.
+	typesMu sync.Mutex
+	recent  []recentTypes
 
 	// last and lastTypes hold what was last written of each state and of its
 	// NFT types, so that what didn't change costs no write.  They belong to
@@ -228,6 +235,59 @@ func NewStore(db walletdb.DB, typesDir string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// recentTypes are the NFT types of a token that were read.
+type recentTypes struct {
+	category chainhash.Hash
+	types    map[string]NFTType
+}
+
+// maxRecentTypes is how many tokens' NFT types the store keeps read.
+const maxRecentTypes = 4
+
+// NFTTypes returns a token's NFT types, which only its file holds, or nil if
+// there are none, or they can't be read: a file that can't be read is removed,
+// so that the next start reads the registry again.
+func (s *Store) NFTTypes(category chainhash.Hash) map[string]NFTType {
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
+	for i, recent := range s.recent {
+		if recent.category == category {
+			s.recent = slices.Insert(slices.Delete(s.recent, i, i+1), 0, recent)
+			return recent.types
+		}
+	}
+	types, ok := s.readTypes(category)
+	if !ok {
+		_ = os.Remove(s.typesFile(category))
+		return nil
+	}
+	s.recent = slices.Insert(s.recent, 0, recentTypes{category, types})
+	if len(s.recent) > maxRecentTypes {
+		s.recent = s.recent[:maxRecentTypes]
+	}
+	return types
+}
+
+// changeTypes writes a token's NFT types, as gob encodes them, or removes its
+// file if there are none, and drops what was read of them.  It holds typesMu
+// throughout, so that a read never keeps the types from before, nor removes a
+// file it couldn't read just as this one replaces it.
+func (s *Store) changeTypes(category chainhash.Hash, encoded []byte) error {
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
+	s.recent = slices.DeleteFunc(s.recent, func(recent recentTypes) bool {
+		return recent.category == category
+	})
+	if len(encoded) != 0 {
+		return s.writeTypes(category, encoded)
+	}
+	err := os.Remove(s.typesFile(category))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // typesFile returns the file of a token's NFT types.
@@ -281,7 +341,7 @@ func typesVersion(state *State) [sha256.Size]byte {
 	types := 0
 	var nextSnapshot int64
 	if state.Metadata != nil {
-		types = len(state.Metadata.NFTTypes)
+		types = state.Metadata.NFTTypeCount
 		nextSnapshot = state.Metadata.NextSnapshot.UnixNano()
 	}
 	version := fmt.Sprintf("%x %d %d %d %d", state.RegistryHash, state.RegistryRead.UnixNano(),
@@ -317,16 +377,9 @@ func (s *Store) Put(state *State) error {
 			return err
 		}
 	}
-	if !sameTypes {
-		var err error
-		if len(types) == 0 {
-			if err = os.Remove(s.typesFile(state.Category)); errors.Is(err, fs.ErrNotExist) {
-				err = nil
-			}
-		} else {
-			err = s.writeTypes(state.Category, typesValue.Bytes())
-		}
-		if err != nil {
+	// Types that weren't read, as after a start, are as the file has them.
+	if !sameTypes && (types != nil || state.Metadata == nil || state.Metadata.NFTTypeCount == 0) {
+		if err := s.changeTypes(state.Category, typesValue.Bytes()); err != nil {
 			return err
 		}
 	}
@@ -357,21 +410,30 @@ func (s *Store) All() (map[chainhash.Hash]*State, error) {
 			copy(state.Category[:], key)
 			states[state.Category] = &state
 
-			// A state from before the types were kept apart has them with
-			// it, and is written anew at its first save.  Types that can't
-			// be read are read from the registry again.
+			// The types stay in their file until they're asked for.  A state
+			// from before they were kept apart has them with it, and they
+			// go to their file now.  Types whose file is gone are read from
+			// the registry again.
 			if state.Metadata == nil {
 				return nil
 			}
-			types, ok := s.readTypes(state.Category)
-			if !ok {
+			if types := state.Metadata.NFTTypes; types != nil {
+				state.Metadata.NFTTypes, state.Metadata.NFTTypeCount = nil, len(types)
+				var encoded bytes.Buffer
+				if gob.NewEncoder(&encoded).Encode(types) != nil ||
+					s.writeTypes(state.Category, encoded.Bytes()) != nil {
+
+					state.RegistryParser = 0
+				}
+				return nil
+			}
+			if state.Metadata.NFTTypeCount == 0 {
+				return nil
+			}
+			if _, err := os.Stat(s.typesFile(state.Category)); err != nil {
 				state.RegistryParser = 0
 				return nil
 			}
-			if types == nil {
-				return nil
-			}
-			state.Metadata.NFTTypes = types
 			s.last[state.Category] = sha256.Sum256(value)
 			s.lastTypes[state.Category] = typesVersion(&state)
 			return nil

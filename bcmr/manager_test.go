@@ -524,6 +524,30 @@ func changedFixture(t *testing.T, category chainhash.Hash, file []byte) *manager
 	return f
 }
 
+// TestManagerKnownTypes ensures a Known token with nothing read of its own has
+// the NFT types of the Known list, and one that has its own has those.
+func TestManagerKnownTypes(t *testing.T) {
+	listed, read := chainhash.Hash{0x53}, chainhash.Hash{0x54}
+	known := map[chainhash.Hash]*Metadata{
+		listed: {Name: "Listed", Symbol: "L", NFTTypes: map[string]NFTType{"01": {Name: "Listed One"}}, NFTTypeCount: 1},
+		read:   {Name: "Set", Symbol: "S", NFTTypes: map[string]NFTType{"01": {Name: "Listed One"}}, NFTTypeCount: 1},
+	}
+	f := newManagerFixture(t, read, collectionFor(read, "Set"), known, always)
+	if got := f.m.NFTTypes(listed)["01"].Name; got != "Listed One" {
+		t.Fatalf("before it's asked about: %q", got)
+	}
+	f.m.Tokens([]chainhash.Hash{listed, read})
+	if err := cycleAndRead(f.m); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.m.NFTTypes(listed)["01"].Name; got != "Listed One" {
+		t.Fatalf("with nothing read: %q", got)
+	}
+	if got := f.m.NFTTypes(read)["01"].Name; got != "One" {
+		t.Fatalf("with its own read: %q", got)
+	}
+}
+
 // TestManagerChangedCollection ensures a Known collection's registry that isn't
 // the published one shows in full, as Known, and is read again only later or
 // when asked.
@@ -536,8 +560,11 @@ func TestManagerChangedCollection(t *testing.T) {
 
 		t.Fatalf("%+v", info)
 	}
-	if info.Metadata.Name != "Minting" || info.Metadata.Decimals != 8 || info.Metadata.NFTTypes["01"].Name != "One" {
+	if info.Metadata.Name != "Minting" || info.Metadata.Decimals != 8 || f.m.NFTTypes(category)["01"].Name != "One" {
 		t.Fatalf("%+v", info.Metadata)
+	}
+	if info.Metadata.NFTTypes != nil || info.Metadata.NFTTypeCount != 1 {
+		t.Fatalf("the view holds the types: %+v", info.Metadata)
 	}
 
 	hits := f.hits.Load()
@@ -1604,7 +1631,7 @@ func TestManagerHidesAmountNames(t *testing.T) {
 		if err := cycleAndRead(f.m); err != nil {
 			t.Fatal(err)
 		}
-		types := f.m.states[category].Metadata.NFTTypes
+		types := f.m.NFTTypes(category)
 		if want := map[bool]string{false: "", true: "10 BCH"}[known]; types["01"].Name != want {
 			t.Errorf("known %v: the amount's name is %q", known, types["01"].Name)
 		}
