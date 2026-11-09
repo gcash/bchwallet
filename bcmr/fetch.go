@@ -726,10 +726,21 @@ func (f *Fetcher) using(ctx context.Context, host string) func() {
 	}
 }
 
-// gatewayOut is a gateway out of rotation: its failures in a row, and until when.
+// gatewayOut is a gateway out of rotation: its failures in a row and until when
+// they rest it, and until when a rate limit pauses it, which a success doesn't
+// end, as the gateway asked for that long.
 type gatewayOut struct {
 	failures int
 	until    time.Time
+	paused   time.Time
+}
+
+// back returns when the gateway is back in rotation.
+func (out gatewayOut) back() time.Time {
+	if out.paused.After(out.until) {
+		return out.paused
+	}
+	return out.until
 }
 
 // inRotation returns the hosts but the gateways out of rotation, in their order,
@@ -742,11 +753,11 @@ func (f *Fetcher) inRotation(hosts []string) ([]string, time.Duration) {
 	var back time.Duration
 	for _, host := range hosts {
 		out, ok := f.out[host]
-		if !ok || !now.Before(out.until) {
+		if !ok || !now.Before(out.back()) {
 			in = append(in, host)
 			continue
 		}
-		if wait := out.until.Sub(now); back == 0 || wait < back {
+		if wait := out.back().Sub(now); back == 0 || wait < back {
 			back = wait
 		}
 	}
@@ -809,7 +820,15 @@ func (f *Fetcher) failed(host string) {
 func (f *Fetcher) worked(host string) {
 	f.healthMu.Lock()
 	defer f.healthMu.Unlock()
-	delete(f.out, host)
+	out, ok := f.out[host]
+	if !ok {
+		return
+	}
+	if !f.now().Before(out.paused) {
+		delete(f.out, host)
+		return
+	}
+	f.out[host] = gatewayOut{paused: out.paused}
 }
 
 // isGateway returns whether a host is one of the gateways.
@@ -883,8 +902,8 @@ func (f *Fetcher) pause(host string, wait time.Duration) {
 	}
 	f.healthMu.Lock()
 	out := f.out[host]
-	if until := f.now().Add(wait); until.After(out.until) {
-		out.until = until
+	if until := f.now().Add(wait); until.After(out.paused) {
+		out.paused = until
 	}
 	f.out[host] = out
 	f.healthMu.Unlock()

@@ -1720,3 +1720,30 @@ func TestFetchWaitsOnlyWhenAllOut(t *testing.T) {
 		t.Fatal("a round with a location tried waited for those out of rotation")
 	}
 }
+
+// TestFetchSuccessLeavesPause ensures a download that ends well, as one under
+// way when the gateway asked to be left alone does, counts its failures as over
+// but leaves the pause the gateway asked for, and that one with no pause puts
+// the gateway back.
+func TestFetchSuccessLeavesPause(t *testing.T) {
+	f := newFetcher([]string{"https://gw.example"}, "", nil)
+	f.failed("gw.example")
+	f.pause("gw.example", time.Hour)
+	f.worked("gw.example")
+	if f.available("gw.example") {
+		t.Fatal("a success ended a pause")
+	}
+	f.healthMu.Lock()
+	failures := f.out["gw.example"].failures
+	f.healthMu.Unlock()
+	if failures != 0 {
+		t.Fatalf("%d failures after a success", failures)
+	}
+
+	f.out = make(map[string]gatewayOut)
+	f.failed("gw.example")
+	f.worked("gw.example")
+	if !f.available("gw.example") {
+		t.Fatal("a success didn't end a rest")
+	}
+}
