@@ -220,8 +220,9 @@ func TestStartRPCServersListenerFailure(t *testing.T) {
 }
 
 // TestProfileServerRestart ensures that each run's profile server can serve
-// on the port of an earlier run that closed its own.  Every run registered its
-// handler on http.DefaultServeMux, so the second panicked.
+// on the port of an earlier run that closed its own, and serves the profiles.
+// Every run registered its handler on http.DefaultServeMux, so the second
+// panicked.
 func TestProfileServerRestart(t *testing.T) {
 	_, port, err := net.SplitHostPort(freeAddr(t))
 	if err != nil {
@@ -242,6 +243,19 @@ func TestProfileServerRestart(t *testing.T) {
 				_ = resp.Body.Close()
 				if resp.StatusCode != http.StatusSeeOther {
 					t.Fatalf("run %d: got status %d, want a redirect",
+						run, resp.StatusCode)
+				}
+				// The profiles themselves, which the bchwallet command
+				// alone used to register, so that a wallet run as a
+				// library, as on mobile, served none.
+				resp, err = client.Get("http://127.0.0.1:" + port +
+					"/debug/pprof/heap")
+				if err != nil {
+					t.Fatalf("run %d: %v", run, err)
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("run %d: the heap profile got status %d",
 						run, resp.StatusCode)
 				}
 				break

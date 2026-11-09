@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	// The profiling handlers, which the profile server serves, also when the
+	// wallet runs as a library, as on mobile, and not as the bchwallet command.
+	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"sync"
@@ -290,8 +293,8 @@ func (s *stopError) get() error {
 // startProfileServer serves the profiling handlers at the address the profile
 // option gives, with a server and mux of its own, so that each run of the
 // wallet in a process has its own server, which it closes when it stops.  The
-// mux passes /debug/ to http.DefaultServeMux, where importing net/http/pprof,
-// as the bchwallet command does, registers the profiling handlers.
+// mux passes /debug/ to http.DefaultServeMux, where this package's import of
+// net/http/pprof registers the profiling handlers.
 func startProfileServer(profile string) *http.Server {
 	listenAddr := profileListenAddr(profile)
 	mux := http.NewServeMux()

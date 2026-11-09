@@ -5,12 +5,10 @@
 package main
 
 import (
-	"github.com/gcash/bchwallet/boot"
-
-	_ "net/http/pprof"
 	"os"
-
 	"runtime"
+
+	"github.com/gcash/bchwallet/boot"
 )
 
 func main() {
