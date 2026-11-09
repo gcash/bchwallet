@@ -931,6 +931,11 @@ func (m *Manager) viewOf(state *State) TokenInfo {
 		}
 		info.RegistryChanged, info.RegistryFailed = false, false
 	}
+	// The look-alike checks run for each view, as at every save, though a
+	// token's name and symbol rarely change, as they cost little against a
+	// Known list of a few dozen tokens and some 110 symbols.  If the list
+	// grows to hundreds, keep their results with the state, by its name and
+	// symbol, which the list, fixed for the Manager's life, can't change.
 	if !info.Known && info.Metadata != nil {
 		name := skeleton(info.Metadata.Name)
 		info.ReservedName = reservedNames[name]
