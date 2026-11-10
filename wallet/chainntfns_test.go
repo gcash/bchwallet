@@ -988,6 +988,60 @@ func TestRecoveryKeepsEachFind(t *testing.T) {
 	}
 }
 
+// TestRecoveryTellsEachFind checks that what the scan for used addresses finds
+// in a block is sent to the notification clients once it's kept, and isn't
+// kept in memory after.  Recovery attaches no block, so what it found was
+// collected until it was done, growing with the wallet's history, and the
+// clients heard of none of it until then.
+func TestRecoveryTellsEachFind(t *testing.T) {
+	w := newSyncedWallet(t, 1000)
+	found := &wire.MsgTx{
+		Version: wire.TxVersion,
+		TxIn: []*wire.TxIn{{PreviousOutPoint: wire.OutPoint{
+			Hash: chainhash.Hash{7},
+		}}},
+		TxOut: []*wire.TxOut{{Value: 10000, PkScript: walletScript(t, w)}},
+	}
+	client := &findingChainClient{
+		interruptingChainClient: interruptingChainClient{bestHeight: 1006},
+		found:                   found,
+	}
+
+	ntfns := w.NtfnServer.TransactionNotifications()
+	defer ntfns.Done()
+	told := make(chan *TransactionNotifications, 1)
+	go func() {
+		for n := range ntfns.C {
+			select {
+			case told <- n:
+			default:
+			}
+		}
+	}()
+
+	birthday := waddrmgr.BlockStamp{}
+	if err := w.recovery(client, &birthday); err != errFilterFailed {
+		t.Fatalf("the scan returned %v, want the failed request's error", err)
+	}
+
+	var n *TransactionNotifications
+	select {
+	case n = <-told:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the clients weren't told of what the scan found")
+	}
+	if len(n.AttachedBlocks) != 1 || n.AttachedBlocks[0].Height != 1003 ||
+		len(n.AttachedBlocks[0].Transactions) != 1 ||
+		*n.AttachedBlocks[0].Transactions[0].Hash != found.TxHash() {
+
+		t.Fatalf("the clients were told %+v, want the find in block 1003",
+			n.AttachedBlocks)
+	}
+	if w.NtfnServer.currentTxNtfn != nil {
+		t.Fatal("what the scan found is still kept in memory")
+	}
+}
+
 // TestRecoveryMarksEachBatchSynced checks that a scan for used addresses
 // that finds nothing marks the blocks synced batch by batch, so that the
 // synced height a phone shows moves on as it goes. Its batches were 2000

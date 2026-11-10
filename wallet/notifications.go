@@ -304,6 +304,23 @@ func (s *NotificationServer) notifyAttachedBlock(dbtx walletdb.ReadTx, block *wt
 		}
 	}
 
+	s.sendCurrentTxNtfn(dbtx)
+}
+
+// notifyRecoveredTransactions sends the mined transactions that recovery found
+// so far, if it found any.  Recovery scans blocks below the tip, which attach
+// no block, so what it found was kept in memory until it was done, growing
+// with the wallet's history, and the clients saw none of it until then.
+func (s *NotificationServer) notifyRecoveredTransactions(dbtx walletdb.ReadTx) {
+	if s.currentTxNtfn == nil || len(s.currentTxNtfn.AttachedBlocks) == 0 {
+		return
+	}
+	s.sendCurrentTxNtfn(dbtx)
+}
+
+// sendCurrentTxNtfn sends the notification of what was collected, with the
+// unmined transactions and the balances as they are now, and starts afresh.
+func (s *NotificationServer) sendCurrentTxNtfn(dbtx walletdb.ReadTx) {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 	clients := s.transactions

@@ -1083,6 +1083,16 @@ expandHorizons:
 		return 0, err
 	}
 
+	// Tell of what the block had, now that it's kept, rather than keep it
+	// in memory until recovery is done.
+	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
+		w.NtfnServer.notifyRecoveredTransactions(tx)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
 	// Update the global set of watched outpoints with any that were found
 	// in the block.
 	for outPoint, addr := range filterResp.FoundOutPoints {
