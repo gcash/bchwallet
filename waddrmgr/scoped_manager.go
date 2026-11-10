@@ -1160,13 +1160,14 @@ func (s *ScopedKeyManager) FirstUnusedAddress(ns walletdb.ReadBucket,
 	return *first, nil
 }
 
-// CountUnused returns the total number of unused addresses in the keychain.
-//
-// This function will return an error if the provided account number is greater
-// than the MaxAccountNum constant or there is no account information for the
-// passed account.  Any other errors returned are generally unexpected.
-func (s *ScopedKeyManager) CountUnused(ns walletdb.ReadBucket,
-	account uint32, internal bool) (int, error) {
+// addressesAfter returns how many addresses of the account's branch, internal
+// or external, were given out after the one at index, which a gap limit counts
+// as unused after a used address.  It reads the account's next index, which is
+// cached, rather than every address of the account, so that recovery, which
+// asks for each address it finds used, doesn't take longer and more memory the
+// more addresses the account has.
+func (s *ScopedKeyManager) addressesAfter(ns walletdb.ReadBucket,
+	account uint32, internal bool, index uint32) (uint32, error) {
 
 	// Enforce maximum account number.
 	if account > MaxAccountNum {
@@ -1174,14 +1175,21 @@ func (s *ScopedKeyManager) CountUnused(ns walletdb.ReadBucket,
 		return 0, err
 	}
 
-	unused := 0
-	err := s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
-		if maddr.Internal() == internal && !maddr.Used(ns) {
-			unused++
-		}
-		return nil
-	})
-	return unused, err
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	acctInfo, err := s.loadAccountInfo(ns, account)
+	if err != nil {
+		return 0, err
+	}
+	next := acctInfo.nextExternalIndex
+	if internal {
+		next = acctInfo.nextInternalIndex
+	}
+	if next <= index {
+		return 0, nil
+	}
+	return next - index - 1, nil
 }
 
 // LastInternalAddress returns the most recently requested chained internal

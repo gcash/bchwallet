@@ -632,8 +632,10 @@ func (m *Manager) MarkUsed(ns walletdb.ReadWriteBucket, address bchutil.Address)
 	return managerError(ErrAddressNotFound, str, nil)
 }
 
-// MaybeExtendAddress tells the scopedManger to extend the keychain by one if the number of used
-// keys is below the buffer.  It returns the address it derived, if it derived one.
+// MaybeExtendAddress tells the scopedManger to extend the keychain by one if
+// fewer than NumInitialAddrs addresses of the used address's branch were given
+// out after it, as a gap limit keeps that many unused addresses after the
+// highest used one.  It returns the address it derived, if it derived one.
 func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket,
 	address bchutil.Address) ([]bchutil.Address, error) {
 
@@ -649,12 +651,22 @@ func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket,
 			continue
 		}
 		// We've found the manager that this address belongs to, so we
-		// can extend it and return.
-		unused, err := scopedMgr.CountUnused(ns, maddr.Account(), maddr.Internal())
+		// can extend it and return.  An imported address has no branch
+		// to extend.
+		pubKeyAddr, ok := maddr.(ManagedPubKeyAddress)
+		if !ok {
+			return nil, nil
+		}
+		_, path, chained := pubKeyAddr.DerivationInfo()
+		if !chained {
+			return nil, nil
+		}
+		after, err := scopedMgr.addressesAfter(ns, path.Account,
+			maddr.Internal(), path.Index)
 		if err != nil {
 			return nil, err
 		}
-		if unused >= NumInitialAddrs {
+		if after >= NumInitialAddrs {
 			return nil, nil
 		}
 		var derived []ManagedAddress
