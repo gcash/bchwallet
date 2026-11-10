@@ -2611,6 +2611,20 @@ type GetTransactionsResult struct {
 // transactions in an unspecified order.  Mined transactions are saved in a
 // Block structure which records properties about the block.
 func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <-chan struct{}) (*GetTransactionsResult, error) {
+	return w.getTransactions(startBlock, endBlock, true, cancel)
+}
+
+// GetTransactionsWithoutRaw is GetTransactions with no transaction's serialized
+// bytes, for a client that needs only what the summaries say of them.
+func (w *Wallet) GetTransactionsWithoutRaw(startBlock, endBlock *BlockIdentifier,
+	cancel <-chan struct{}) (*GetTransactionsResult, error) {
+
+	return w.getTransactions(startBlock, endBlock, false, cancel)
+}
+
+func (w *Wallet) getTransactions(startBlock, endBlock *BlockIdentifier, withRaw bool,
+	cancel <-chan struct{}) (*GetTransactionsResult, error) {
+
 	var start, end int32 = 0, -1
 
 	w.chainClientLock.Lock()
@@ -2696,7 +2710,7 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 
 			txs := make([]TransactionSummary, 0, len(details))
 			for i := range details {
-				txs = append(txs, makeTxSummary(dbtx, w, &details[i]))
+				txs = append(txs, summarizeTx(dbtx, w, &details[i], withRaw))
 			}
 
 			if details[0].Block.Height != -1 {

@@ -1102,7 +1102,11 @@ func (s *walletServer) GetTransactions(ctx context.Context, req *pb.GetTransacti
 
 	_ = minRecentTxs
 
-	gtr, err := s.wallet.Load().GetTransactions(startBlock, endBlock, ctx.Done())
+	get := s.wallet.Load().GetTransactions
+	if req.OmitRawTransactions {
+		get = s.wallet.Load().GetTransactionsWithoutRaw
+	}
+	gtr, err := get(startBlock, endBlock, ctx.Done())
 	if err != nil {
 		return nil, translateError(err)
 	}

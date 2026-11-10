@@ -559,6 +559,12 @@ transactions.
   used and transactions through the best block and all unmined transactions are
   included.
 
+- `bool omit_raw_transactions`: Leave out each transaction's serialized bytes,
+  so that the `transaction` field of every `TransactionDetails` is empty.  For a
+  client that needs only what the details say of the transactions, as for a
+  list of the wallet's history, as serializing every transaction of a long
+  history again takes much of the read's memory and time.
+
 **Response:** `GetTransactionsResponse`
 
 - `repeated BlockDetails mined_transactions`: All mined transactions, organized

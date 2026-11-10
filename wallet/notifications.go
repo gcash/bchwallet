@@ -103,8 +103,19 @@ func lookupOutputChain(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetail
 }
 
 func makeTxSummary(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails) TransactionSummary {
+	return summarizeTx(dbtx, w, details, true)
+}
+
+// summarizeTx is makeTxSummary, with the transaction's serialized bytes only if
+// withRaw, as serializing every transaction of a long history again takes much
+// of a read's memory and time for a client that doesn't need them.
+func summarizeTx(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
+	withRaw bool) TransactionSummary {
+
 	serializedTx := details.SerializedTx
-	if serializedTx == nil {
+	if !withRaw {
+		serializedTx = nil
+	} else if serializedTx == nil {
 		var buf bytes.Buffer
 		err := details.MsgTx.Serialize(&buf)
 		if err != nil {

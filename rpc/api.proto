@@ -354,6 +354,12 @@ message GetTransactionsRequest {
 	// TODO: remove until spec adds it back in some way.
 	int32 minimum_recent_transactions = 5;
 
+	// Leave out each transaction's serialized bytes, for a client that needs
+	// only what the details say of it, as for a list of the wallet's history.
+	// Serializing every transaction of a long history again for the reply
+	// takes much of the read's memory and time.
+	bool omit_raw_transactions = 6;
+
 	// TODO: limit max number of txs?
 }
 message GetTransactionsResponse {

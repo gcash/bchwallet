@@ -120,3 +120,51 @@ func TestTxSummaryOtherOutputs(t *testing.T) {
 		}
 	}
 }
+
+// TestGetTransactionsWithoutRaw checks that a read of the wallet's history
+// without raw transactions leaves out only each transaction's serialized
+// bytes, and that a read with them, as other clients make, still has them.
+func TestGetTransactionsWithoutRaw(t *testing.T) {
+	w := newRegtestWallet(t)
+	spent := addCredit(t, w, wire.NewTxOut(100000, walletScript(t, w), wire.TokenData{}))
+	tx := spendTx([]wire.OutPoint{spent},
+		wire.NewTxOut(50000, walletScript(t, w), wire.TokenData{}))
+	insertTx(t, w, tx, testBlock, 0)
+
+	withRaw, err := w.GetTransactions(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := w.GetTransactionsWithoutRaw(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withRaw.MinedTransactions) == 0 ||
+		len(withRaw.MinedTransactions) != len(without.MinedTransactions) {
+
+		t.Fatalf("got %d blocks with raw transactions and %d without",
+			len(withRaw.MinedTransactions), len(without.MinedTransactions))
+	}
+	for i, block := range withRaw.MinedTransactions {
+		other := without.MinedTransactions[i]
+		if len(block.Transactions) != len(other.Transactions) {
+			t.Fatalf("block %d: %d transactions with raw, %d without", i,
+				len(block.Transactions), len(other.Transactions))
+		}
+		for j, summary := range block.Transactions {
+			lean := other.Transactions[j]
+			if len(summary.Transaction) == 0 {
+				t.Errorf("block %d tx %d has no raw transaction", i, j)
+			}
+			if lean.Transaction != nil {
+				t.Errorf("block %d tx %d has a raw transaction without", i, j)
+			}
+			if *lean.Hash != *summary.Hash || lean.Fee != summary.Fee ||
+				len(lean.MyInputs) != len(summary.MyInputs) ||
+				len(lean.MyOutputs) != len(summary.MyOutputs) {
+
+				t.Errorf("block %d tx %d differs beyond its raw bytes", i, j)
+			}
+		}
+	}
+}
