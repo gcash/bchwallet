@@ -705,3 +705,45 @@ func assertRelevantTxnsContains(t *testing.T, bf *chain.BlockFilterer, wantTx *w
 
 	t.Fatalf("unable to find tx: %x in %d relevant txns", wantTx.TxHash(), len(bf.RelevantTxns))
 }
+
+// TestBlockFiltererTellsKindsApart checks that the filter finds an output that
+// pays a watched address, and not one paying a script hash of the same 20
+// bytes, as it indexes addresses by their kind and hash rather than their
+// encoding.
+func TestBlockFiltererTellsKindsApart(t *testing.T) {
+	hash := bytes.Repeat([]byte{0x42}, 20)
+	watched, err := bchutil.NewAddressPubKeyHash(hash, &chaincfg.SimNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameHash, err := bchutil.NewAddressScriptHashFromHash(hash, &chaincfg.SimNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payTo := func(addr bchutil.Address) *wire.MsgTx {
+		script, err := txscript.PayToAddrScript(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx := wire.NewMsgTx(wire.TxVersion)
+		tx.AddTxIn(wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{1}}, nil))
+		tx.AddTxOut(wire.NewTxOut(1000, script, wire.TokenData{}))
+		return tx
+	}
+
+	req := &chain.FilterBlocksRequest{
+		ExternalAddrs: map[waddrmgr.ScopedIndex]bchutil.Address{
+			{Index: 3, Scope: waddrmgr.KeyScopeBIP0044}: watched,
+		},
+	}
+	if chain.NewBlockFilterer(&chaincfg.SimNetParams, req).FilterTx(payTo(sameHash)) {
+		t.Error("a script hash of the watched address's bytes was found")
+	}
+	filterer := chain.NewBlockFilterer(&chaincfg.SimNetParams, req)
+	if !filterer.FilterTx(payTo(watched)) {
+		t.Fatal("an output paying the watched address wasn't found")
+	}
+	if _, ok := filterer.FoundExternal[waddrmgr.KeyScopeBIP0044][3]; !ok {
+		t.Errorf("the found address isn't index 3: %v", filterer.FoundExternal)
+	}
+}

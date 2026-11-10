@@ -32,12 +32,12 @@ type BlockFilterer struct {
 	// Params specifies the chain params of the current network.
 	Params *chaincfg.Params
 
-	// ExReverseFilter holds a reverse index mapping an external address to
-	// the scoped index from which it was derived.
+	// ExReverseFilter holds a reverse index mapping an external address, by
+	// its addressKey, to the scoped index from which it was derived.
 	ExReverseFilter map[string]waddrmgr.ScopedIndex
 
-	// InReverseFilter holds a reverse index mapping an internal address to
-	// the scoped index from which it was derived.
+	// InReverseFilter holds a reverse index mapping an internal address, by
+	// its addressKey, to the scoped index from which it was derived.
 	InReverseFilter map[string]waddrmgr.ScopedIndex
 
 	// WathcedOutPoints is a global set of outpoints being tracked by the
@@ -70,20 +70,20 @@ type BlockFilterer struct {
 func NewBlockFilterer(params *chaincfg.Params,
 	req *FilterBlocksRequest) *BlockFilterer {
 
-	// Construct a reverse index by address string for the requested
-	// external addresses.
+	// Construct a reverse index by address key for the requested external
+	// addresses.
 	nExAddrs := len(req.ExternalAddrs)
 	exReverseFilter := make(map[string]waddrmgr.ScopedIndex, nExAddrs)
 	for scopedIndex, addr := range req.ExternalAddrs {
-		exReverseFilter[addr.EncodeAddress()] = scopedIndex
+		exReverseFilter[addressKey(addr)] = scopedIndex
 	}
 
-	// Construct a reverse index by address string for the requested
-	// internal addresses.
+	// Construct a reverse index by address key for the requested internal
+	// addresses.
 	nInAddrs := len(req.InternalAddrs)
 	inReverseFilter := make(map[string]waddrmgr.ScopedIndex, nInAddrs)
 	for scopedIndex, addr := range req.InternalAddrs {
-		inReverseFilter[addr.EncodeAddress()] = scopedIndex
+		inReverseFilter[addressKey(addr)] = scopedIndex
 	}
 
 	foundExternal := make(map[waddrmgr.KeyScope]map[uint32]struct{})
@@ -98,6 +98,22 @@ func NewBlockFilterer(params *chaincfg.Params,
 		FoundExternal:    foundExternal,
 		FoundInternal:    foundInternal,
 		FoundOutPoints:   foundOutPoints,
+	}
+}
+
+// addressKey returns what the reverse filters index an address by: its kind and
+// the hash it pays, for the addresses a wallet derives, which takes no encoding,
+// or else its encoding.  Recovery builds the filters from every address it
+// watches for each range of blocks it scans, and encoding each one as a
+// cashaddr every time made a long recovery slow, and its memory churn.
+func addressKey(addr bchutil.Address) string {
+	switch a := addr.(type) {
+	case *bchutil.AddressPubKeyHash:
+		return "h" + string(a.ScriptAddress())
+	case *bchutil.AddressScriptHash:
+		return "s" + string(a.ScriptAddress())
+	default:
+		return "e" + addr.EncodeAddress()
 	}
 }
 
@@ -200,12 +216,12 @@ func (bf *BlockFilterer) FilterTx(tx *wire.MsgTx) bool {
 func (bf *BlockFilterer) FilterOutputAddrs(addrs []bchutil.Address) bool {
 	var isRelevant bool
 	for _, addr := range addrs {
-		addrStr := addr.EncodeAddress()
-		if scopedIndex, ok := bf.ExReverseFilter[addrStr]; ok {
+		key := addressKey(addr)
+		if scopedIndex, ok := bf.ExReverseFilter[key]; ok {
 			bf.foundExternal(scopedIndex)
 			isRelevant = true
 		}
-		if scopedIndex, ok := bf.InReverseFilter[addrStr]; ok {
+		if scopedIndex, ok := bf.InReverseFilter[key]; ok {
 			bf.foundInternal(scopedIndex)
 			isRelevant = true
 		}
