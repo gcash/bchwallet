@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
@@ -504,6 +505,78 @@ func fetchRawTxRecordPkScript(k, v []byte, index uint32) ([]byte, error) {
 		return nil, storeError(ErrData, str, nil)
 	}
 	return rec.MsgTx.TxOut[index].PkScript, nil
+}
+
+// readRawTxRecordOutput returns the output at index of the transaction in a
+// transaction record's value, a mined or an unmined one, reading only as far as
+// that output, rather than decoding all of the transaction, as one with many
+// inputs and outputs takes much to decode, and summarizing a transaction looks
+// up the output each of its inputs spends.
+func readRawTxRecordOutput(v []byte, index uint32) (*wire.TxOut, error) {
+	short := func(err error) error {
+		return storeError(ErrData, "failed to read transaction output", err)
+	}
+	if len(v) < 8+4 {
+		return nil, short(nil)
+	}
+	r := bytes.NewReader(v[8:])
+	var versionBytes [4]byte
+	if _, err := io.ReadFull(r, versionBytes[:]); err != nil {
+		return nil, short(err)
+	}
+	version := int32(binary.LittleEndian.Uint32(versionBytes[:]))
+
+	// skip passes over n bytes, which a record that's cut short doesn't have.
+	skip := func(n uint64) error {
+		if n > uint64(r.Len()) {
+			return io.ErrUnexpectedEOF
+		}
+		_, err := r.Seek(int64(n), io.SeekCurrent)
+		return err
+	}
+	// Each input is its previous outpoint, its script and its sequence, and
+	// takes at least 41 bytes, which bounds how many a record can have.
+	inputs, err := wire.ReadVarInt(r, 0)
+	if err != nil || inputs > uint64(r.Len())/41 {
+		return nil, short(err)
+	}
+	for i := uint64(0); i < inputs; i++ {
+		if err := skip(36); err != nil {
+			return nil, short(err)
+		}
+		scriptLen, err := wire.ReadVarInt(r, 0)
+		if err != nil {
+			return nil, short(err)
+		}
+		if err := skip(scriptLen + 4); err != nil {
+			return nil, short(err)
+		}
+	}
+	// Each output is its value and its script, and takes at least 9 bytes.
+	outputs, err := wire.ReadVarInt(r, 0)
+	if err != nil || outputs > uint64(r.Len())/9 {
+		return nil, short(err)
+	}
+	if uint64(index) >= outputs {
+		return nil, storeError(ErrData, "missing transaction output", nil)
+	}
+	for i := uint32(0); i < index; i++ {
+		if err := skip(8); err != nil {
+			return nil, short(err)
+		}
+		scriptLen, err := wire.ReadVarInt(r, 0)
+		if err != nil {
+			return nil, short(err)
+		}
+		if err := skip(scriptLen); err != nil {
+			return nil, short(err)
+		}
+	}
+	var out wire.TxOut
+	if _, err := wire.ReadTxOut(r, 0, version, &out); err != nil {
+		return nil, short(err)
+	}
+	return &out, nil
 }
 
 func existsTxRecord(ns walletdb.ReadBucket, txHash *chainhash.Hash, block *Block) (k, v []byte) {

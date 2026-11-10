@@ -60,16 +60,15 @@ func lookupInput(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
 	// TODO: Debits should record which account(s?) they
 	// debit from so this doesn't need to be looked up.
 	prevOP := &details.MsgTx.TxIn[deb.Index].PreviousOutPoint
-	prev, err := w.TxStore.TxDetails(txmgrNs, &prevOP.Hash)
+	prevOut, err := w.TxStore.PreviousOutput(txmgrNs, prevOP)
 	if err != nil {
-		log.Errorf("Cannot query previous transaction details for %v: %v", prevOP.Hash, err)
+		log.Errorf("Cannot read previous output %v: %v", prevOP, err)
 		return 0, wire.TokenData{}
 	}
-	if prev == nil {
+	if prevOut == nil {
 		log.Errorf("Missing previous transaction %v", prevOP.Hash)
 		return 0, wire.TokenData{}
 	}
-	prevOut := prev.MsgTx.TxOut[prevOP.Index]
 	_, addrs, _, err := txscript.ExtractPkScriptAddrs(prevOut.PkScript, w.chainParams)
 	var inputAcct uint32
 	if err == nil && len(addrs) > 0 {

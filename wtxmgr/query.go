@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/gcash/bchd/chaincfg/chainhash"
+	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchwallet/walletdb"
 )
@@ -183,6 +184,21 @@ func (s *Store) TxDetails(ns walletdb.ReadBucket, txHash *chainhash.Hash) (*TxDe
 		return nil, nil
 	}
 	return s.minedTxDetails(ns, txHash, k, v)
+}
+
+// PreviousOutput returns the output an outpoint spends, from the unmined
+// transaction with its hash, or else the newest mined one, as TxDetails finds
+// it, and nil if the store has neither.  It reads only that output, where
+// TxDetails decodes all of the transaction and reads all its records.
+func (s *Store) PreviousOutput(ns walletdb.ReadBucket, op *wire.OutPoint) (*wire.TxOut, error) {
+	v := existsRawUnmined(ns, op.Hash[:])
+	if v == nil {
+		_, v = latestTxRecord(ns, &op.Hash)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	return readRawTxRecordOutput(v, op.Index)
 }
 
 // UniqueTxDetails looks up all recorded details for a transaction recorded
