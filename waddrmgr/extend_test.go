@@ -13,7 +13,7 @@ import (
 
 // deriveBoth gives out n more external and n more internal addresses of the
 // default account, and returns them.
-func deriveBoth(t *testing.T, db walletdb.DB, scoped *ScopedKeyManager,
+func deriveBoth(t testing.TB, db walletdb.DB, scoped *ScopedKeyManager,
 	n uint32) (external, internal []ManagedAddress) {
 
 	t.Helper()

@@ -1,7 +1,6 @@
 package waddrmgr
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
@@ -1127,7 +1126,8 @@ func (s *ScopedKeyManager) LastExternalAddress(ns walletdb.ReadBucket,
 	return nil, managerError(ErrAddressNotFound, "no previous external address", nil)
 }
 
-// FirstUnusedAddress returns the first unused address found in the keychain.
+// FirstUnusedAddress returns the unused address of the account's branch,
+// internal or external, with the lowest index.
 //
 // This function will return an error if the provided account number is greater
 // than the MaxAccountNum constant or there is no account information for the
@@ -1141,23 +1141,35 @@ func (s *ScopedKeyManager) FirstUnusedAddress(ns walletdb.ReadBucket,
 		return nil, err
 	}
 
-	var first *ManagedAddress
-	var breakEarlyErr = errors.New("this error is used to break early when the first unused is found")
-	// Errors from ForEachAccountAddress are intentionally discarded here:
-	// the callback uses breakEarlyErr as a sentinel to short-circuit
-	// iteration, but ForEachAccountAddress wraps callback errors via
-	// maybeConvertDbError, making the sentinel unrecoverable.
-	_ = s.ForEachAccountAddress(ns, account, func(maddr ManagedAddress) error {
-		if first == nil && !maddr.Used(ns) && maddr.Internal() == internal {
-			first = &maddr
-			return breakEarlyErr
-		}
-		return nil
-	})
-	if first == nil {
-		return nil, managerError(ErrAddressNotFound, "no unused external address", nil)
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	// The rows say each address's branch and index, and the used addresses
+	// are keyed by the hash the account's index has, so only the address
+	// found has its key derived, however many the account has.
+	var first *dbChainAddressRow
+	err := forEachAccountAddressRow(ns, &s.scope, account,
+		func(addrHash []byte, rowInterface interface{}) error {
+			row, ok := rowInterface.(*dbChainAddressRow)
+			if !ok || (row.branch == InternalBranch) != internal {
+				return nil
+			}
+			if first != nil && first.index <= row.index {
+				return nil
+			}
+			if fetchAddressUsedByHash(ns, &s.scope, addrHash) {
+				return nil
+			}
+			first = row
+			return nil
+		})
+	if err != nil {
+		return nil, err
 	}
-	return *first, nil
+	if first == nil {
+		return nil, managerError(ErrAddressNotFound, "no unused address", nil)
+	}
+	return s.chainAddressRowToManaged(ns, first)
 }
 
 // addressesAfter returns how many addresses of the account's branch, internal

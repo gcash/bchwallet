@@ -1380,6 +1380,19 @@ func fetchAddressUsed(ns walletdb.ReadBucket, scope *KeyScope,
 	return bucket.Get(addrHash[:]) != nil
 }
 
+// fetchAddressUsedByHash returns whether the address with the hash, which the
+// used addresses are keyed by, was used.
+func fetchAddressUsedByHash(ns walletdb.ReadBucket, scope *KeyScope,
+	addrHash []byte) bool {
+
+	scopedBucket, err := fetchReadScopeBucket(ns, scope)
+	if err != nil {
+		return false
+	}
+
+	return scopedBucket.NestedReadBucket(usedAddrBucketName).Get(addrHash) != nil
+}
+
 // markAddressUsed flags the provided address id as used in the database.
 func markAddressUsed(ns walletdb.ReadWriteBucket, scope *KeyScope,
 	addressID []byte) error {
@@ -1580,6 +1593,19 @@ func fetchAddrAccount(ns walletdb.ReadBucket, scope *KeyScope,
 func forEachAccountAddress(ns walletdb.ReadBucket, scope *KeyScope,
 	account uint32, fn func(rowInterface interface{}) error) error {
 
+	return forEachAccountAddressRow(ns, scope, account,
+		func(_ []byte, rowInterface interface{}) error {
+			return fn(rowInterface)
+		})
+}
+
+// forEachAccountAddressRow calls the given function with the hash of each
+// address of the given account, which the account's index and the used
+// addresses are keyed by, and its row, breaking early on error.  It derives no
+// key, so walking an account with many addresses stays cheap.
+func forEachAccountAddressRow(ns walletdb.ReadBucket, scope *KeyScope,
+	account uint32, fn func(addrHash []byte, rowInterface interface{}) error) error {
+
 	scopedBucket, err := fetchReadScopeBucket(ns, scope)
 	if err != nil {
 		return err
@@ -1611,7 +1637,7 @@ func forEachAccountAddress(ns walletdb.ReadBucket, scope *KeyScope,
 			return err
 		}
 
-		return fn(addrRow)
+		return fn(k, addrRow)
 	})
 	if err != nil {
 		return maybeConvertDbError(err)
