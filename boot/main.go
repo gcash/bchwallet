@@ -290,6 +290,20 @@ func (s *stopError) get() error {
 	return s.err
 }
 
+// minBlockCacheSize is the least neutrino's block cache holds, so that a
+// network with small blocks, as testnet4, still caches a few.
+const minBlockCacheSize = 10_000_000
+
+// blockCacheSize returns the size of neutrino's block cache: the network's
+// default maximum block size, the floor of its ABLA limit, which neutrino can't
+// follow as it reads no full blocks, so that the largest block fits, and no
+// less than minBlockCacheSize.  The cache counts blocks by their serialized
+// size, which decoded take a few times as much memory, so neutrino's default
+// of 40 MB held over 130 MB on a phone.
+func blockCacheSize(params *chaincfg.Params) uint64 {
+	return max(uint64(params.DefaultConsensusBlockSize), minBlockCacheSize)
+}
+
 // startProfileServer serves the profiling handlers at the address the profile
 // option gives, with a server and mux of its own, so that each run of the
 // wallet in a process has its own server, which it closes when it stops.  The
@@ -477,15 +491,16 @@ func startNeutrino() (*chain.NeutrinoClient, func(), error) {
 	}
 	chainService, err := neutrino.NewChainService(
 		neutrino.Config{
-			DataDir:       netDir,
-			Database:      spvdb,
-			ChainParams:   *activeNet.Params,
-			ConnectPeers:  cfg.ConnectPeers,
-			AddPeers:      cfg.AddPeers,
-			BlocksOnly:    cfg.BlocksOnly,
-			PersistToDisk: cfg.PersistFilters,
-			Proxy:         cfg.Proxy,
-			NameResolver:  buildNeutrinoDNSResolver(),
+			DataDir:        netDir,
+			Database:       spvdb,
+			ChainParams:    *activeNet.Params,
+			ConnectPeers:   cfg.ConnectPeers,
+			AddPeers:       cfg.AddPeers,
+			BlocksOnly:     cfg.BlocksOnly,
+			PersistToDisk:  cfg.PersistFilters,
+			Proxy:          cfg.Proxy,
+			NameResolver:   buildNeutrinoDNSResolver(),
+			BlockCacheSize: blockCacheSize(activeNet.Params),
 		})
 	if err != nil {
 		_ = spvdb.Close()

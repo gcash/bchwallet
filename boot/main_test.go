@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchwallet/internal/cfgutil"
 )
 
@@ -287,5 +288,17 @@ func TestProfileListenAddr(t *testing.T) {
 			t.Errorf("profile=%s: listens on %s, want %s", test.profile,
 				got, test.want)
 		}
+	}
+}
+
+// TestBlockCacheSize ensures that neutrino's block cache holds a block of the
+// network's default maximum size, and holds no less than minBlockCacheSize on
+// a network whose blocks are smaller.
+func TestBlockCacheSize(t *testing.T) {
+	if got := blockCacheSize(&chaincfg.MainNetParams); got != 32_000_000 {
+		t.Errorf("mainnet's cache holds %d bytes, want 32,000,000", got)
+	}
+	if got := blockCacheSize(&chaincfg.TestNet4Params); got != minBlockCacheSize {
+		t.Errorf("testnet4's cache holds %d bytes, want %d", got, minBlockCacheSize)
 	}
 }
