@@ -138,7 +138,10 @@ func (rm *RecoveryManager) Resurrect(ns walletdb.ReadBucket,
 			return err
 		}
 
-		rm.state.AddWatchedOutPoint(&credit.OutPoint, addrs[0])
+		err = rm.state.AddWatchedOutPoint(&credit.OutPoint, addrs[0])
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -205,14 +208,10 @@ type RecoveryState struct {
 	// RecoveryState.
 	scopes map[waddrmgr.KeyScope]*ScopeRecoveryState
 
-	// watchedOutPoints contains the set of all outpoints known to the
-	// wallet. This is updated iteratively as new outpoints are found during
-	// a rescan.
-	watchedOutPoints map[wire.OutPoint]bchutil.Address
-
 	// watch is the addresses of all scopes being watched, with their
-	// scripts and reverse indexes, which each filter blocks request
-	// shares rather than builds anew.
+	// scripts and reverse indexes, and the outpoints known to the wallet,
+	// which are watched for spends and added to as recovery finds them.
+	// Each filter blocks request shares it rather than builds it anew.
 	watch *chain.WatchIndex
 }
 
@@ -223,10 +222,9 @@ func NewRecoveryState(recoveryWindow uint32) *RecoveryState {
 	scopes := make(map[waddrmgr.KeyScope]*ScopeRecoveryState)
 
 	return &RecoveryState{
-		recoveryWindow:   recoveryWindow,
-		scopes:           scopes,
-		watchedOutPoints: make(map[wire.OutPoint]bchutil.Address),
-		watch:            chain.NewWatchIndex(),
+		recoveryWindow: recoveryWindow,
+		scopes:         scopes,
+		watch:          chain.NewWatchIndex(),
 	}
 }
 
@@ -251,7 +249,7 @@ func (rs *RecoveryState) StateForScope(
 // WatchedOutPoints returns the global set of outpoints that are known to belong
 // to the wallet during recovery.
 func (rs *RecoveryState) WatchedOutPoints() map[wire.OutPoint]bchutil.Address {
-	return rs.watchedOutPoints
+	return rs.watch.OutPoints
 }
 
 // Watch returns the index of the addresses being watched, brought up to date
@@ -279,9 +277,9 @@ func (rs *RecoveryState) Watch() (*chain.WatchIndex, error) {
 // AddWatchedOutPoint updates the recovery state's set of known outpoints that
 // we will monitor for spends during recovery.
 func (rs *RecoveryState) AddWatchedOutPoint(outPoint *wire.OutPoint,
-	addr bchutil.Address) {
+	addr bchutil.Address) error {
 
-	rs.watchedOutPoints[*outPoint] = addr
+	return rs.watch.AddOutPoint(*outPoint, addr)
 }
 
 // ScopeRecoveryState is used to manage the recovery of addresses generated

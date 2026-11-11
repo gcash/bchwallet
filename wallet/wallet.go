@@ -1099,7 +1099,10 @@ expandHorizons:
 	// Update the global set of watched outpoints with any that were found
 	// in the block.
 	for outPoint, addr := range filterResp.FoundOutPoints {
-		recoveryState.AddWatchedOutPoint(&outPoint, addr)
+		err := recoveryState.AddWatchedOutPoint(&outPoint, addr)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	// Update the batch to indicate that we've processed all block through
@@ -1239,7 +1242,7 @@ func newFilterBlocksRequest(batch []wtxmgr.BlockMeta,
 	return &chain.FilterBlocksRequest{
 		Blocks:           batch,
 		Watch:            watch,
-		WatchedOutPoints: recoveryState.WatchedOutPoints(),
+		WatchedOutPoints: watch.OutPoints,
 		Interrupt:        make(chan struct{}),
 	}, nil
 }

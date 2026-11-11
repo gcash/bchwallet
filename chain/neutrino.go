@@ -349,12 +349,8 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 	// internal and external addresses that were requested, in addition to
 	// the set of outpoints currently being watched.
 	if req.Watch != nil {
-		// Its own slice, which the outpoints are added to, so that the
-		// prebuilt scripts stay as they are.
-		watchList := make([][]byte, 0,
-			len(req.Watch.Scripts)+len(req.WatchedOutPoints)*2)
-		watchList = append(watchList, req.Watch.Scripts...)
-		return appendWatchedOutPoints(watchList, req.WatchedOutPoints)
+		// Prebuilt, outpoints and all, and only read.
+		return req.Watch.Scripts, nil
 	}
 
 	watchListSize := len(req.ExternalAddrs) +

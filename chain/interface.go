@@ -78,8 +78,9 @@ type (
 	// scoped-index of the child address. A global set of watched outpoints
 	// is also included to monitor for spends.
 	//
-	// A request with a Watch has its addresses there, prebuilt, in place of
-	// ExternalAddrs and InternalAddrs.
+	// A request with a Watch has its addresses and outpoints there,
+	// prebuilt, in place of ExternalAddrs and InternalAddrs, and its
+	// WatchedOutPoints are the Watch's OutPoints.
 	FilterBlocksRequest struct {
 		Blocks           []wtxmgr.BlockMeta
 		ExternalAddrs    map[waddrmgr.ScopedIndex]bchutil.Address

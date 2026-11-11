@@ -1,6 +1,8 @@
 package chain
 
 import (
+	"bytes"
+
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
@@ -70,12 +72,14 @@ type BlockFilterer struct {
 func NewBlockFilterer(params *chaincfg.Params,
 	req *FilterBlocksRequest) *BlockFilterer {
 
-	// A request with a prebuilt watch index has its reverse indexes, which
-	// the filterer only reads.
+	// A request with a prebuilt watch index has its reverse indexes and
+	// outpoints, which the filterer only reads.
 	var exReverseFilter, inReverseFilter map[string]waddrmgr.ScopedIndex
+	watchedOutPoints := req.WatchedOutPoints
 	if req.Watch != nil {
 		exReverseFilter = req.Watch.ExReverse
 		inReverseFilter = req.Watch.InReverse
+		watchedOutPoints = req.Watch.OutPoints
 	} else {
 		// Construct a reverse index by address key for the requested
 		// external addresses.
@@ -100,7 +104,7 @@ func NewBlockFilterer(params *chaincfg.Params,
 		Params:           params,
 		ExReverseFilter:  exReverseFilter,
 		InReverseFilter:  inReverseFilter,
-		WatchedOutPoints: req.WatchedOutPoints,
+		WatchedOutPoints: watchedOutPoints,
 		FoundExternal:    foundExternal,
 		FoundInternal:    foundInternal,
 		FoundOutPoints:   foundOutPoints,
@@ -114,22 +118,47 @@ func NewBlockFilterer(params *chaincfg.Params,
 // a long history watches took most of its work.  Adding to it isn't safe while
 // a request that has it is filtered.
 type WatchIndex struct {
-	// Scripts are the output scripts of the addresses, external and
-	// internal.
+	// Scripts is the watch list a filter is matched against: the output
+	// scripts of the addresses, external and internal, and for each
+	// outpoint, the script it pays and the outpoint itself.
 	Scripts [][]byte
 
 	// ExReverse and InReverse map the external and internal addresses, by
 	// their addressKey, to the scoped index each was derived from.
 	ExReverse map[string]waddrmgr.ScopedIndex
 	InReverse map[string]waddrmgr.ScopedIndex
+
+	// OutPoints are the outpoints watched for spends, with the address
+	// each pays.
+	OutPoints map[wire.OutPoint]bchutil.Address
 }
 
-// NewWatchIndex returns a WatchIndex of no addresses.
+// NewWatchIndex returns a WatchIndex of no addresses or outpoints.
 func NewWatchIndex() *WatchIndex {
 	return &WatchIndex{
 		ExReverse: make(map[string]waddrmgr.ScopedIndex),
 		InReverse: make(map[string]waddrmgr.ScopedIndex),
+		OutPoints: make(map[wire.OutPoint]bchutil.Address),
 	}
+}
+
+// AddOutPoint adds an outpoint to watch for spends, which pays the address,
+// unless it's there already.
+func (w *WatchIndex) AddOutPoint(op wire.OutPoint, addr bchutil.Address) error {
+	if _, ok := w.OutPoints[op]; ok {
+		return nil
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := op.Serialize(&buf); err != nil {
+		return err
+	}
+	w.OutPoints[op] = addr
+	w.Scripts = append(w.Scripts, script, buf.Bytes())
+	return nil
 }
 
 // Add adds an address, internal or external, derived from the scoped index,
