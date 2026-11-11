@@ -83,3 +83,50 @@ func TestReadRawTxRecordOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestReadRawTxRecordCredit checks that reading a credit tells a coinbase as
+// blockchain.IsCoinBaseTx does: by one input that spends the zero hash at the
+// largest index, and not by either alone or by several inputs.
+func TestReadRawTxRecordCredit(t *testing.T) {
+	p2pkh := append(append([]byte{0x76, 0xa9, 0x14}, bytes.Repeat([]byte{7}, 20)...), 0x88, 0xac)
+	tests := []struct {
+		name string
+		ins  []wire.OutPoint
+		want bool
+	}{
+		{"coinbase", []wire.OutPoint{{Index: wire.MaxPrevOutIndex}}, true},
+		{"zero hash at index 0", []wire.OutPoint{{}}, false},
+		{"other hash at the largest index", []wire.OutPoint{{Hash: chainhash.Hash{1}, Index: wire.MaxPrevOutIndex}}, false},
+		{"two inputs", []wire.OutPoint{{Index: wire.MaxPrevOutIndex}, {Index: wire.MaxPrevOutIndex}}, false},
+	}
+	for _, test := range tests {
+		tx := wire.NewMsgTx(wire.TxVersion)
+		for i := range test.ins {
+			tx.AddTxIn(wire.NewTxIn(&test.ins[i], []byte{1, 2, 3}))
+		}
+		tx.AddTxOut(wire.NewTxOut(5000, p2pkh, wire.TokenData{}))
+		tx.AddTxOut(wire.NewTxOut(6000, p2pkh, wire.TokenData{}))
+		received := time.Unix(1700000000, 0)
+		rec, err := NewTxRecordFromMsgTx(tx, received)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := valueTxRecord(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, coinBase, err := readRawTxRecordCredit(v, 1)
+		if err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		if coinBase != test.want {
+			t.Errorf("%s: coinbase %v, want %v", test.name, coinBase, test.want)
+		}
+		if out.Value != 6000 {
+			t.Errorf("%s: value %d, want 6000", test.name, out.Value)
+		}
+		if !readRawTxRecordReceived(v).Equal(received) {
+			t.Errorf("%s: received %v, want %v", test.name, readRawTxRecordReceived(v), received)
+		}
+	}
+}

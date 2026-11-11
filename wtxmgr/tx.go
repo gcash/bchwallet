@@ -754,14 +754,14 @@ func (s *Store) outputs(ns walletdb.ReadBucket, spentUnmined bool) ([]Credit, er
 		if err != nil {
 			return err
 		}
-		// TODO(jrick): reading the entire transaction should
-		// be avoidable.  Creating the credit only requires the
-		// output amount and pkScript.
-		rec, err := fetchTxRecord(ns, &op.Hash, &block)
+		// Only the output is read, as decoding every unspent
+		// output's transaction made each balance cost as much as
+		// the wallet's largest transactions.
+		_, recVal := existsTxRecord(ns, &op.Hash, &block)
+		txOut, coinBase, err := readRawTxRecordCredit(recVal, op.Index)
 		if err != nil {
 			return err
 		}
-		txOut := rec.MsgTx.TxOut[op.Index]
 		cred := Credit{
 			OutPoint: op,
 			BlockMeta: BlockMeta{
@@ -770,8 +770,8 @@ func (s *Store) outputs(ns walletdb.ReadBucket, spentUnmined bool) ([]Credit, er
 			},
 			Amount:       bchutil.Amount(txOut.Value),
 			PkScript:     txOut.PkScript,
-			Received:     rec.Received,
-			FromCoinBase: blockchain.IsCoinBaseTx(&rec.MsgTx),
+			Received:     readRawTxRecordReceived(recVal),
+			FromCoinBase: coinBase,
 			TokenData:    txOut.TokenData,
 		}
 		unspent = append(unspent, cred)
@@ -797,16 +797,11 @@ func (s *Store) outputs(ns walletdb.ReadBucket, spentUnmined bool) ([]Credit, er
 			return err
 		}
 
-		// TODO(jrick): Reading/parsing the entire transaction record
-		// just for the output amount and script can be avoided.
 		recVal := existsRawUnmined(ns, op.Hash[:])
-		var rec TxRecord
-		err = readRawTxRecord(&op.Hash, recVal, &rec)
+		txOut, coinBase, err := readRawTxRecordCredit(recVal, op.Index)
 		if err != nil {
 			return err
 		}
-
-		txOut := rec.MsgTx.TxOut[op.Index]
 		cred := Credit{
 			OutPoint: op,
 			BlockMeta: BlockMeta{
@@ -814,8 +809,8 @@ func (s *Store) outputs(ns walletdb.ReadBucket, spentUnmined bool) ([]Credit, er
 			},
 			Amount:       bchutil.Amount(txOut.Value),
 			PkScript:     txOut.PkScript,
-			Received:     rec.Received,
-			FromCoinBase: blockchain.IsCoinBaseTx(&rec.MsgTx),
+			Received:     readRawTxRecordReceived(recVal),
+			FromCoinBase: coinBase,
 			TokenData:    txOut.TokenData,
 		}
 		unspent = append(unspent, cred)
