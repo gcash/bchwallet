@@ -50,8 +50,8 @@ func extend(t *testing.T, db walletdb.DB, mgr *Manager,
 
 // TestMaybeExtendAddressKeepsTheGap ensures that an address used with fewer
 // than NumInitialAddrs addresses of its branch given out after it extends that
-// branch by one, that one used further back doesn't, and that each branch
-// counts its own.
+// branch until there are that many, that one used further back doesn't, and
+// that each branch counts its own.
 func TestMaybeExtendAddressKeepsTheGap(t *testing.T) {
 	teardown, db, mgr := setupManager(t)
 	defer teardown()
@@ -67,10 +67,15 @@ func TestMaybeExtendAddressKeepsTheGap(t *testing.T) {
 		t.Fatalf("an address far back extended: %v, %v", derived, err)
 	}
 
-	// Near the end of the external branch: one more of that branch alone.
+	// Near the end of the external branch, with 4 after it: 6 more of that
+	// branch alone, and none when it's used again.
 	derived, err = extend(t, db, mgr, external[25].Address())
-	if err != nil || len(derived) != 1 {
-		t.Fatalf("an address near the end didn't extend: %v, %v", derived, err)
+	if err != nil || len(derived) != 6 {
+		t.Fatalf("an address near the end extended by %d: %v", len(derived), err)
+	}
+	derived, err = extend(t, db, mgr, external[25].Address())
+	if err != nil || len(derived) != 0 {
+		t.Fatalf("an address with its gap extended by %d: %v", len(derived), err)
 	}
 	var next ManagedAddress
 	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
@@ -91,11 +96,12 @@ func TestMaybeExtendAddressKeepsTheGap(t *testing.T) {
 			"next index %d", path.Index)
 	}
 
-	// Near the end of the internal branch, which is now 31 long.
+	// Near the end of the internal branch, which is now 31 long, with 5
+	// after it.
 	derived, err = extend(t, db, mgr, internal[25].Address())
-	if err != nil || len(derived) != 1 {
-		t.Fatalf("an internal address near the end didn't extend: %v, %v",
-			derived, err)
+	if err != nil || len(derived) != 5 {
+		t.Fatalf("an internal address near the end extended by %d: %v",
+			len(derived), err)
 	}
 	if derived[0].String() == next.Address().String() {
 		t.Fatal("the internal branch derived an address it had")

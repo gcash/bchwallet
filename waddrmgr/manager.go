@@ -632,10 +632,12 @@ func (m *Manager) MarkUsed(ns walletdb.ReadWriteBucket, address bchutil.Address)
 	return managerError(ErrAddressNotFound, str, nil)
 }
 
-// MaybeExtendAddress tells the scopedManger to extend the keychain by one if
-// fewer than NumInitialAddrs addresses of the used address's branch were given
-// out after it, as a gap limit keeps that many unused addresses after the
-// highest used one.  It returns the address it derived, if it derived one.
+// MaybeExtendAddress tells the scopedManger to extend the keychain of the used
+// address's branch until NumInitialAddrs addresses were given out after it, as
+// a gap limit keeps that many unused addresses after the highest used one.
+// Extending it by only one fell short of that when addresses were used out of
+// order, so that a payment to one past them, which another wallet of the same
+// seed could give out, was missed.  It returns the addresses it derived.
 func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket,
 	address bchutil.Address) ([]bchutil.Address, error) {
 
@@ -669,11 +671,12 @@ func (m *Manager) MaybeExtendAddress(ns walletdb.ReadWriteBucket,
 		if after >= NumInitialAddrs {
 			return nil, nil
 		}
+		missing := NumInitialAddrs - after
 		var derived []ManagedAddress
 		if maddr.Internal() {
-			derived, err = scopedMgr.NextInternalAddresses(ns, maddr.Account(), 1)
+			derived, err = scopedMgr.NextInternalAddresses(ns, maddr.Account(), missing)
 		} else {
-			derived, err = scopedMgr.NextExternalAddresses(ns, maddr.Account(), 1)
+			derived, err = scopedMgr.NextExternalAddresses(ns, maddr.Account(), missing)
 		}
 		if err != nil {
 			return nil, err
