@@ -9,6 +9,7 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/hdkeychain"
+	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/wtxmgr"
@@ -208,6 +209,11 @@ type RecoveryState struct {
 	// wallet. This is updated iteratively as new outpoints are found during
 	// a rescan.
 	watchedOutPoints map[wire.OutPoint]bchutil.Address
+
+	// watch is the addresses of all scopes being watched, with their
+	// scripts and reverse indexes, which each filter blocks request
+	// shares rather than builds anew.
+	watch *chain.WatchIndex
 }
 
 // NewRecoveryState creates a new RecoveryState using the provided
@@ -220,6 +226,7 @@ func NewRecoveryState(recoveryWindow uint32) *RecoveryState {
 		recoveryWindow:   recoveryWindow,
 		scopes:           scopes,
 		watchedOutPoints: make(map[wire.OutPoint]bchutil.Address),
+		watch:            chain.NewWatchIndex(),
 	}
 }
 
@@ -245,6 +252,28 @@ func (rs *RecoveryState) StateForScope(
 // to the wallet during recovery.
 func (rs *RecoveryState) WatchedOutPoints() map[wire.OutPoint]bchutil.Address {
 	return rs.watchedOutPoints
+}
+
+// Watch returns the index of the addresses being watched, brought up to date
+// with those the scopes' branches added since it last was, so that each filter
+// blocks request costs only what was added for it.
+func (rs *RecoveryState) Watch() (*chain.WatchIndex, error) {
+	for scope, scopeState := range rs.scopes {
+		branches := []struct {
+			branch   *BranchRecoveryState
+			internal bool
+		}{{scopeState.ExternalBranch, false}, {scopeState.InternalBranch, true}}
+		for _, b := range branches {
+			for _, index := range b.branch.takeAdded() {
+				scopedIndex := waddrmgr.ScopedIndex{Scope: scope, Index: index}
+				err := rs.watch.Add(scopedIndex, b.branch.addresses[index], b.internal)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return rs.watch, nil
 }
 
 // AddWatchedOutPoint updates the recovery state's set of known outpoints that
@@ -304,6 +333,10 @@ type BranchRecoveryState struct {
 	// addresses belonging to this branch.
 	addresses map[uint32]bchutil.Address
 
+	// added is the child indexes of the addresses added since the recovery
+	// state's watch index last took them.
+	added []uint32
+
 	// invalidChildren records the set of child indexes that derive to
 	// invalid keys.
 	invalidChildren map[uint32]struct{}
@@ -347,7 +380,18 @@ func (brs *BranchRecoveryState) ExtendHorizon() (uint32, uint32) {
 // AddAddr adds a freshly derived address from our lookahead into the map of
 // known addresses for this branch.
 func (brs *BranchRecoveryState) AddAddr(index uint32, addr bchutil.Address) {
+	if _, ok := brs.addresses[index]; !ok {
+		brs.added = append(brs.added, index)
+	}
 	brs.addresses[index] = addr
+}
+
+// takeAdded returns the child indexes of the addresses added since it was last
+// called, and forgets them.
+func (brs *BranchRecoveryState) takeAdded() []uint32 {
+	added := brs.added
+	brs.added = nil
+	return added
 }
 
 // GetAddr returns the address derived from a given child index.

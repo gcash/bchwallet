@@ -70,20 +70,26 @@ type BlockFilterer struct {
 func NewBlockFilterer(params *chaincfg.Params,
 	req *FilterBlocksRequest) *BlockFilterer {
 
-	// Construct a reverse index by address key for the requested external
-	// addresses.
-	nExAddrs := len(req.ExternalAddrs)
-	exReverseFilter := make(map[string]waddrmgr.ScopedIndex, nExAddrs)
-	for scopedIndex, addr := range req.ExternalAddrs {
-		exReverseFilter[addressKey(addr)] = scopedIndex
-	}
+	// A request with a prebuilt watch index has its reverse indexes, which
+	// the filterer only reads.
+	var exReverseFilter, inReverseFilter map[string]waddrmgr.ScopedIndex
+	if req.Watch != nil {
+		exReverseFilter = req.Watch.ExReverse
+		inReverseFilter = req.Watch.InReverse
+	} else {
+		// Construct a reverse index by address key for the requested
+		// external addresses.
+		exReverseFilter = make(map[string]waddrmgr.ScopedIndex, len(req.ExternalAddrs))
+		for scopedIndex, addr := range req.ExternalAddrs {
+			exReverseFilter[addressKey(addr)] = scopedIndex
+		}
 
-	// Construct a reverse index by address key for the requested internal
-	// addresses.
-	nInAddrs := len(req.InternalAddrs)
-	inReverseFilter := make(map[string]waddrmgr.ScopedIndex, nInAddrs)
-	for scopedIndex, addr := range req.InternalAddrs {
-		inReverseFilter[addressKey(addr)] = scopedIndex
+		// Construct a reverse index by address key for the requested
+		// internal addresses.
+		inReverseFilter = make(map[string]waddrmgr.ScopedIndex, len(req.InternalAddrs))
+		for scopedIndex, addr := range req.InternalAddrs {
+			inReverseFilter[addressKey(addr)] = scopedIndex
+		}
 	}
 
 	foundExternal := make(map[waddrmgr.KeyScope]map[uint32]struct{})
@@ -99,6 +105,53 @@ func NewBlockFilterer(params *chaincfg.Params,
 		FoundInternal:    foundInternal,
 		FoundOutPoints:   foundOutPoints,
 	}
+}
+
+// WatchIndex is the addresses a recovery watches, with the output script each
+// pays and the reverse indexes of the block filterer, built as addresses are
+// added rather than for each request, as recovery makes one for each block it
+// finds the wallet's addresses in, and building them anew for all the addresses
+// a long history watches took most of its work.  Adding to it isn't safe while
+// a request that has it is filtered.
+type WatchIndex struct {
+	// Scripts are the output scripts of the addresses, external and
+	// internal.
+	Scripts [][]byte
+
+	// ExReverse and InReverse map the external and internal addresses, by
+	// their addressKey, to the scoped index each was derived from.
+	ExReverse map[string]waddrmgr.ScopedIndex
+	InReverse map[string]waddrmgr.ScopedIndex
+}
+
+// NewWatchIndex returns a WatchIndex of no addresses.
+func NewWatchIndex() *WatchIndex {
+	return &WatchIndex{
+		ExReverse: make(map[string]waddrmgr.ScopedIndex),
+		InReverse: make(map[string]waddrmgr.ScopedIndex),
+	}
+}
+
+// Add adds an address, internal or external, derived from the scoped index,
+// unless it's there already.
+func (w *WatchIndex) Add(scopedIndex waddrmgr.ScopedIndex, addr bchutil.Address,
+	internal bool) error {
+
+	reverse := w.ExReverse
+	if internal {
+		reverse = w.InReverse
+	}
+	key := addressKey(addr)
+	if _, ok := reverse[key]; ok {
+		return nil
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return err
+	}
+	reverse[key] = scopedIndex
+	w.Scripts = append(w.Scripts, script)
+	return nil
 }
 
 // addressKey returns what the reverse filters index an address by: its kind and

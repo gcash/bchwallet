@@ -1007,7 +1007,10 @@ expandHorizons:
 	// construct the filter blocks request. The request includes the range
 	// of blocks we intend to scan, in addition to the scope-index -> addr
 	// map for all internal and external branches.
-	filterReq := newFilterBlocksRequest(batch, scopedMgrs, recoveryState)
+	filterReq, err := newFilterBlocksRequest(batch, recoveryState)
+	if err != nil {
+		return 0, err
+	}
 	w.addRecoveryInterruptChan(filterReq.Interrupt)
 
 	// Initiate the filter blocks request using our chain backend. If an
@@ -1224,40 +1227,21 @@ func internalKeyPath(index uint32) waddrmgr.DerivationPath {
 }
 
 // newFilterBlocksRequest constructs FilterBlocksRequests using our current
-// block range, scoped managers, and recovery state.
+// block range, scoped managers, and recovery state.  Its addresses are the
+// recovery state's watch index, which it shares rather than builds anew.
 func newFilterBlocksRequest(batch []wtxmgr.BlockMeta,
-	scopedMgrs map[waddrmgr.KeyScope]*waddrmgr.ScopedKeyManager,
-	recoveryState *RecoveryState) *chain.FilterBlocksRequest {
+	recoveryState *RecoveryState) (*chain.FilterBlocksRequest, error) {
 
-	filterReq := &chain.FilterBlocksRequest{
+	watch, err := recoveryState.Watch()
+	if err != nil {
+		return nil, err
+	}
+	return &chain.FilterBlocksRequest{
 		Blocks:           batch,
-		ExternalAddrs:    make(map[waddrmgr.ScopedIndex]bchutil.Address),
-		InternalAddrs:    make(map[waddrmgr.ScopedIndex]bchutil.Address),
+		Watch:            watch,
 		WatchedOutPoints: recoveryState.WatchedOutPoints(),
 		Interrupt:        make(chan struct{}),
-	}
-
-	// Populate the external and internal addresses by merging the addresses
-	// sets belong to all currently tracked scopes.
-	for scope := range scopedMgrs {
-		scopeState := recoveryState.StateForScope(scope)
-		for index, addr := range scopeState.ExternalBranch.Addrs() {
-			scopedIndex := waddrmgr.ScopedIndex{
-				Scope: scope,
-				Index: index,
-			}
-			filterReq.ExternalAddrs[scopedIndex] = addr
-		}
-		for index, addr := range scopeState.InternalBranch.Addrs() {
-			scopedIndex := waddrmgr.ScopedIndex{
-				Scope: scope,
-				Index: index,
-			}
-			filterReq.InternalAddrs[scopedIndex] = addr
-		}
-	}
-
-	return filterReq
+	}, nil
 }
 
 // extendFoundAddresses accepts a filter blocks response that contains addresses

@@ -348,6 +348,15 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 	// Construct a watch list containing the script addresses of all
 	// internal and external addresses that were requested, in addition to
 	// the set of outpoints currently being watched.
+	if req.Watch != nil {
+		// Its own slice, which the outpoints are added to, so that the
+		// prebuilt scripts stay as they are.
+		watchList := make([][]byte, 0,
+			len(req.Watch.Scripts)+len(req.WatchedOutPoints)*2)
+		watchList = append(watchList, req.Watch.Scripts...)
+		return appendWatchedOutPoints(watchList, req.WatchedOutPoints)
+	}
+
 	watchListSize := len(req.ExternalAddrs) +
 		len(req.InternalAddrs) +
 		(len(req.WatchedOutPoints) * 2)
@@ -372,7 +381,15 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
 		watchList = append(watchList, p2shAddr)
 	}
 
-	for op, addr := range req.WatchedOutPoints {
+	return appendWatchedOutPoints(watchList, req.WatchedOutPoints)
+}
+
+// appendWatchedOutPoints adds the script each watched outpoint pays and the
+// outpoint itself to the watch list.
+func appendWatchedOutPoints(watchList [][]byte,
+	watched map[wire.OutPoint]bchutil.Address) ([][]byte, error) {
+
+	for op, addr := range watched {
 		addr, err := txscript.PayToAddrScript(addr)
 		if err != nil {
 			return nil, err
