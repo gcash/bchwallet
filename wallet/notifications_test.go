@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/gcash/bchd/bchec"
@@ -13,7 +14,8 @@ import (
 
 // TestTxSummaryOtherOutputs checks that the summary of a transaction the wallet
 // sends lists the outputs that don't pay the wallet, with the address each pays
-// by its hash, and none for a script that pays no single address that way.
+// by its hash, and none for a script that pays no single address that way, the
+// script of an OP_RETURN output alone, and how many inputs it has.
 func TestTxSummaryOtherOutputs(t *testing.T) {
 	w := newRegtestWallet(t)
 	params := &chaincfg.RegressionNetParams
@@ -83,19 +85,23 @@ func TestTxSummaryOtherOutputs(t *testing.T) {
 	if len(summary.MyOutputs) != 1 || summary.MyOutputs[0].Index != 1 {
 		t.Errorf("wallet's outputs: got %+v, want the change at 1", summary.MyOutputs)
 	}
+	if summary.InputCount != 1 {
+		t.Errorf("input count: got %d, want 1", summary.InputCount)
+	}
 	want := []struct {
-		index   uint32
-		address bchutil.Address
-		amount  bchutil.Amount
-		token   wire.TokenData
+		index    uint32
+		address  bchutil.Address
+		amount   bchutil.Amount
+		token    wire.TokenData
+		opReturn []byte
 	}{
-		{0, payee, 10000, wire.TokenData{}},
-		{2, nil, 0, wire.TokenData{}},
-		{3, scriptHash, 2000, wire.TokenData{}},
-		{4, scriptHash32, 3000, wire.TokenData{}},
-		{5, payee, 1000, testToken},
-		{6, nil, 4000, wire.TokenData{}},
-		{7, nil, 5000, wire.TokenData{}},
+		{0, payee, 10000, wire.TokenData{}, nil},
+		{2, nil, 0, wire.TokenData{}, data},
+		{3, scriptHash, 2000, wire.TokenData{}, nil},
+		{4, scriptHash32, 3000, wire.TokenData{}, nil},
+		{5, payee, 1000, testToken, nil},
+		{6, nil, 4000, wire.TokenData{}, nil},
+		{7, nil, 5000, wire.TokenData{}, nil},
 	}
 	if len(summary.OtherOutputs) != len(want) {
 		t.Fatalf("other outputs: got %d, want %d: %+v", len(summary.OtherOutputs),
@@ -108,6 +114,10 @@ func TestTxSummaryOtherOutputs(t *testing.T) {
 
 			t.Errorf("other output %d: got %+v, want index %d, amount %v",
 				i, got, w.index, w.amount)
+		}
+		if !bytes.Equal(got.OpReturn, w.opReturn) {
+			t.Errorf("output %d: got OP_RETURN %x, want %x", w.index,
+				got.OpReturn, w.opReturn)
 		}
 		switch {
 		case w.address == nil && got.Address != nil:

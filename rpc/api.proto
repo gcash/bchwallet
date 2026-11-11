@@ -89,6 +89,7 @@ message TransactionDetails {
 		string address = 2; // Empty unless the output pays one address by its hash.
 		int64 amount = 3;
 		TokenData token = 4; // Unset if the output has no tokens.
+		bytes op_return = 5; // The script of an OP_RETURN output, empty for any other.
 	}
 	bytes hash = 1;
 	bytes transaction = 2;
@@ -99,6 +100,8 @@ message TransactionDetails {
 	// The outputs that don't pay the wallet: the payments of a transaction the
 	// wallet sends, or the sender's other outputs of one it receives.
 	repeated OtherOutput other_outputs = 7;
+	// How many inputs the transaction has, the wallet's and others'.
+	uint32 input_count = 8;
 }
 
 // The CashTokens an output carries.

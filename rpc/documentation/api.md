@@ -1444,6 +1444,13 @@ transaction was seen.
   - `TokenData token`: The CashTokens the output carries, or unset if it has
     none.
 
+  - `bytes op_return`: The script of an OP_RETURN output, which says what
+    protocol a transaction is of, such as a CashFusion, or empty for any other
+    output.
+
+- `uint32 input_count`: How many inputs the transaction has, the wallet's and
+  others'.
+
 **Stability**: Unstable
 
 ___

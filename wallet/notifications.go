@@ -151,10 +151,11 @@ func summarizeTx(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
 		mine := len(details.Credits) > credIndex && details.Credits[credIndex].Index == uint32(i)
 		if !mine {
 			others = append(others, TransactionSummaryOtherOutput{
-				Index:   uint32(i),
-				Address: payeeAddress(txOut.PkScript, w.chainParams),
-				Amount:  bchutil.Amount(txOut.Value),
-				Token:   txOut.TokenData,
+				Index:    uint32(i),
+				Address:  payeeAddress(txOut.PkScript, w.chainParams),
+				Amount:   bchutil.Amount(txOut.Value),
+				Token:    txOut.TokenData,
+				OpReturn: opReturn(txOut.PkScript),
 			})
 			continue
 		}
@@ -184,7 +185,16 @@ func summarizeTx(dbtx walletdb.ReadTx, w *Wallet, details *wtxmgr.TxDetails,
 		OtherOutputs: others,
 		Fee:          fee,
 		Timestamp:    details.Received.Unix(),
+		InputCount:   uint32(len(details.MsgTx.TxIn)),
 	}
+}
+
+// opReturn returns the script if it's an OP_RETURN output's, or nil.
+func opReturn(pkScript []byte) []byte {
+	if txscript.GetScriptClass(pkScript) != txscript.NullDataTy {
+		return nil
+	}
+	return pkScript
 }
 
 func totalBalances(dbtx walletdb.ReadTx, w *Wallet, m map[uint32]bchutil.Amount) error {
@@ -418,6 +428,7 @@ type TransactionSummary struct {
 	OtherOutputs []TransactionSummaryOtherOutput
 	Fee          bchutil.Amount
 	Timestamp    int64
+	InputCount   uint32
 }
 
 // TransactionSummaryInput describes a transaction input that is relevant to the
@@ -448,12 +459,14 @@ type TransactionSummaryOutput struct {
 // TransactionSummaryOtherOutput describes a transaction output that doesn't pay
 // the wallet.  Address is the address the output pays by its hash, or nil for
 // any other script, such as OP_RETURN data, a bare multisig script or a public
-// key, which pay no single address.
+// key, which pay no single address.  OpReturn is the script of an OP_RETURN
+// output, which says what protocol the transaction is of, or nil for any other.
 type TransactionSummaryOtherOutput struct {
-	Index   uint32
-	Address bchutil.Address
-	Amount  bchutil.Amount
-	Token   wire.TokenData
+	Index    uint32
+	Address  bchutil.Address
+	Amount   bchutil.Amount
+	Token    wire.TokenData
+	OpReturn []byte
 }
 
 // payeeAddress returns the address that a script pays by its hash, or nil if

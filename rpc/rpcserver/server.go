@@ -1432,10 +1432,11 @@ func marshalOtherOutputs(v []wallet.TransactionSummaryOtherOutput) []*pb.Transac
 			address = output.Address.String()
 		}
 		outputs[i] = &pb.TransactionDetails_OtherOutput{
-			Index:   output.Index,
-			Address: address,
-			Amount:  int64(output.Amount.ToUnit(bchutil.AmountSatoshi)),
-			Token:   marshalTokenData(&output.Token),
+			Index:    output.Index,
+			Address:  address,
+			Amount:   int64(output.Amount.ToUnit(bchutil.AmountSatoshi)),
+			Token:    marshalTokenData(&output.Token),
+			OpReturn: output.OpReturn,
 		}
 	}
 	return outputs
@@ -1519,6 +1520,7 @@ func marshalTransactionDetails(v []wallet.TransactionSummary) []*pb.TransactionD
 			Fee:          int64(tx.Fee),
 			Timestamp:    tx.Timestamp,
 			OtherOutputs: marshalOtherOutputs(tx.OtherOutputs),
+			InputCount:   tx.InputCount,
 		}
 	}
 	return txs
