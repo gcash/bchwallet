@@ -161,6 +161,13 @@ func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager
 	}
 	switch c := client.(type) {
 	case *chain.NeutrinoClient:
+		// The SPV backend finds a token's genesis and follows its
+		// authchain by outpoints alone, which script filters don't
+		// hold.
+		if c.CS.FilterType() == wire.GCSFilterScripts {
+			return nil, errors.New("token metadata isn't looked up on " +
+				"script filters yet")
+		}
 		config.Backend = bcmr.NewSPVBackend(spvSource{c}, hints)
 		config.FilterRollbacks, config.StopRollbacks = (&neutrino.RescanChainSource{
 			ChainService: c.CS,

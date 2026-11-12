@@ -8,6 +8,7 @@ import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
+	"github.com/gcash/bchutil/gcs/builder"
 	"github.com/gcash/bchwallet/waddrmgr"
 )
 
@@ -123,6 +124,12 @@ type WatchIndex struct {
 	// outpoint, the script it pays and the outpoint itself.
 	Scripts [][]byte
 
+	// ScriptKeys is the watch list a script filter (filter type 1) is
+	// matched against: the key of each of those scripts.  A script filter
+	// holds the script of each output its block spends, so the script an
+	// outpoint pays matches its spend, and the outpoint isn't listed.
+	ScriptKeys [][]byte
+
 	// ExReverse and InReverse map the external and internal addresses, by
 	// their addressKey, to the scoped index each was derived from.
 	ExReverse map[string]waddrmgr.ScopedIndex
@@ -158,6 +165,8 @@ func (w *WatchIndex) AddOutPoint(op wire.OutPoint, addr bchutil.Address) error {
 	}
 	w.OutPoints[op] = addr
 	w.Scripts = append(w.Scripts, script, buf.Bytes())
+	key := builder.ScriptKey(script)
+	w.ScriptKeys = append(w.ScriptKeys, key[:])
 	return nil
 }
 
@@ -180,6 +189,8 @@ func (w *WatchIndex) Add(scopedIndex waddrmgr.ScopedIndex, addr bchutil.Address,
 	}
 	reverse[key] = scopedIndex
 	w.Scripts = append(w.Scripts, script)
+	scriptKey := builder.ScriptKey(script)
+	w.ScriptKeys = append(w.ScriptKeys, scriptKey[:])
 	return nil
 }
 

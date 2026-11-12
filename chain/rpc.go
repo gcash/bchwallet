@@ -216,7 +216,7 @@ func (c *RPCClient) FilterBlocks(
 
 	// Construct the watchlist using the addresses and outpoints contained
 	// in the filter blocks request.
-	watchList, err := buildFilterBlocksWatchList(req)
+	watchList, err := buildFilterBlocksWatchList(req, false)
 	if err != nil {
 		return nil, err
 	}

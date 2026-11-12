@@ -244,8 +244,11 @@ func (s *NeutrinoClient) FilterBlocks(
 	blockFilterer := NewBlockFilterer(s.chainParams, req)
 
 	// Construct the watchlist using the addresses and outpoints contained
-	// in the filter blocks request.
-	watchList, err := buildFilterBlocksWatchList(req)
+	// in the filter blocks request, as the filters the chain service syncs
+	// hold them.
+	watchList, err := buildFilterBlocksWatchList(
+		req, s.CS.FilterType() == wire.GCSFilterScripts,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -343,14 +346,47 @@ func (s *NeutrinoClient) FilterBlocks(
 // buildFilterBlocksWatchList constructs a watchlist used for matching against a
 // cfilter from a FilterBlocksRequest. The watchlist will be populated with all
 // external addresses, internal addresses, and outpoints contained in the
-// request.
-func buildFilterBlocksWatchList(req *FilterBlocksRequest) ([][]byte, error) {
+// request.  For script filters (filter type 1) it holds the key of the script
+// of each address and of the script each outpoint pays: a script filter lists
+// the script of each output its block spends, so the spend of a watched
+// outpoint matches by its script, and the outpoints aren't listed.
+func buildFilterBlocksWatchList(req *FilterBlocksRequest,
+	scriptFilters bool) ([][]byte, error) {
+
 	// Construct a watch list containing the script addresses of all
 	// internal and external addresses that were requested, in addition to
 	// the set of outpoints currently being watched.
 	if req.Watch != nil {
 		// Prebuilt, outpoints and all, and only read.
+		if scriptFilters {
+			return req.Watch.ScriptKeys, nil
+		}
 		return req.Watch.Scripts, nil
+	}
+	if scriptFilters {
+		watchList := make([][]byte, 0, len(req.ExternalAddrs)+
+			len(req.InternalAddrs)+len(req.WatchedOutPoints))
+		for _, addrs := range []map[waddrmgr.ScopedIndex]bchutil.Address{
+			req.ExternalAddrs, req.InternalAddrs,
+		} {
+			for _, addr := range addrs {
+				script, err := txscript.PayToAddrScript(addr)
+				if err != nil {
+					return nil, err
+				}
+				key := builder.ScriptKey(script)
+				watchList = append(watchList, key[:])
+			}
+		}
+		for _, addr := range req.WatchedOutPoints {
+			script, err := txscript.PayToAddrScript(addr)
+			if err != nil {
+				return nil, err
+			}
+			key := builder.ScriptKey(script)
+			watchList = append(watchList, key[:])
+		}
+		return watchList, nil
 	}
 
 	watchListSize := len(req.ExternalAddrs) +
@@ -416,8 +452,9 @@ const (
 // the client stopped.
 var errClientStopped = errors.New("neutrino client stopped")
 
-// pollCFilter fetches the regular filter of the block with the given hash,
-// trying again until it gets it, interrupt is closed or quit is. The filter
+// pollCFilter fetches the filter of the block with the given hash, of the type
+// the chain service syncs, trying again until it gets it, interrupt is closed
+// or quit is. The filter
 // headers may lag behind the highest known block header, and a filter that no
 // peer sent says nothing about the block, so the caller mustn't go past the
 // block without it.
@@ -428,7 +465,7 @@ func (s *NeutrinoClient) pollCFilter(hash *chainhash.Hash, interrupt,
 	err := retryFetch(fmt.Sprintf("filter of block %v", hash), func() error {
 		var err error
 		filter, err = s.CS.GetCFilter(
-			*hash, wire.GCSFilterRegular, neutrino.OptimisticBatch(),
+			*hash, s.CS.FilterType(), neutrino.OptimisticBatch(),
 		)
 		if err == nil && filter == nil {
 			err = errors.New("no filter")

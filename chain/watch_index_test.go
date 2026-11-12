@@ -14,6 +14,7 @@ import (
 	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
+	"github.com/gcash/bchutil/gcs/builder"
 	"github.com/gcash/bchwallet/waddrmgr"
 )
 
@@ -69,8 +70,8 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 		WatchedOutPoints: outPoints}
 	withWatch := &FilterBlocksRequest{Watch: watch}
 
-	sorted := func(req *FilterBlocksRequest) []string {
-		list, err := buildFilterBlocksWatchList(req)
+	sortedFor := func(req *FilterBlocksRequest, scriptFilters bool) []string {
+		list, err := buildFilterBlocksWatchList(req, scriptFilters)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,6 +82,9 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
+	sorted := func(req *FilterBlocksRequest) []string {
+		return sortedFor(req, false)
+	}
 	a, b := sorted(withMaps), sorted(withWatch)
 	if len(a) != len(b) {
 		t.Fatalf("watch lists of %d and %d entries", len(a), len(b))
@@ -88,6 +92,30 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 	for i := range a {
 		if a[i] != b[i] {
 			t.Fatalf("the watch lists differ at %d", i)
+		}
+	}
+
+	// For script filters both hold the key of the script of each address
+	// and of the script the outpoint pays, and no outpoint.
+	var wantKeys []string
+	for _, n := range []byte{1, 2, 3, 4} {
+		script, err := txscript.PayToAddrScript(addr(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := builder.ScriptKey(script)
+		wantKeys = append(wantKeys, string(key[:]))
+	}
+	sort.Strings(wantKeys)
+	for name, req := range map[string]*FilterBlocksRequest{"maps": withMaps, "watch index": withWatch} {
+		keys := sortedFor(req, true)
+		if len(keys) != len(wantKeys) {
+			t.Fatalf("%s: %d script keys, want %d", name, len(keys), len(wantKeys))
+		}
+		for i := range keys {
+			if keys[i] != wantKeys[i] {
+				t.Fatalf("%s: script key %d is %x, want %x", name, i, keys[i], wantKeys[i])
+			}
 		}
 	}
 	if len(watch.Scripts) != scripts {
@@ -153,7 +181,7 @@ func TestWatchListWithIndexCostsNothingPerOutPoint(t *testing.T) {
 		}
 		req := &FilterBlocksRequest{Watch: watch}
 		return testing.AllocsPerRun(20, func() {
-			if _, err := buildFilterBlocksWatchList(req); err != nil {
+			if _, err := buildFilterBlocksWatchList(req, false); err != nil {
 				t.Fatal(err)
 			}
 		})
