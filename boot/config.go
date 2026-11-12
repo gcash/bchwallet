@@ -86,6 +86,7 @@ type config struct {
 	UseSPV         bool          `long:"usespv" description:"Enables the experimental use of SPV rather than RPC for chain synchronization"`
 	BlocksOnly     bool          `long:"blocksonly" description:"Disables downloading unconfirmed transaction when in SPV mode"`
 	PersistFilters bool          `long:"persistfilters" description:"Saves downloaded compact filters to disk when in SPV mode so they aren't fetched again after a restart"`
+	ScriptFilters  bool          `long:"scriptfilters" description:"Syncs script filters (filter type 1) rather than regular ones when in SPV mode, from the peers that serve them, so that only the wallet's own scripts are matched and not each coin it holds."`
 	AddPeers       []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
 	ConnectPeers   []string      `long:"connect" description:"Connect only to the specified peers at startup"`
 	MaxPeers       int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`

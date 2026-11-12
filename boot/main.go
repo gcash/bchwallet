@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/gcash/bchd/chaincfg"
+	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchwallet/chain"
 	"github.com/gcash/bchwallet/rpc/legacyrpc"
 	"github.com/gcash/bchwallet/rpc/rpcserver"
@@ -489,11 +490,18 @@ func startNeutrino() (*chain.NeutrinoClient, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create Neutrino DB: %v", err)
 	}
+	// The wallet's own scripts are all a script filter is matched with,
+	// where a regular filter is matched with each coin it holds too.
+	filterType := wire.GCSFilterRegular
+	if cfg.ScriptFilters {
+		filterType = wire.GCSFilterScripts
+	}
 	chainService, err := neutrino.NewChainService(
 		neutrino.Config{
 			DataDir:        netDir,
 			Database:       spvdb,
 			ChainParams:    *activeNet.Params,
+			FilterType:     filterType,
 			ConnectPeers:   cfg.ConnectPeers,
 			AddPeers:       cfg.AddPeers,
 			BlocksOnly:     cfg.BlocksOnly,

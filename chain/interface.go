@@ -45,11 +45,21 @@ type Interface interface {
 	FilterBlocks(*FilterBlocksRequest) (*FilterBlocksResponse, error)
 	BlockStamp() (*waddrmgr.BlockStamp, error)
 	SendRawTransaction(*wire.MsgTx, bool) (*chainhash.Hash, error)
-	Rescan(*chainhash.Hash, []bchutil.Address, map[wire.OutPoint]bchutil.Address) error
+	Rescan(*chainhash.Hash, []bchutil.Address, map[wire.OutPoint]WatchedOutput) error
 	NotifyReceived([]bchutil.Address) error
 	NotifyBlocks() error
 	Notifications() <-chan interface{}
 	BackEnd() string
+}
+
+// WatchedOutput is an output a wallet watches for its spend: the address the
+// wallet keeps it under, and the output's own locking script. The script is
+// what a script filter matches a spend by, and an address can't always give
+// it back: a bare multisig output is kept under the address of one of its
+// keys.
+type WatchedOutput struct {
+	Addr     bchutil.Address
+	PkScript []byte
 }
 
 // Notification types.  These are defined here and processed from from reading
@@ -86,7 +96,7 @@ type (
 		ExternalAddrs    map[waddrmgr.ScopedIndex]bchutil.Address
 		InternalAddrs    map[waddrmgr.ScopedIndex]bchutil.Address
 		Watch            *WatchIndex
-		WatchedOutPoints map[wire.OutPoint]bchutil.Address
+		WatchedOutPoints map[wire.OutPoint]WatchedOutput
 		Interrupt        chan struct{}
 	}
 
@@ -102,7 +112,7 @@ type (
 		BlockMeta          wtxmgr.BlockMeta
 		FoundExternalAddrs map[waddrmgr.KeyScope]map[uint32]struct{}
 		FoundInternalAddrs map[waddrmgr.KeyScope]map[uint32]struct{}
-		FoundOutPoints     map[wire.OutPoint]bchutil.Address
+		FoundOutPoints     map[wire.OutPoint]WatchedOutput
 		RelevantTxns       []*wire.MsgTx
 	}
 

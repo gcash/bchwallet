@@ -41,7 +41,7 @@ type RecoveryProgessMsg struct {
 type RescanJob struct {
 	InitialSync bool
 	Addrs       []bchutil.Address
-	OutPoints   map[wire.OutPoint]bchutil.Address
+	OutPoints   map[wire.OutPoint]chain.WatchedOutput
 	BlockStamp  waddrmgr.BlockStamp
 	err         chan error
 }
@@ -51,7 +51,7 @@ type RescanJob struct {
 type rescanBatch struct {
 	initialSync bool
 	addrs       []bchutil.Address
-	outpoints   map[wire.OutPoint]bchutil.Address
+	outpoints   map[wire.OutPoint]chain.WatchedOutput
 	bs          waddrmgr.BlockStamp
 	errChans    []chan error
 }
@@ -79,16 +79,9 @@ func (w *Wallet) NewRescanJob() (*RescanJob, error) {
 		return nil, err
 	}
 
-	outpoints := make(map[wire.OutPoint]bchutil.Address, len(unspent))
-	for _, output := range unspent {
-		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
-			output.PkScript, w.chainParams,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		outpoints[output.OutPoint] = outputAddrs[0]
+	outpoints, err := w.watchedOutPoints(unspent)
+	if err != nil {
+		return nil, err
 	}
 
 	job := &RescanJob{
@@ -134,8 +127,8 @@ func (b *rescanBatch) merge(job *RescanJob) {
 	}
 	b.addrs = append(b.addrs, job.Addrs...)
 
-	for op, addr := range job.OutPoints {
-		b.outpoints[op] = addr
+	for op, out := range job.OutPoints {
+		b.outpoints[op] = out
 	}
 
 	if job.BlockStamp.Height < b.bs.Height {
@@ -376,12 +369,14 @@ func (w *Wallet) rescanWithTarget(addrs []bchutil.Address,
 	}
 }
 
-// watchedOutPoints returns the outpoints of unspent with the addresses they
-// pay, for a rescan to watch for their spends.
+// watchedOutPoints returns the outpoints of unspent, with the address the
+// wallet keeps each under and the output's own locking script, for a rescan
+// to watch for their spends. The script is what a script filter matches a
+// spend by, and the address can't always give it back.
 func (w *Wallet) watchedOutPoints(unspent []wtxmgr.Credit) (
-	map[wire.OutPoint]bchutil.Address, error) {
+	map[wire.OutPoint]chain.WatchedOutput, error) {
 
-	outpoints := make(map[wire.OutPoint]bchutil.Address, len(unspent))
+	outpoints := make(map[wire.OutPoint]chain.WatchedOutput, len(unspent))
 	for _, output := range unspent {
 		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
 			output.PkScript, w.chainParams,
@@ -390,7 +385,10 @@ func (w *Wallet) watchedOutPoints(unspent []wtxmgr.Credit) (
 			return nil, err
 		}
 
-		outpoints[output.OutPoint] = outputAddrs[0]
+		outpoints[output.OutPoint] = chain.WatchedOutput{
+			Addr:     outputAddrs[0],
+			PkScript: output.PkScript,
+		}
 	}
 	return outpoints, nil
 }

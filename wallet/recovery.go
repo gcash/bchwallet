@@ -138,7 +138,8 @@ func (rm *RecoveryManager) Resurrect(ns walletdb.ReadBucket,
 			return err
 		}
 
-		err = rm.state.AddWatchedOutPoint(&credit.OutPoint, addrs[0])
+		err = rm.state.AddWatchedOutPoint(&credit.OutPoint, addrs[0],
+			credit.PkScript)
 		if err != nil {
 			return err
 		}
@@ -248,7 +249,7 @@ func (rs *RecoveryState) StateForScope(
 
 // WatchedOutPoints returns the global set of outpoints that are known to belong
 // to the wallet during recovery.
-func (rs *RecoveryState) WatchedOutPoints() map[wire.OutPoint]bchutil.Address {
+func (rs *RecoveryState) WatchedOutPoints() map[wire.OutPoint]chain.WatchedOutput {
 	return rs.watch.OutPoints
 }
 
@@ -275,11 +276,12 @@ func (rs *RecoveryState) Watch() (*chain.WatchIndex, error) {
 }
 
 // AddWatchedOutPoint updates the recovery state's set of known outpoints that
-// we will monitor for spends during recovery.
+// we will monitor for spends during recovery. pkScript is the output's own
+// locking script, which a script filter matches a spend by.
 func (rs *RecoveryState) AddWatchedOutPoint(outPoint *wire.OutPoint,
-	addr bchutil.Address) error {
+	addr bchutil.Address, pkScript []byte) error {
 
-	return rs.watch.AddOutPoint(*outPoint, addr)
+	return rs.watch.AddOutPoint(*outPoint, addr, pkScript)
 }
 
 // ScopeRecoveryState is used to manage the recovery of addresses generated

@@ -319,7 +319,7 @@ func (c *BitcoindClient) shouldNotifyBlocks() bool {
 //	[]bchutil.Address
 //	[]wire.OutPoint
 //	[]*wire.OutPoint
-//	map[wire.OutPoint]bchutil.Address
+//	map[wire.OutPoint]WatchedOutput
 //	[]chainhash.Hash
 //	[]*chainhash.Hash
 func (c *BitcoindClient) LoadTxFilter(reset bool, filters ...interface{}) error {
@@ -347,7 +347,7 @@ func (c *BitcoindClient) LoadTxFilter(reset bool, filters ...interface{}) error 
 	for _, filter := range filters {
 		switch filter := filter.(type) {
 		case []bchutil.Address, []wire.OutPoint, []*wire.OutPoint,
-			map[wire.OutPoint]bchutil.Address, []chainhash.Hash,
+			map[wire.OutPoint]WatchedOutput, []chainhash.Hash,
 			[]*chainhash.Hash:
 
 			// Proceed to check the next filter type.
@@ -414,7 +414,7 @@ func (c *BitcoindClient) RescanBlocks(
 // Rescan rescans from the block with the given hash until the current block,
 // after adding the passed addresses and outpoints to the client's watch list.
 func (c *BitcoindClient) Rescan(blockHash *chainhash.Hash,
-	addresses []bchutil.Address, outPoints map[wire.OutPoint]bchutil.Address) error {
+	addresses []bchutil.Address, outPoints map[wire.OutPoint]WatchedOutput) error {
 
 	// A block hash is required to use as the starting point of the rescan.
 	if blockHash == nil {
@@ -555,7 +555,7 @@ func (c *BitcoindClient) rescanHandler() {
 
 			// We're adding the outpoints that map to the scripts
 			// that we should scan for to our filter.
-			case map[wire.OutPoint]bchutil.Address:
+			case map[wire.OutPoint]WatchedOutput:
 				c.watchMtx.Lock()
 				for op := range update {
 					c.watchedOutPoints[op] = struct{}{}
