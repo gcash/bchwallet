@@ -498,17 +498,18 @@ func startNeutrino() (*chain.NeutrinoClient, func(), error) {
 	}
 	chainService, err := neutrino.NewChainService(
 		neutrino.Config{
-			DataDir:        netDir,
-			Database:       spvdb,
-			ChainParams:    *activeNet.Params,
-			FilterType:     filterType,
-			ConnectPeers:   cfg.ConnectPeers,
-			AddPeers:       cfg.AddPeers,
-			BlocksOnly:     cfg.BlocksOnly,
-			PersistToDisk:  cfg.PersistFilters,
-			Proxy:          cfg.Proxy,
-			NameResolver:   buildNeutrinoDNSResolver(),
-			BlockCacheSize: blockCacheSize(activeNet.Params),
+			DataDir:           netDir,
+			Database:          spvdb,
+			ChainParams:       *activeNet.Params,
+			FilterType:        filterType,
+			MempoolFetchFloor: cfg.MempoolFloor,
+			ConnectPeers:      cfg.ConnectPeers,
+			AddPeers:          cfg.AddPeers,
+			BlocksOnly:        cfg.BlocksOnly,
+			PersistToDisk:     cfg.PersistFilters,
+			Proxy:             cfg.Proxy,
+			NameResolver:      buildNeutrinoDNSResolver(),
+			BlockCacheSize:    blockCacheSize(activeNet.Params),
 		})
 	if err != nil {
 		_ = spvdb.Close()
