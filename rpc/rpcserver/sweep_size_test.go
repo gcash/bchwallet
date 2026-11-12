@@ -7,6 +7,7 @@ package rpcserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,9 +19,11 @@ import (
 	pb "github.com/gcash/bchwallet/rpc/walletrpc"
 	"github.com/gcash/bchwallet/waddrmgr"
 	"github.com/gcash/bchwallet/wallet"
+	"github.com/gcash/bchwallet/wallet/txauthor"
 	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/walletdb"
 	"github.com/gcash/bchwallet/wtxmgr"
+	"google.golang.org/grpc/codes"
 )
 
 // sweepWallet returns a wallet holding a coin of each value, and the server
@@ -152,5 +155,19 @@ func TestSweepOfFewCoinsLeavesNone(t *testing.T) {
 	if len(sweep.InputValues) != 3 || sweep.LeftCount != 0 || sweep.LeftAmount != 0 {
 		t.Fatalf("swept %d coins and left %d of %d sat, want 3 and none",
 			len(sweep.InputValues), sweep.LeftCount, sweep.LeftAmount)
+	}
+}
+
+// TestTooLargeIsFailedPrecondition checks that a send too large for one
+// transaction reaches the client as one it can't make now, with its reason,
+// also when the wallet wraps it.
+func TestTooLargeIsFailedPrecondition(t *testing.T) {
+	for _, err := range []error{
+		txauthor.TooLargeError{Max: 83000000},
+		fmt.Errorf("creating the transaction: %w", txauthor.TooLargeError{Max: 83000000}),
+	} {
+		if code := errorCode(err); code != codes.FailedPrecondition {
+			t.Errorf("%v: code %v, want FailedPrecondition", err, code)
+		}
 	}
 }

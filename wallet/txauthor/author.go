@@ -7,6 +7,8 @@ package txauthor
 
 import (
 	"errors"
+	"fmt"
+	"sort"
 
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/txscript"
@@ -42,6 +44,43 @@ type insufficientFundsError struct{}
 func (insufficientFundsError) InputSourceError() {}
 func (insufficientFundsError) Error() string {
 	return "insufficient funds available to construct transaction"
+}
+
+// TooLargeError is returned when the inputs that pay the outputs make a
+// transaction larger than nodes relay, which the network would refuse once it
+// was signed and sent.  Max is the most the outputs can pay in one
+// transaction: what the largest inputs that fit hold, less their fee.
+type TooLargeError struct {
+	Max bchutil.Amount
+}
+
+func (e TooLargeError) Error() string {
+	return fmt.Sprintf("this amount needs more coins than fit in one "+
+		"transaction; you can send up to %v at once", e.Max)
+}
+
+// tooLarge returns the error of a transaction too large, with the most the
+// outputs can pay with the largest of the inputs that fit.
+func tooLarge(outputs []*wire.TxOut, inputValues []bchutil.Amount,
+	relayFeePerKb bchutil.Amount) error {
+
+	values := append([]bchutil.Amount(nil), inputValues...)
+	sort.Slice(values, func(i, j int) bool { return values[i] > values[j] })
+	var total bchutil.Amount
+	n := 0
+	for n < len(values) && txsizes.EstimateSerializeSize(n+1, outputs, true) <=
+		txrules.MaxStandardTxSize {
+
+		total += values[n]
+		n++
+	}
+	fee := txrules.FeeForSerializeSize(relayFeePerKb,
+		txsizes.EstimateSerializeSize(n, outputs, true))
+	most := total - fee
+	if most < 0 {
+		most = 0
+	}
+	return TooLargeError{Max: most}
 }
 
 // AuthoredTx holds the state of a newly-created transaction and the change
@@ -95,6 +134,11 @@ func NewUnsignedTransaction(outputs []*wire.TxOut, relayFeePerKb bchutil.Amount,
 		}
 
 		maxSignedSize := txsizes.EstimateSerializeSize(len(inputs), outputs, true)
+		// Nodes refuse a transaction this large, so it would fail only
+		// once it was signed and sent, which the user confirmed.
+		if maxSignedSize > txrules.MaxStandardTxSize {
+			return nil, tooLarge(outputs, inputValues, relayFeePerKb)
+		}
 		maxRequiredFee := txrules.FeeForSerializeSize(relayFeePerKb, maxSignedSize)
 		remainingAmount := inputAmount - targetAmount
 		if remainingAmount < maxRequiredFee {

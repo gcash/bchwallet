@@ -927,6 +927,10 @@ passed into `SignTransaction`
   account's or is sent twice, the account has too few tokens of the category,
   or its amount is below its dust limit.
 
+- `FailedPrecondition`: Paying the outputs takes more of the account's coins
+  than fit in one standard transaction (100,000 bytes), which nodes would
+  refuse.  The message says the most one transaction can send.
+
 - `Aborted`: The wallet database is closed.
 
 - `NotFound`: The account does not exist.

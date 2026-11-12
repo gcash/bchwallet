@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gcash/bchwallet/pymtproto"
+	"github.com/gcash/bchwallet/wallet/txauthor"
 	"github.com/gcash/bchwallet/wallet/txrules"
 	"github.com/gcash/bchwallet/wallet/txsizes"
 	"github.com/tyler-smith/go-bip39"
@@ -93,7 +94,10 @@ func errorCode(err error) codes.Code {
 		err = e.Err
 	}
 
+	var tooLarge txauthor.TooLargeError
 	switch {
+	case errors.As(err, &tooLarge):
+		return codes.FailedPrecondition
 	case errors.Is(err, wallet.ErrTokenSend):
 		return codes.InvalidArgument
 	case errors.Is(err, wallet.ErrTokenBurn):
