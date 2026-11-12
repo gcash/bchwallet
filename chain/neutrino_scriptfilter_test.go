@@ -487,17 +487,29 @@ func TestNotifyReceivedScriptFiltersMempool(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	if err := client.Rescan(bestHash, []bchutil.Address{first}, nil); err != nil {
-		t.Fatalf("unable to rescan: %v", err)
-	}
-	waitNotification(t, client, 30*time.Second, "the rescan to finish",
-		func(n interface{}) bool {
-			_, ok := n.(*RescanFinished)
-			return ok
-		})
+	// The chain service stores a filter header a moment before it takes it
+	// for its tip, and a rescan from the tip that starts in between ends
+	// with an error, which NotifyReceived then returns.  The rescan is
+	// started again until the client takes the new address.
+	deadline = time.Now().Add(time.Minute)
+	for {
+		if err := client.Rescan(bestHash, []bchutil.Address{first}, nil); err != nil {
+			t.Fatalf("unable to rescan: %v", err)
+		}
+		waitNotification(t, client, 30*time.Second, "the rescan to finish",
+			func(n interface{}) bool {
+				_, ok := n.(*RescanFinished)
+				return ok
+			})
 
-	if err := client.NotifyReceived([]bchutil.Address{second}); err != nil {
-		t.Fatalf("unable to watch the new address: %v", err)
+		err := client.NotifyReceived([]bchutil.Address{second})
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("unable to watch the new address: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	payment, err := node.CreateTransaction(
