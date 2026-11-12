@@ -394,9 +394,11 @@ func (b *SPVBackend) scriptOf(ctx context.Context, outpoint wire.OutPoint,
 	return nil, fmt.Errorf("transaction %v isn't in block %v", outpoint.Hash, blockHash)
 }
 
-// unspendable reports whether a script can't be spent, so no script filter
-// holds it: it's empty, or a data carrier that starts with OP_RETURN.
-func unspendable(script []byte) bool {
+// notInScriptFilters reports whether a script is one no script filter holds:
+// it's empty, or a data carrier that starts with OP_RETURN.  A data carrier
+// can't be spent.  An empty script can be, by anyone, but a spend of it can't
+// be searched for on script filters.
+func notInScriptFilters(script []byte) bool {
 	return len(script) == 0 || script[0] == txscript.OP_RETURN
 }
 
@@ -491,7 +493,10 @@ func (b *SPVBackend) searchGenesisSpends(ctx context.Context, outpoints []wire.O
 // filters that is a search for the outpoints. On script filters each outpoint
 // is matched by the locking script of its output. blocks gives the block of an
 // outpoint whose transaction isn't remembered, so that script can be read.
-// An output whose script is empty or OP_RETURN can't be spent and is left out.
+// An OP_RETURN output can't be spent and is left out.  So is one with an empty
+// script: anyone can spend it, so the link after it is no longer its
+// publisher's alone, and no script filter holds its spend.  On script filters
+// a token stays at such a link, where on regular filters it is followed on.
 func (b *SPVBackend) searchLinkSpends(ctx context.Context, outpoints []wire.OutPoint,
 	blocks map[wire.OutPoint]chainhash.Hash, from, to int32,
 	found func(SpendFound) []wire.OutPoint, progress func(height int32)) (int32, error) {
@@ -509,7 +514,11 @@ func (b *SPVBackend) searchLinkSpends(ctx context.Context, outpoints []wire.OutP
 		if err != nil {
 			return searchMissed(from, to), err
 		}
-		if unspendable(script) {
+		if notInScriptFilters(script) {
+			if len(script) == 0 {
+				log.Debugf("The authchain link %v isn't followed on script "+
+					"filters: its output has an empty script", outpoint)
+			}
 			continue
 		}
 		inputs = append(inputs, ScriptOutPoint{OutPoint: outpoint, PkScript: script})
