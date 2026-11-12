@@ -971,6 +971,13 @@ rather than added.
   
 - `int64 fee`: The fee that ended up being set when the transaction was created.
 
+- `uint32 left_count`: How many coins were left out, as more than fit in one
+  standard transaction (100,000 bytes).  The sweep takes the largest coins
+  first, so it sends the most one transaction can.  0 when all fit.
+
+- `int64 left_amount`: The value of the coins left out, which another sweep
+  sends.  0 when all fit.
+
 **Expected errors:**
 
 - `InvalidArgument`: The address is not valid for the wallet's network, the fee

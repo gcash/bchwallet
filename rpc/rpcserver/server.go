@@ -1008,10 +1008,26 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 		return nil, translateError(err)
 	}
 
-	var totalIn bchutil.Amount
+	// The largest coins first, as many as fit in one standard transaction,
+	// so that it sends the most it can.  A sweep of every coin, as many as a
+	// wallet that took part in many fusions has, was refused by the network
+	// as too large.  What's left is said, for the user to send again.
+	sort.SliceStable(unspentOutputs, func(i, j int) bool {
+		return unspentOutputs[i].Output.Value > unspentOutputs[j].Output.Value
+	})
+	sweepOut := []*wire.TxOut{wire.NewTxOut(0, script, wire.TokenData{})}
+	var totalIn, leftAmount bchutil.Amount
+	var leftCount uint32
 	var inputs []*wire.TxIn
 	var inputValues []int64
 	for _, u := range unspentOutputs {
+		if leftCount > 0 || txsizes.EstimateSerializeSize(len(inputs)+1,
+			sweepOut, false) > txrules.MaxStandardTxSize {
+
+			leftCount++
+			leftAmount += bchutil.Amount(u.Output.Value)
+			continue
+		}
 		totalIn += bchutil.Amount(u.Output.Value)
 		inputValues = append(inputValues, u.Output.Value)
 		inputs = append(inputs, wire.NewTxIn(&u.OutPoint, nil))
@@ -1040,6 +1056,8 @@ func (s *walletServer) SweepAccount(ctx context.Context, req *pb.SweepAccountReq
 		InputValues:           inputValues,
 		TotalAmount:           out.Value,
 		Fee:                   int64(fee),
+		LeftCount:             leftCount,
+		LeftAmount:            int64(leftAmount),
 	}, nil
 }
 

@@ -439,6 +439,10 @@ message SweepAccountResponse {
 	repeated int64 input_values = 2;
 	int64 total_amount = 3;
 	int64 fee = 4;
+	// The coins left out, as more than fit in one standard transaction,
+	// and their value, which another sweep sends.  Both 0 when all fit.
+	uint32 left_count = 5;
+	int64 left_amount = 6;
 }
 
 message SignTransactionRequest {

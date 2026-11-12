@@ -17,6 +17,11 @@ import (
 // DefaultRelayFeePerKb is the default minimum relay fee policy for a mempool.
 const DefaultRelayFeePerKb bchutil.Amount = 1e3
 
+// MaxStandardTxSize is the largest transaction, in bytes, that nodes relay and
+// mine by their standard policy, as bchd's mempool and BCHN have it.  A larger
+// one is refused, so a transaction the wallet builds is to fit within it.
+const MaxStandardTxSize = 100000
+
 // GetDustThreshold is used to define the amount below which output will be
 // determined as dust. Threshold is determined as 3 times the relay fee.
 func GetDustThreshold(scriptSize int, relayFeePerKb bchutil.Amount) bchutil.Amount {
