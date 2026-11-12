@@ -166,7 +166,7 @@ func (c *RPCClient) IsCurrent() bool {
 // This is useful when using BIP 158 filters as they include the prev pkScript
 // rather than the full outpoint.
 func (c *RPCClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Address,
-	outPoints map[wire.OutPoint]bchutil.Address) error {
+	outPoints map[wire.OutPoint]WatchedOutput) error {
 
 	flatOutpoints := make([]*wire.OutPoint, 0, len(outPoints))
 	for ops := range outPoints {

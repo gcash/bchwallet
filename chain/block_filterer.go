@@ -46,7 +46,7 @@ type BlockFilterer struct {
 	// WathcedOutPoints is a global set of outpoints being tracked by the
 	// wallet. This allows the block filterer to check for spends from an
 	// outpoint we own.
-	WatchedOutPoints map[wire.OutPoint]bchutil.Address
+	WatchedOutPoints map[wire.OutPoint]WatchedOutput
 
 	// FoundExternal is a two-layer map recording the scope and index of
 	// external addresses found in a single block.
@@ -58,7 +58,7 @@ type BlockFilterer struct {
 
 	// FoundOutPoints is a set of outpoints found in a single block whose
 	// address belongs to the wallet.
-	FoundOutPoints map[wire.OutPoint]bchutil.Address
+	FoundOutPoints map[wire.OutPoint]WatchedOutput
 
 	// RelevantTxns records the transactions found in a particular block
 	// that contained matches from an address in either ExReverseFilter or
@@ -99,7 +99,7 @@ func NewBlockFilterer(params *chaincfg.Params,
 
 	foundExternal := make(map[waddrmgr.KeyScope]map[uint32]struct{})
 	foundInternal := make(map[waddrmgr.KeyScope]map[uint32]struct{})
-	foundOutPoints := make(map[wire.OutPoint]bchutil.Address)
+	foundOutPoints := make(map[wire.OutPoint]WatchedOutput)
 
 	return &BlockFilterer{
 		Params:           params,
@@ -135,9 +135,9 @@ type WatchIndex struct {
 	ExReverse map[string]waddrmgr.ScopedIndex
 	InReverse map[string]waddrmgr.ScopedIndex
 
-	// OutPoints are the outpoints watched for spends, with the address
-	// each pays.
-	OutPoints map[wire.OutPoint]bchutil.Address
+	// OutPoints are the outpoints watched for spends, with the address the
+	// wallet keeps each under and the output's own locking script.
+	OutPoints map[wire.OutPoint]WatchedOutput
 }
 
 // NewWatchIndex returns a WatchIndex of no addresses or outpoints.
@@ -145,17 +145,24 @@ func NewWatchIndex() *WatchIndex {
 	return &WatchIndex{
 		ExReverse: make(map[string]waddrmgr.ScopedIndex),
 		InReverse: make(map[string]waddrmgr.ScopedIndex),
-		OutPoints: make(map[wire.OutPoint]bchutil.Address),
+		OutPoints: make(map[wire.OutPoint]WatchedOutput),
 	}
 }
 
-// AddOutPoint adds an outpoint to watch for spends, which pays the address,
-// unless it's there already.
-func (w *WatchIndex) AddOutPoint(op wire.OutPoint, addr bchutil.Address) error {
+// AddOutPoint adds an outpoint to watch for spends, kept under addr, with
+// pkScript the output's own locking script, unless it's there already. A
+// script filter matches a spend by that script. An empty script is the one
+// the address pays, for an outpoint that arrived without its output.
+func (w *WatchIndex) AddOutPoint(op wire.OutPoint, addr bchutil.Address,
+	pkScript []byte) error {
+
 	if _, ok := w.OutPoints[op]; ok {
 		return nil
 	}
-	script, err := txscript.PayToAddrScript(addr)
+	script, err := watchedOutPointScript(WatchedOutput{
+		Addr:     addr,
+		PkScript: pkScript,
+	})
 	if err != nil {
 		return err
 	}
@@ -163,7 +170,7 @@ func (w *WatchIndex) AddOutPoint(op wire.OutPoint, addr bchutil.Address) error {
 	if err := op.Serialize(&buf); err != nil {
 		return err
 	}
-	w.OutPoints[op] = addr
+	w.OutPoints[op] = WatchedOutput{Addr: addr, PkScript: pkScript}
 	w.Scripts = append(w.Scripts, script, buf.Bytes())
 	key := builder.ScriptKey(script)
 	w.ScriptKeys = append(w.ScriptKeys, key[:])
@@ -289,13 +296,18 @@ func (bf *BlockFilterer) FilterTx(tx *wire.MsgTx) bool {
 
 		// Record the outpoint that containing the address in our set of
 		// found outpoints, so that the caller can update its global
-		// set of watched outpoints.
+		// set of watched outpoints. The output's own script is kept
+		// with it, because a script filter matches a spend by that
+		// script and the address can't always give it back.
 		outPoint := wire.OutPoint{
 			Hash:  *bchutil.NewTx(tx).Hash(),
 			Index: uint32(i),
 		}
 
-		bf.FoundOutPoints[outPoint] = addrs[0]
+		bf.FoundOutPoints[outPoint] = WatchedOutput{
+			Addr:     addrs[0],
+			PkScript: out.PkScript,
+		}
 	}
 
 	return isRelevant
