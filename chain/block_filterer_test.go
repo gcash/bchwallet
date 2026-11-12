@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
@@ -504,9 +505,13 @@ func TestBlockFiltererOneInOneOut(t *testing.T) {
 
 	// Add each of their single previous outpoints to the set of watched
 	// outpoints to filter for.
-	watchedOutPoints := make(map[wire.OutPoint]bchutil.Address)
-	watchedOutPoints[firstTx.TxIn[0].PreviousOutPoint] = &bchutil.AddressPubKeyHash{}
-	watchedOutPoints[lastTx.TxIn[0].PreviousOutPoint] = &bchutil.AddressPubKeyHash{}
+	watchedOutPoints := make(map[wire.OutPoint]chain.WatchedOutput)
+	watchedOutPoints[firstTx.TxIn[0].PreviousOutPoint] = chain.WatchedOutput{
+		Addr: &bchutil.AddressPubKeyHash{},
+	}
+	watchedOutPoints[lastTx.TxIn[0].PreviousOutPoint] = chain.WatchedOutput{
+		Addr: &bchutil.AddressPubKeyHash{},
+	}
 
 	// Construct a filter request, watching only for the outpoints above,
 	// and construct a block filterer.
@@ -636,8 +641,8 @@ func TestBlockFiltererTokens(t *testing.T) {
 		ExternalAddrs: map[waddrmgr.ScopedIndex]bchutil.Address{
 			index: addr,
 		},
-		WatchedOutPoints: map[wire.OutPoint]bchutil.Address{
-			watched: addr,
+		WatchedOutPoints: map[wire.OutPoint]chain.WatchedOutput{
+			watched: {Addr: addr, PkScript: script},
 		},
 	}
 	blockFilterer := chain.NewBlockFilterer(&chaincfg.SimNetParams, req)
@@ -656,9 +661,77 @@ func TestBlockFiltererTokens(t *testing.T) {
 	paidHash := fromPeer.Transactions[0].TxHash()
 	for i := uint32(0); i < 2; i++ {
 		op := wire.OutPoint{Hash: paidHash, Index: i}
-		if _, ok := blockFilterer.FoundOutPoints[op]; !ok {
+		recorded, ok := blockFilterer.FoundOutPoints[op]
+		if !ok {
 			t.Errorf("output %d, which carries tokens, isn't found", i)
+			continue
 		}
+		if recorded.Addr.EncodeAddress() != addr.EncodeAddress() {
+			t.Errorf("output %d address is %v, want %v", i, recorded.Addr, addr)
+		}
+		if !bytes.Equal(recorded.PkScript, script) {
+			t.Errorf("output %d script is %x, want %x", i, recorded.PkScript, script)
+		}
+	}
+}
+
+// TestBlockFiltererRecordsBareMultisigScript checks that a bare multisig
+// output the filter finds is recorded with that output's script, not the
+// pay-to-pubkey script of its first key.
+func TestBlockFiltererRecordsBareMultisigScript(t *testing.T) {
+	params := &chaincfg.SimNetParams
+	var pubs []*bchutil.AddressPubKey
+	for range 2 {
+		key, err := bchec.NewPrivateKey(bchec.S256())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub, err := bchutil.NewAddressPubKey(
+			key.PubKey().SerializeCompressed(), params,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pubs = append(pubs, pub)
+	}
+	multisig, err := txscript.MultiSigScript(pubs, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{1}}, nil))
+	tx.AddTxOut(wire.NewTxOut(1000, multisig, wire.TokenData{}))
+
+	index := waddrmgr.ScopedIndex{Index: 0, Scope: waddrmgr.KeyScopeBIP0044}
+	req := &chain.FilterBlocksRequest{
+		ExternalAddrs: map[waddrmgr.ScopedIndex]bchutil.Address{index: pubs[0]},
+	}
+	filterer := chain.NewBlockFilterer(params, req)
+	if !filterer.FilterTx(tx) {
+		t.Fatal("the bare multisig output wasn't found")
+	}
+	op := wire.OutPoint{Hash: tx.TxHash(), Index: 0}
+	found, ok := filterer.FoundOutPoints[op]
+	if !ok {
+		t.Fatal("the bare multisig output wasn't recorded")
+	}
+	if !bytes.Equal(found.PkScript, multisig) {
+		t.Fatalf("recorded script %x, want the output's script %x",
+			found.PkScript, multisig)
+	}
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(multisig, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addrs) == 0 || found.Addr.EncodeAddress() != addrs[0].EncodeAddress() {
+		t.Fatalf("recorded address %v, want %v", found.Addr, addrs)
+	}
+	p2pk, err := txscript.PayToAddrScript(pubs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(found.PkScript, p2pk) {
+		t.Fatal("recorded the pay-to-pubkey script of the first key")
 	}
 }
 

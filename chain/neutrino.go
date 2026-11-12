@@ -378,8 +378,8 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest,
 				watchList = append(watchList, key[:])
 			}
 		}
-		for _, addr := range req.WatchedOutPoints {
-			script, err := txscript.PayToAddrScript(addr)
+		for _, out := range req.WatchedOutPoints {
+			script, err := watchedOutPointScript(out)
 			if err != nil {
 				return nil, err
 			}
@@ -416,18 +416,29 @@ func buildFilterBlocksWatchList(req *FilterBlocksRequest,
 	return appendWatchedOutPoints(watchList, req.WatchedOutPoints)
 }
 
-// appendWatchedOutPoints adds the script each watched outpoint pays and the
-// outpoint itself to the watch list.
-func appendWatchedOutPoints(watchList [][]byte,
-	watched map[wire.OutPoint]bchutil.Address) ([][]byte, error) {
+// watchedOutPointScript returns the locking script a watched outpoint is
+// matched by. The script is the output's own when it was stored with the
+// outpoint. An empty script is an outpoint a caller filled only with an
+// address, and the script that address pays is used then.
+func watchedOutPointScript(out WatchedOutput) ([]byte, error) {
+	if len(out.PkScript) != 0 {
+		return out.PkScript, nil
+	}
+	return txscript.PayToAddrScript(out.Addr)
+}
 
-	for op, addr := range watched {
-		addr, err := txscript.PayToAddrScript(addr)
+// appendWatchedOutPoints adds the locking script of each watched outpoint
+// and the outpoint itself to the watch list.
+func appendWatchedOutPoints(watchList [][]byte,
+	watched map[wire.OutPoint]WatchedOutput) ([][]byte, error) {
+
+	for op, out := range watched {
+		script, err := watchedOutPointScript(out)
 		if err != nil {
 			return nil, err
 		}
 
-		watchList = append(watchList, addr)
+		watchList = append(watchList, script)
 
 		var buf bytes.Buffer
 		if err := op.Serialize(&buf); err != nil {
@@ -509,7 +520,7 @@ func retryFetch(what string, fetch func() error, interrupt,
 
 // Rescan replicates the RPC client's Rescan command.
 func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Address,
-	outPoints map[wire.OutPoint]bchutil.Address) error {
+	outPoints map[wire.OutPoint]WatchedOutput) error {
 
 	s.clientMtx.Lock()
 
@@ -590,15 +601,15 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []bchutil.Addre
 	}
 
 	var inputsToWatch []neutrino.InputWithScript
-	for op, addr := range outPoints {
-		addrScript, err := txscript.PayToAddrScript(addr)
+	for op, out := range outPoints {
+		pkScript, err := watchedOutPointScript(out)
 		if err != nil {
 			return err
 		}
 
 		inputsToWatch = append(inputsToWatch, neutrino.InputWithScript{
 			OutPoint: op,
-			PkScript: addrScript,
+			PkScript: pkScript,
 		})
 	}
 
