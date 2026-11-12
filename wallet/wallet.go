@@ -1098,8 +1098,9 @@ expandHorizons:
 
 	// Update the global set of watched outpoints with any that were found
 	// in the block.
-	for outPoint, addr := range filterResp.FoundOutPoints {
-		err := recoveryState.AddWatchedOutPoint(&outPoint, addr)
+	for outPoint, found := range filterResp.FoundOutPoints {
+		err := recoveryState.AddWatchedOutPoint(&outPoint, found.Addr,
+			found.PkScript)
 		if err != nil {
 			return 0, err
 		}
