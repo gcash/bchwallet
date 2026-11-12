@@ -212,3 +212,142 @@ func TestFilterBlocksScriptFilters(t *testing.T) {
 		t.Fatalf("scanning past the spend found %+v, %v", resp, err)
 	}
 }
+
+// waitNotification reads the client's notifications until match accepts one.
+// It fails the test when none arrives within timeout.
+func waitNotification(t *testing.T, client *NeutrinoClient, timeout time.Duration,
+	what string, match func(n interface{}) bool) {
+	t.Helper()
+	timeoutCh := time.After(timeout)
+	for {
+		select {
+		case n := <-client.Notifications():
+			if match(n) {
+				return
+			}
+		case <-timeoutCh:
+			t.Fatalf("timed out after %v waiting for %s", timeout, what)
+		}
+	}
+}
+
+// TestNotifyReceivedScriptFiltersMempool checks that a client syncing script
+// filters hears of an unconfirmed payment to an address it starts watching
+// after its rescan has already asked for the mempool.  Peers that serve
+// script filters do not announce transactions.  The rescan, and
+// NotifyReceived after it, ask for the filter of the whole mempool before
+// this payment is sent, so that snapshot does not hold the payment.  The
+// transaction can only have come from the script filter of a mempool
+// interval that closed after the payment was admitted.
+func TestNotifyReceivedScriptFiltersMempool(t *testing.T) {
+	node, err := rpctest.New(&chaincfg.SimNetParams, nil, []string{"--txindex"})
+	if err != nil {
+		t.Fatalf("unable to create harness: %v", err)
+	}
+	defer func() { _ = node.TearDown() }()
+	if err := node.SetUp(true, 10); err != nil {
+		t.Fatalf("unable to set up harness: %v", err)
+	}
+
+	// The rescan watches the first address.  The payment, sent after
+	// NotifyReceived and left unmined, pays the second.
+	first, err := bchutil.NewAddressScriptHash(
+		[]byte{txscript.OP_TRUE}, &chaincfg.SimNetParams,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := bchutil.NewAddressScriptHash(
+		[]byte{txscript.OP_TRUE, txscript.OP_TRUE}, &chaincfg.SimNetParams,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondScript, err := txscript.PayToAddrScript(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bestHash, _, err := node.Node.GetBestBlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := t.TempDir()
+	db, err := walletdb.Create("bdb", filepath.Join(dataDir, "neutrino.db"), true)
+	if err != nil {
+		t.Fatalf("unable to create db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	svc, err := neutrino.NewChainService(neutrino.Config{
+		DataDir:      dataDir,
+		Database:     db,
+		ChainParams:  chaincfg.SimNetParams,
+		ConnectPeers: []string{node.P2PAddress()},
+		FilterType:   wire.GCSFilterScripts,
+	})
+	if err != nil {
+		t.Fatalf("unable to create ChainService: %v", err)
+	}
+	client := NewNeutrinoClient(&chaincfg.SimNetParams, svc)
+	if err := client.Start(); err != nil {
+		t.Fatalf("unable to start the client: %v", err)
+	}
+	defer func() {
+		client.Stop()
+		_ = svc.Stop()
+	}()
+
+	// Rescan from the node's tip is what asks for the mempool.  The client
+	// has to store that header first, or the rescan fails.  A rescan
+	// started while the chain service's best block is still genesis
+	// reports itself finished before the client is current.
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		if _, err := svc.FilterHeaders().FetchHeader(bestHash); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the script filter headers")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if err := client.Rescan(bestHash, []bchutil.Address{first}, nil); err != nil {
+		t.Fatalf("unable to rescan: %v", err)
+	}
+	waitNotification(t, client, 30*time.Second, "the rescan to finish",
+		func(n interface{}) bool {
+			_, ok := n.(*RescanFinished)
+			return ok
+		})
+
+	if err := client.NotifyReceived([]bchutil.Address{second}); err != nil {
+		t.Fatalf("unable to watch the new address: %v", err)
+	}
+
+	payment, err := node.CreateTransaction(
+		[]*wire.TxOut{{Value: 100000000, PkScript: secondScript}}, 10, true,
+	)
+	if err != nil {
+		t.Fatalf("unable to create payment: %v", err)
+	}
+	if _, err := node.Node.SendRawTransaction(payment, true); err != nil {
+		t.Fatalf("unable to send payment: %v", err)
+	}
+
+	payHash := payment.TxHash()
+	waitNotification(t, client, 30*time.Second,
+		"an unconfirmed payment to the address watched after the rescan",
+		func(n interface{}) bool {
+			tx, ok := n.(RelevantTx)
+			if !ok || tx.TxRecord == nil || tx.TxRecord.Hash != payHash {
+				return false
+			}
+			if tx.Block != nil {
+				t.Fatalf("payment %v was reported in block %v, want it "+
+					"unconfirmed", payHash, tx.Block.Hash)
+			}
+			return true
+		})
+}

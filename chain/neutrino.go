@@ -649,11 +649,27 @@ func (s *NeutrinoClient) NotifyBlocks() error {
 	return nil
 }
 
+// requestMempoolScripts asks for mempool filters matching addrs when the
+// chain service syncs script filters.  Peers serving those filters do not
+// announce transactions, so an address taken up after the rescan's request
+// stays invisible until a payment to it is mined, unless the filters watch
+// it.  The request adds the addresses to the ones already watched and asks a
+// peer for the filter of its whole mempool again, which also finds a payment
+// that is already waiting.  Nothing is asked for when addrs is empty, or when
+// the service syncs regular filters, whose peers announce every transaction.
+func (s *NeutrinoClient) requestMempoolScripts(addrs []bchutil.Address) {
+	if len(addrs) == 0 || s.CS.FilterType() != wire.GCSFilterScripts {
+		return
+	}
+	s.CS.RequestMempoolFilter(addrs, nil)
+}
+
 // NotifyReceived replicates the RPC client's NotifyReceived command.
 func (s *NeutrinoClient) NotifyReceived(addrs []bchutil.Address) error {
 	s.clientMtx.Lock()
 
 	s.CS.NotifyMempoolReceived(addrs)
+	s.requestMempoolScripts(addrs)
 
 	// If we have a rescan running, we just need to add the appropriate
 	// addresses to the watch list.
