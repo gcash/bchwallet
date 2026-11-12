@@ -9,6 +9,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/gcash/bchd/bchec"
 	"github.com/gcash/bchd/chaincfg"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/txscript"
@@ -38,8 +39,13 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 	internal := map[waddrmgr.ScopedIndex]bchutil.Address{
 		{Scope: waddrmgr.KeyScopeBIP0044, Index: 0}: addr(3),
 	}
-	outPoints := map[wire.OutPoint]bchutil.Address{
-		{Hash: chainhash.Hash{9}, Index: 2}: addr(4),
+	a4 := addr(4)
+	script4, err := txscript.PayToAddrScript(a4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outPoints := map[wire.OutPoint]WatchedOutput{
+		{Hash: chainhash.Hash{9}, Index: 2}: {Addr: a4, PkScript: script4},
 	}
 	watch := NewWatchIndex()
 	for i, a := range external {
@@ -52,8 +58,8 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for op, a := range outPoints {
-		if err := watch.AddOutPoint(op, a); err != nil {
+	for op, out := range outPoints {
+		if err := watch.AddOutPoint(op, out.Addr, out.PkScript); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,7 +67,7 @@ func TestWatchIndexMatchesTheMaps(t *testing.T) {
 	if err := watch.Add(waddrmgr.ScopedIndex{Scope: waddrmgr.KeyScopeBIP0044}, addr(1), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := watch.AddOutPoint(wire.OutPoint{Hash: chainhash.Hash{9}, Index: 2}, addr(4)); err != nil {
+	if err := watch.AddOutPoint(wire.OutPoint{Hash: chainhash.Hash{9}, Index: 2}, a4, script4); err != nil {
 		t.Fatal(err)
 	}
 	scripts := len(watch.Scripts)
@@ -172,7 +178,11 @@ func TestWatchListWithIndexCostsNothingPerOutPoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			op := wire.OutPoint{Hash: chainhash.Hash{byte(i), byte(i >> 8)}, Index: uint32(i)}
-			if err := watch.AddOutPoint(op, a); err != nil {
+			script, err := txscript.PayToAddrScript(a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := watch.AddOutPoint(op, a, script); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -191,4 +201,89 @@ func TestWatchListWithIndexCostsNothingPerOutPoint(t *testing.T) {
 		t.Fatalf("a watch list made %.0f allocations with 2000 outpoints, and %.0f with 10",
 			many, few)
 	}
+}
+
+// TestScriptFilterWatchListUsesBareMultisigScript checks that a script filter
+// watch list built from a bare multisig outpoint holds the key of that
+// output's script, not the key of the pay-to-pubkey script of its first key,
+// and that a regular filter watch list still holds the outpoint.
+func TestScriptFilterWatchListUsesBareMultisigScript(t *testing.T) {
+	params := &chaincfg.SimNetParams
+	var pubs []*bchutil.AddressPubKey
+	for range 2 {
+		key, err := bchec.NewPrivateKey(bchec.S256())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub, err := bchutil.NewAddressPubKey(
+			key.PubKey().SerializeCompressed(), params,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pubs = append(pubs, pub)
+	}
+	multisig, err := txscript.MultiSigScript(pubs, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := wire.OutPoint{Hash: chainhash.Hash{7}, Index: 1}
+	watched := map[wire.OutPoint]WatchedOutput{
+		op: {Addr: pubs[0], PkScript: multisig},
+	}
+
+	wantKey := builder.ScriptKey(multisig)
+	p2pk, err := txscript.PayToAddrScript(pubs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongKey := builder.ScriptKey(p2pk)
+	var buf bytes.Buffer
+	if err := op.Serialize(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	watch := NewWatchIndex()
+	if err := watch.AddOutPoint(op, pubs[0], multisig); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, req *FilterBlocksRequest) {
+		t.Helper()
+		keys, err := buildFilterBlocksWatchList(req, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != 1 || !bytes.Equal(keys[0], wantKey[:]) {
+			t.Fatalf("%s: script filter watch list is %x, want the key of "+
+				"the multisig script %x", name, keys, wantKey[:])
+		}
+		if bytes.Equal(keys[0], wrongKey[:]) {
+			t.Fatalf("%s: script filter watch list holds the key of the "+
+				"pay-to-pubkey script of the first key", name)
+		}
+
+		regular, err := buildFilterBlocksWatchList(req, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sawOutPoint, sawScript bool
+		for _, item := range regular {
+			if bytes.Equal(item, buf.Bytes()) {
+				sawOutPoint = true
+			}
+			if bytes.Equal(item, multisig) {
+				sawScript = true
+			}
+		}
+		if !sawOutPoint {
+			t.Fatalf("%s: regular filter watch list %x doesn't hold the "+
+				"outpoint %x", name, regular, buf.Bytes())
+		}
+		if !sawScript {
+			t.Fatalf("%s: regular filter watch list doesn't hold the "+
+				"multisig script", name)
+		}
+	}
+	check("maps", &FilterBlocksRequest{WatchedOutPoints: watched})
+	check("watch index", &FilterBlocksRequest{Watch: watch})
 }

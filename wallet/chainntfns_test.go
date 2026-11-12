@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"reflect"
@@ -594,7 +595,7 @@ func TestActiveDataWatchesUnminedSpends(t *testing.T) {
 type filterRecordingChainClient struct {
 	mockChainClient
 	bestHeight int32
-	watched    map[wire.OutPoint]bchutil.Address
+	watched    map[wire.OutPoint]chain.WatchedOutput
 }
 
 func (c *filterRecordingChainClient) GetBestBlock() (*chainhash.Hash, int32, error) {
@@ -665,11 +666,19 @@ func TestRecoveryWatchesUnminedSpends(t *testing.T) {
 	if client.watched == nil {
 		t.Fatal("the scan filtered no blocks")
 	}
-	if _, ok := client.watched[spent]; !ok {
+	spentWatch, ok := client.watched[spent]
+	if !ok {
 		t.Error("the output the unmined payment spends isn't watched")
+	} else if !bytes.Equal(spentWatch.PkScript, script) {
+		t.Errorf("the spent output's script is %x, want %x",
+			spentWatch.PkScript, script)
 	}
-	if _, ok := client.watched[kept]; !ok {
+	keptWatch, ok := client.watched[kept]
+	if !ok {
 		t.Error("the unspent output isn't watched")
+	} else if !bytes.Equal(keptWatch.PkScript, script) {
+		t.Errorf("the unspent output's script is %x, want %x",
+			keptWatch.PkScript, script)
 	}
 }
 
@@ -1119,7 +1128,7 @@ func (c *resyncChainClient) FilterBlocks(req *chain.FilterBlocksRequest) (
 }
 
 func (c *resyncChainClient) Rescan(startHash *chainhash.Hash,
-	_ []bchutil.Address, _ map[wire.OutPoint]bchutil.Address) error {
+	_ []bchutil.Address, _ map[wire.OutPoint]chain.WatchedOutput) error {
 
 	c.mtx.Lock()
 	c.rescans = append(c.rescans,
