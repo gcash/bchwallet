@@ -58,6 +58,48 @@ func (s spvSource) SearchSpends(outpoints []wire.OutPoint, from, to int32,
 	}, progress, quit)
 }
 
+// ScriptFilters reports whether neutrino syncs script filters.
+func (s spvSource) ScriptFilters() bool {
+	return s.CS.FilterType() == wire.GCSFilterScripts
+}
+
+// SearchScriptSpends asks neutrino, carrying each output's script along.
+func (s spvSource) SearchScriptSpends(inputs []bcmr.ScriptOutPoint, from, to int32,
+	found func(bcmr.SpendFound) []bcmr.ScriptOutPoint, progress func(height int32),
+	quit <-chan struct{}) (int32, error) {
+
+	converted := make([]neutrino.InputWithScript, len(inputs))
+	for i, input := range inputs {
+		converted[i] = neutrino.InputWithScript{OutPoint: input.OutPoint, PkScript: input.PkScript}
+	}
+	return s.CS.SearchScriptSpends(converted, from, to, func(spend neutrino.FoundSpend) []neutrino.InputWithScript {
+		next := found(bcmr.SpendFound{
+			OutPoint:  spend.OutPoint,
+			Tx:        spend.SpendingTx,
+			Height:    spend.Height,
+			BlockHash: spend.BlockHash,
+		})
+		out := make([]neutrino.InputWithScript, len(next))
+		for i, input := range next {
+			out[i] = neutrino.InputWithScript{OutPoint: input.OutPoint, PkScript: input.PkScript}
+		}
+		return out
+	}, progress, quit)
+}
+
+// SearchCategoryOutputs asks neutrino.
+func (s spvSource) SearchCategoryOutputs(categories []chainhash.Hash, from, to int32,
+	found func(bcmr.OutputFound) bool, quit <-chan struct{}) (int32, error) {
+
+	converted := make([][32]byte, len(categories))
+	for i, category := range categories {
+		converted[i] = [32]byte(category)
+	}
+	return s.CS.SearchCategoryOutputs(converted, from, to, func(output neutrino.FoundOutput) bool {
+		return found(bcmr.OutputFound{Tx: output.Tx, Height: output.Height, BlockHash: output.BlockHash})
+	}, nil, quit)
+}
+
 // proxyConnectTimeout bounds connecting through a proxy: to the proxy, its
 // handshake, and its connection to the host, which includes the proxy's own name
 // lookup, and over Tor a circuit, so it's longer than a direct connection's 10 s.
@@ -161,13 +203,6 @@ func startTokenMetadata(w *wallet.Wallet, client chain.Interface) (*bcmr.Manager
 	}
 	switch c := client.(type) {
 	case *chain.NeutrinoClient:
-		// The SPV backend finds a token's genesis and follows its
-		// authchain by outpoints alone, which script filters don't
-		// hold.
-		if c.CS.FilterType() == wire.GCSFilterScripts {
-			return nil, errors.New("token metadata isn't looked up on " +
-				"script filters yet")
-		}
 		config.Backend = bcmr.NewSPVBackend(spvSource{c}, hints)
 		config.FilterRollbacks, config.StopRollbacks = (&neutrino.RescanChainSource{
 			ChainService: c.CS,
